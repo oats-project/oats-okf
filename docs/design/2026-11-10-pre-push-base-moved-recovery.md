@@ -172,10 +172,12 @@ with `recovered` reported. A unit test against the fixture proves the fixture.
 A 5.x release of `oats.okf` with the two helper copies, the skill, the README
 sentence and a CHANGELOG entry: "A pre-push `E_BASE_MOVED` in `create` is
 recovered by replaying the proposal onto the new accepted tip, up to three
-times; the result reports `base` and `recovered`." Version number per the
-release playbook (behaviour change, backwards compatible: minor, 5.9.0,
-unless the lane prefers a patch). Deployments need no action; a retained
-5.8.0 harvester does not pick it up (a running home keeps its modules).
+times; the result reports `base` and `recovered`." The version number is the
+release lane's call (a 5.9.0 may already be planned with other content).
+Deployments need no action. A harvester retained on 5.8.0 does not pick it
+up: a running home keeps its modules, and the PR description says so: a
+person retires that harvester and the source relaunches its proposal on the
+new version (or the person publishes the retained clone by hand).
 
 ## 6. Plan
 
