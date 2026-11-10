@@ -288,6 +288,8 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.deepEqual(fires('proposal-review', ['okf-harvest']), []);
     assert.deepEqual(fires('harvest-review', ['okf-proposal']), []);
     assert.deepEqual(fires('proposal-review', []), [], 'an unlabelled PR is not a proposal');
+    // A PR carrying both labels fires both (the docs warn never to add both while both are installed).
+    assert.deepEqual([fires('proposal-review', ['okf-harvest', 'okf-proposal']), fires('harvest-review', ['okf-harvest', 'okf-proposal'])], [['opened'], ['opened']]);
   });
 
   await t.test('i) migrating a local harvest-review trigger: show it, add proposal-review with its own values, keep or remove the old one', () => {

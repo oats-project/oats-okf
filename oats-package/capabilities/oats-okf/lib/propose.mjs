@@ -9,11 +9,12 @@
 // the command can name a home. What bounds a proposal is the soul's owned
 // nodes, OKF validation, the content screen and the maintainer's review.
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail } from './io.mjs';
 import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
-import { git as rawGit, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
+import { git as rawGit, gitEnv, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
 import { isBridgedMeta } from './okf-reindex.mjs';
@@ -198,7 +199,7 @@ function readPlan(dir) {
   // commit a full object id (never an option or a revision expression).
   const seen = new Set();
   for (const b of plan.bases) {
-    if (!object(b) || Object.keys(b).some(k => !['alias', 'accepted'].includes(k)) || typeof b.alias !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(b.alias)
+    if (!object(b) || Object.keys(b).some(k => !['alias', 'accepted'].includes(k)) || typeof b.alias !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(b.alias)
       || seen.has(b.alias) || typeof b.accepted !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(b.accepted)) bad();
     seen.add(b.alias);
   }
@@ -420,12 +421,43 @@ function checkScope(owned, scope, list) {
     if (!rel.endsWith('.md')) fail('E_SCOPE', `${shown} is not a Markdown concept`);
   }
 }
+/** The tree's exact bytes in `out`: every blob as stored (git cat-file
+ *  --batch), never through a checkout, so no smudge filter, working-tree
+ *  encoding or ident expansion can show the validator something other than
+ *  what would be published. */
+function rawTree(clone, treeId, out) {
+  const listing = git(clone, ['ls-tree', '-r', '-z', '--full-tree', treeId], { trim: false, maxBuffer: 64 * 1024 * 1024 });
+  const entries = [];
+  for (const rec of listing.split('\0').filter(Boolean)) {
+    const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64})\t(.+)$/s.exec(rec);
+    if (!m) fail('E_GIT', 'git ls-tree answered an unreadable entry for the proposed tree');
+    const [, mode, type, oid, path] = m;
+    if (type !== 'blob') continue;
+    if (path.split('/').some(p => !p || p === '.' || p === '..' || p.toLowerCase() === '.git')) fail('E_VALIDATION', `the proposed tree has an unsafe path ${JSON.stringify(path).slice(0, 200)}`);
+    entries.push({ mode, oid, path });
+  }
+  if (!entries.length) return;
+  const r = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-C', clone, 'cat-file', '--batch'],
+    { input: entries.map(e => e.oid).join('\n') + '\n', env: gitEnv(), maxBuffer: 512 * 1024 * 1024 });
+  if (r.error || r.status !== 0) fail('E_GIT', `git cat-file failed on a proposal clone${Number.isInteger(r.status) ? ` (exit ${r.status})` : ''}; Git's own output is withheld`);
+  let at = 0;
+  for (const e of entries) {
+    const nl = r.stdout.indexOf(10, at), header = r.stdout.subarray(at, nl).toString('utf8');
+    const size = Number(/^[0-9a-f]+ blob (\d+)$/.exec(header)?.[1]);
+    if (nl < 0 || !Number.isSafeInteger(size)) fail('E_GIT', 'git cat-file answered an unreadable object for the proposed tree');
+    const bytes = r.stdout.subarray(nl + 1, nl + 1 + size);
+    at = nl + 1 + size + 1;
+    const file = join(out, ...e.path.split('/'));
+    fs.mkdirSync(dirname(file), { recursive: true });
+    if (e.mode === '120000') fs.symlinkSync(bytes.toString('utf8'), file);
+    else fs.writeFileSync(file, bytes, { mode: e.mode === '100755' ? 0o755 : 0o644 });
+  }
+}
 function validateTree(clone, owned, treeId, allow) {
   withIndex(clone, (env, scratch) => {
     const out = join(scratch, 'tree');
     fs.mkdirSync(out);
-    git(clone, ['read-tree', treeId], { env });
-    git(clone, [`--work-tree=${out}`, 'checkout-index', '-a', '-q'], { env });
+    rawTree(clone, treeId, out);
     try { validateBase(owned.base.root === '.' ? out : join(out, owned.base.root), owned.base, allow ? { allow } : {}); }
     catch (e) { fail('E_VALIDATION', `base ${owned.alias}: the proposed tree is not a valid OKF base (okf-validate --strict): ${e.message.replaceAll(out, '<clone>')}`); }
   });

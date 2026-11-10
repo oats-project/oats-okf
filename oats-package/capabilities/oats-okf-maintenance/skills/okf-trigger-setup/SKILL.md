@@ -28,7 +28,9 @@ The kernel requires **every** label a trigger names (`on.labels` is AND), so
 one trigger cannot watch two labels. `harvest-review` (the old name, through
 6.x) watches only `okf-harvest`, the 5.x harvest PRs. Keep it
 beside `proposal-review` only while a 5.x harvest PR may still open, then
-remove it; the two never fire on the same PR. An existing `harvest-review`
+remove it. A PR the helper opened carries exactly one of the two labels, so it fires
+only one of them; never add both labels to a PR while both are installed (it
+would get two maintainers: concurrency is counted per trigger). An existing `harvest-review`
 alone never reviews a 6.0 proposal: add `proposal-review` (the README's
 "Upgrading to 6.0", step 4). A **local** trigger keeps the definition it was
 added with: read it with `oats trigger show <id> --json` and repeat its
