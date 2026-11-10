@@ -44,13 +44,14 @@ const V2 = { version: 2, subjects: ['system/okf', 'workstream/knowledge'] };
 
 /** One Git base `kb` (the bridged fixture, or the plain one), the soul `source`
  *  with the given okf.json, and its live home `src`. */
-function fixture(t, { decl = V1, plain = false } = {}) {
+function fixture(t, { decl = V1, plain = false, ident = false } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf6-subjects-propose-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const d = join(dir, 'deployment'), home = join(d, 'agents', 'source', 'instances', 'src'), soul = join(d, 'agents', 'source', 'souls', 'abc');
   const origin = join(dir, 'origin.git'), user = join(dir, 'user'), bin = isolatedGit(dir, '/dev/null'), seed = join(dir, 'seed');
   fs.mkdirSync(user, { recursive: true });
   writePlainBase(seed, { id: 'kb-1', owners: { expert: 'source', peer: 'other' } }); if (!plain) bridge(seed);
+  if (ident) fs.appendFileSync(join(seed, 'peer/lesson.md'), '\n$Id$\n');
   const env = { HOME: user, PATH: `${bin}:${join(dir, 'ghbin')}:${dirname(process.execPath)}:/usr/bin:/bin`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LANG: 'C' };
   const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8' }).trim();
   git(seed, 'init', '-q', '-b', 'main'); git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'accepted');
@@ -148,6 +149,20 @@ test('version 2: a rejected id without reconsiders refuses E_VERDICT; a title-ha
   const checked = ok(f.run(['--check', '--slug', 'pin']));
   assert.match(checked.prBody, /## Verdict candidates\n\n- `claims\/decisions\/again\.md`: title-hash candidate `dec-0000000000aa` \(rejected, Decision\) "Keep a harvester per proposal"/);
   assert.equal(parseProvenance(checked.prBody).valid, true);
+});
+
+test('version 2: the write surface judges stored bytes: a status-only supersession of a file the clone ident-expands checks clean', t => {
+  const f = fixture(t, { decl: V2, ident: true }), plan = ok(f.run(['--plan', '--slug', 'pin']));
+  const clone = edit(plan, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]\nsupersedes: [/peer/lesson.md]'));
+  write(join(clone, '.git/info/attributes'), 'peer/lesson.md ident\n');
+  fs.rmSync(join(clone, 'peer/lesson.md'));
+  f.git(clone, 'checkout-index', '--force', '--', 'peer/lesson.md');
+  const path = join(clone, 'peer/lesson.md'), expanded = fs.readFileSync(path, 'utf8');
+  assert.match(expanded, /\$Id: [0-9a-f]+ \$/, 'the clone shows the expanded ident');
+  fs.writeFileSync(path, expanded.replace('id: ins-000000000002', 'id: ins-000000000002\nstatus: superseded'));
+  const stored = f.git(clone, 'cat-file', 'blob', f.git(clone, 'hash-object', '--path=peer/lesson.md', '-w', 'peer/lesson.md'));
+  assert.equal(stored.replace('\nstatus: superseded', ''), f.git(clone, 'cat-file', 'blob', `${plan.bases[0].accepted}:peer/lesson.md`), 'the stored blob changes only the status');
+  ok(f.run(['--check', '--slug', 'pin']));
 });
 
 test('version 2 against a plain base: plan refuses E_CONFIG with the remedy and keeps no clone', t => {

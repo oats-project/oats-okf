@@ -453,11 +453,15 @@ function rawTree(clone, treeId, out) {
     else fs.writeFileSync(file, bytes, { mode: e.mode === '100755' ? 0o755 : 0o644 });
   }
 }
-function validateTree(clone, owned, treeId, allow) {
+/** Validate the proposed tree's stored bytes; `inspect(baseDir)` first runs
+ *  any other check that must see the same frozen bytes (the subject layout's
+ *  write surface and verdict lanes), its refusal unwrapped. */
+function validateTree(clone, owned, treeId, allow, inspect) {
   withIndex(clone, (env, scratch) => {
     const out = join(scratch, 'tree');
     fs.mkdirSync(out);
     rawTree(clone, treeId, out);
+    if (inspect) inspect(owned.base.root === '.' ? out : join(out, owned.base.root));
     try { validateBase(owned.base.root === '.' ? out : join(out, owned.base.root), owned.base, allow ? { allow } : {}); }
     catch (e) { fail('E_VALIDATION', `base ${owned.alias}: the proposed tree is not a valid OKF base (okf-validate --strict): ${e.message.replaceAll(out, '<clone>')}`); }
   });
@@ -521,7 +525,7 @@ function prepare(source, dir, plan) {
     let treeId = workingTree(clone, accepted), list = changes(clone, accepted, treeId);
     if (!list.length) { results.push({ alias: entry.alias, clone, accepted, tree: treeId, changed: [] }); continue; }
     checkFiles(owned, list);
-    let allow;
+    let allow, inspect;
     if (scope.subjects) {
       // okf 6.0, the subject layout (spec §3): a version-1 soul's new claims get
       // about: from legacy-nodes, every generated index is regenerated, then the
@@ -532,12 +536,18 @@ function prepare(source, dir, plan) {
       treeId = workingTree(clone, accepted); list = changes(clone, accepted, treeId);
       checkFiles(owned, list);
       if (source.decl.version !== 2) checkScope(owned, scope, list.filter(c => !generatedPath(baseRel(owned.base, c.path))));
-      const before = p => { try { return git(clone, ['show', `${accepted}:${baseFile(owned.base, p)}`], { trim: false }); } catch { return null; } };
-      checkWriteSurface({ root, decl: source.decl, ownedNodes: scope.ownedNodes, changes: rel(list), before });
-      allow = findings => proposalFindings(findings, rel(list));
-      verdicts.push(...proposalVerdicts(root, rel(list)).map(v => ({ ...v, path: baseFile(owned.base, v.path) })));
+      // The write surface and the verdict lanes judge stored bytes on both
+      // sides (the accepted blob, the proposed tree's blob), never a checkout:
+      // a smudge or ident expansion in the clone changes neither.
+      const before = p => { try { return git(clone, ['cat-file', 'blob', `${accepted}:${baseFile(owned.base, p)}`], { trim: false }); } catch { return null; } };
+      const changed = rel(list);
+      inspect = proposed => {
+        checkWriteSurface({ root: proposed, decl: source.decl, ownedNodes: scope.ownedNodes, changes: changed, before });
+        verdicts.push(...proposalVerdicts(proposed, changed).map(v => ({ ...v, path: baseFile(owned.base, v.path) })));
+      };
+      allow = findings => proposalFindings(findings, changed);
     } else checkScope(owned, scope, list);
-    validateTree(clone, owned, treeId, allow);
+    validateTree(clone, owned, treeId, allow, inspect);
     checked.push({ entry, owned, clone, accepted, treeId, list });
   }
   const block = provenance(source, source.decl.version === 2 ? bases.filter(b => plan.bases.some(e => e.alias === b.alias)) : bases, ev), body = prBody(proposal, block, verdictSection(verdicts));
