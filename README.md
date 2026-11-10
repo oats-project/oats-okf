@@ -693,14 +693,11 @@ still reads **version 2** (a 5.x harvester's, with `harvester` instead of
 `incarnation` and `proposer`) and **version 1** (4.x run and input ids), so
 older PRs stay reviewable.
 
-**Format only, for a later release:** version 3 also defines an optional
-`source.subjects` (`["<kind>/<slug>", …]`, non-empty, distinct) for a soul
-declared by subjects; only with `subjects` may `source.owner` be `null`, and
-then `ownedNodes` and `readNodes` are `[]`. `subjects` is a version 3 key only.
-oats.okf 6.0 itself still reads only a version 1 `okf.json` (`owner`, `owns`,
-`reads`; anything else is `E_CONFIG`), so `oats okf propose` never writes
-`subjects` in this release; the parser accepts it so that PRs from the
-subject layer stay reviewable.
+Version 3 also has an optional `source.subjects` (`["<kind>/<slug>", …]`,
+non-empty, distinct), written for a soul declared by subjects (`okf.json`
+version 2, [The subject layout](#the-subject-layout-bridged-bases)); only with
+`subjects` may `source.owner` be `null`, and then `ownedNodes` and
+`readNodes` are `[]`. `subjects` is a version 3 key only.
 
 ## The knowledge maintainer
 

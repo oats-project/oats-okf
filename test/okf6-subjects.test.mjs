@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX } from './fixtures/bridged-base.mjs';
+import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX, VALIDATE } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
@@ -289,15 +289,18 @@ test('spawn: a host that cached the plain base spawns a version-2 soul once the 
   assert.match(r.out.brief,/- system\/okf — The knowledge provider package\. \(1 decision, 1 insight\)/);
 });
 
-test('a version-2 soul whose subjects live in two bridged bases: spawn, the default index, subject and claims read each from its own base',t=>{
-  const dir=tmp(t,'okf6-two-bases-'),a=join(dir,'a'),b=join(dir,'b'),bindingsFile=join(dir,'deployment','okf-bindings.json'),soul=join(dir,'soul'),home=join(dir,'home'),user=join(dir,'user');
-  writePlainBase(a,{id:'base-a'});bridge(a);writePlainBase(b,{id:'base-b'});bridge(b);
-  // Base b's subjects are system/other and workstream/other.
-  const walk=d=>fs.readdirSync(d,{recursive:true}).filter(n=>n.endsWith('.md')).map(n=>join(d,n));
-  for(const file of walk(b)) fs.writeFileSync(file,fs.readFileSync(file,'utf8').replaceAll('system/okf','system/other').replaceAll('workstream/knowledge','workstream/other'));
+/** A second bridged base whose subjects are system/other and workstream/other. */
+function otherBase(b,id) {
+  writePlainBase(b,{id});bridge(b);
+  for(const n of fs.readdirSync(b,{recursive:true}).filter(n=>n.endsWith('.md'))) fs.writeFileSync(join(b,n),fs.readFileSync(join(b,n),'utf8').replaceAll('system/okf','system/other').replaceAll('workstream/knowledge','workstream/other'));
   fs.renameSync(join(b,'subjects/system/okf.md'),join(b,'subjects/system/other.md'));fs.renameSync(join(b,'subjects/workstream/knowledge.md'),join(b,'subjects/workstream/other.md'));
   fs.rmSync(join(b,'subjects/system/okf'),{recursive:true});fs.rmSync(join(b,'subjects/workstream/knowledge'),{recursive:true});
   reindex(b);assert.equal(validate(b,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  return b;
+}
+test('a version-2 soul whose subjects live in two bridged bases: spawn, the default index, subject and claims read each from its own base',t=>{
+  const dir=tmp(t,'okf6-two-bases-'),a=join(dir,'a'),b=join(dir,'b'),bindingsFile=join(dir,'deployment','okf-bindings.json'),soul=join(dir,'soul'),home=join(dir,'home'),user=join(dir,'user');
+  writePlainBase(a,{id:'base-a'});bridge(a);otherBase(b,'base-b');
   json(bindingsFile,{version:1,stateDir:join(dir,'state'),bases:{a:{id:'base-a',kind:'directory',path:a},b:{id:'base-b',kind:'directory',path:b}}});
   json(join(soul,'okf.json'),{version:2,subjects:['system/okf','workstream/other']});
   json(join(home,'instance.json'),{name:'worker-1',kind:'agent'});fs.mkdirSync(user);
@@ -316,6 +319,35 @@ test('a version-2 soul whose subjects live in two bridged bases: spawn, the defa
   write(join(b,'subjects/system/okf.md'),fs.readFileSync(join(a,'subjects/system/okf.md'),'utf8'));
   assert.match(run(f,['subject','system/okf','--json']).out.error.message,/^subject system\/okf is in several bases \(a, b\); pass --base ALIAS$/);
   assert.match(run(f,['subjects','--json']).out.error.message,/several bases have the subject layout \(a, b\); pass --base ALIAS/);
+});
+
+test('spawn: a version-2 soul resolving across two cached Git bases fetches neither, even with every cache due',t=>{
+  const f=deployment(t),b=otherBase(join(f.dir,'repo-b'),'base-b');
+  spawnSync('git',['init','-q','-b','main',b],{env:gitEnv(f.user)});
+  for(const args of [['add','-A'],['commit','-q','-m','accepted']]) spawnSync('git',['-C',b,'-c','user.name=t','-c','user.email=t@example.invalid',...args],{env:gitEnv(f.user)});
+  const doc=JSON.parse(fs.readFileSync(f.bindingsFile,'utf8'));
+  doc.bases.other={id:'base-b',kind:'git',repository:b,root:'.',acceptedBranch:'main',pr:{repository:'example/other'}};json(f.bindingsFile,doc);
+  json(join(f.soul,'okf.json'),{version:2,subjects:['system/okf','workstream/other']});
+  assert.equal(hook(f,'spawn').status,0,'both caches are cloned and validated');
+  const stamps=()=>['base-1','base-b'].map(id=>JSON.parse(fs.readFileSync(join(f.stateDir,'cache',`${id}.git`,'okf-consult.json'),'utf8')).fetchedAt);
+  const before=stamps();
+  const r=run(f,['spawn'],{extra:{OATS_EVENT:'spawn',OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile,'consult-max-age':0})}});
+  assert.equal(r.status,0,r.text);
+  assert.match(r.out.brief,/- system\/okf — .*\n- workstream\/other — /);
+  assert.deepEqual(stamps(),before,'a declaration that resolves against the cached commits refreshes nothing');
+});
+
+test('a malformed flow list cannot stall validation (linear parser), on a plain base as on a bridged one',t=>{
+  const line='tags: ["foo #bar",'+' '.repeat(200000)+'""x]';
+  for(const plain of [true,false]) {
+    const dir=join(tmp(t,'okf6-slow-'),'base');writePlainBase(dir);if(!plain) bridge(dir);
+    edit(join(dir,'peer/lesson.md'),'description: A fake',`${line}\ndescription: A fake`);
+    const started=Date.now(),r=spawnSync(process.execPath,[VALIDATE,dir,'--strict','--json'],{encoding:'utf8',timeout:20000});
+    assert.equal(r.error,undefined,`${plain?'plain':'bridged'}: ${r.error}`);
+    assert.ok(Date.now()-started<10000,`${plain?'plain':'bridged'} took ${Date.now()-started} ms`);
+    const out=JSON.parse(r.stdout);
+    if(plain) assert.deepEqual(out.errors,[]); else assert.ok(out.errors.includes("peer/lesson.md: malformed flow list in 'tags' (flat [a, \"b\"] items only)"));
+  }
 });
 
 test('a version-1 soul on the bridged base: spawn brief and `index` unchanged from the plain base',t=>{

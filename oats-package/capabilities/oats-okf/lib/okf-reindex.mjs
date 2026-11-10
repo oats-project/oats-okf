@@ -37,20 +37,33 @@ const MEMBERS = "In this workstream";
 /** A flow list `[a, "b"]`: bare or JSON double-quoted items; null when the
  *  value is not one (nested or unbalanced brackets, an empty item). */
 export function flowList(value) {
-  const inner = value.slice(1, -1).trim();
-  if (!inner) return [];
-  const items = [], item = /\s*(?:"((?:[^"\\]|\\.)*)"|([^,"[\]]*[^,"[\]\s]))\s*(,|$)/y;
-  let at = 0;
-  while (at < inner.length) {
-    item.lastIndex = at;
-    const m = item.exec(inner);
-    if (!m) return null;
-    if (m[1] !== undefined) { try { items.push(JSON.parse(`"${m[1]}"`)); } catch { return null; } }
-    else items.push(m[2].trim());
-    at = item.lastIndex;
-    if (m[3] === "," && at >= inner.length) return null;
+  // One cursor pass, no backtracking: the parser also runs on plain bases.
+  const s = value.slice(1, -1), items = [], space = (c) => c === " " || c === "\t" || c === "\r" || c === "\n";
+  let i = 0;
+  const skip = () => { while (i < s.length && space(s[i])) i++; };
+  skip();
+  if (i === s.length) return [];
+  for (;;) {
+    skip();
+    if (i >= s.length) return null; // an empty item
+    if (s[i] === '"') {
+      let j = i + 1;
+      while (j < s.length && s[j] !== '"') j += s[j] === "\\" ? 2 : 1;
+      if (j >= s.length) return null;
+      try { items.push(JSON.parse(s.slice(i, j + 1))); } catch { return null; }
+      i = j + 1;
+    } else {
+      const from = i;
+      while (i < s.length && s[i] !== ",") { if (s[i] === '"' || s[i] === "[" || s[i] === "]") return null; i++; }
+      const bare = s.slice(from, i).trim();
+      if (!bare) return null;
+      items.push(bare);
+    }
+    skip();
+    if (i >= s.length) return items;
+    if (s[i] !== ",") return null;
+    i++;
   }
-  return items;
 }
 /** A flow-list value without its trailing comment: ` #` outside double quotes. */
 function listValue(value) {

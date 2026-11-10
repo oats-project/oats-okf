@@ -47,14 +47,14 @@ function refsByAlias(decl,bindings) {
   for(const alias of Object.keys(out)) out[alias]=[...new Set(out[alias])];
   return out;
 }
-function primeGitBases(bindings,decl) {
+function primeGitBases(bindings,decl,{refreshDue=false}={}) {
   const refs=refsByAlias(decl,bindings);
   const allAliases=Object.keys(refs).filter(alias=>bindings.bases[alias]?.kind==='git');
   const aliases=allAliases.slice(0,64), skipped=allAliases.slice(64);
   if(!aliases.length) return {warnings:[],primed:{}};
   const currentSettings=settings();
   const primingSettings={...currentSettings,'git-timeout':Math.min(currentSettings['git-timeout'] ?? 20,20)};
-  const result=spawnSync(process.execPath,[primeBasesScript],{input:JSON.stringify({bindings,aliases,refs,decl}),encoding:'utf8',timeout:25000,killSignal:'SIGTERM',env:{...process.env,OATS_SETTINGS:JSON.stringify(primingSettings)}});
+  const result=spawnSync(process.execPath,[primeBasesScript],{input:JSON.stringify({bindings,aliases,refs,decl,refreshDue}),encoding:'utf8',timeout:25000,killSignal:'SIGTERM',env:{...process.env,OATS_SETTINGS:JSON.stringify(primingSettings)}});
   const skippedWarnings=skipped.map(alias=>`okf base ${alias} not primed: too many git bases to prime concurrently; run \`oats okf bases\``);
   const warnAll=reason=>({warnings:[...aliases.map(alias=>`okf base ${alias} not primed: ${firstLine(reason)}; run \`oats okf bases\``),...skippedWarnings],primed:{}});
   if(result.error?.code==='ETIMEDOUT') return warnAll('timed out');
@@ -89,7 +89,16 @@ export function consultSource(home) {
  *  bases retain bounded priming; unavailable priming warns rather than refusing.
  *  Successful cached checks leave freshness to consultation. → { decl, warnings }. */
 export function checkSeat(home) {
-  const {decl,bindings}=consultSource(home),priming=primeGitBases(bindings,decl);
-  const accepted=validateRefs(bindings,decl,priming.primed);
+  const {decl,bindings}=consultSource(home);
+  let priming=primeGitBases(bindings,decl),accepted;
+  try { accepted=validateRefs(bindings,decl,priming.primed); }
+  catch(e) {
+    // okf 6.0: a version-2 declaration that does not resolve against the cached
+    // commits gets one bounded refresh of the due caches (a base may have been
+    // bridged, or a subject added, upstream since), never a fetch on success.
+    if(decl.version!==2 || e.code!=='E_CONFIG') throw e;
+    priming=primeGitBases(bindings,decl,{refreshDue:true});
+    accepted=validateRefs(bindings,decl,priming.primed);
+  }
   return {decl,bindings,accepted,warnings:priming.warnings};
 }

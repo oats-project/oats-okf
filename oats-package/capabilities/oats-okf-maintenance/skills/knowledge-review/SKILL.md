@@ -52,7 +52,7 @@ It reads the PR with `gh` and returns:
   validated: the source soul (name, owner, instance, owned/read nodes,
   bases) and the task refs, plus
   - version 3 (fence `okf-proposal`, oats.okf 6): the source's incarnation
-    (and, from a later release's soul declared by subjects,
+    (and, for a soul declared by subjects (okf.json version 2),
     `source.subjects` with `owner` possibly `null` and no owned or read
     nodes; review its claims against the PR's changed paths as usual),
     the **proposer** (`live`: the instance itself; `recovery`: an operator

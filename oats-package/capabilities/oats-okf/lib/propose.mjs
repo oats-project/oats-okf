@@ -418,10 +418,8 @@ function validateTree(clone, owned, treeId, allow) {
 }
 
 // ------------------------------------------------------------ outgoing texts
-/** The v3 provenance block. A soul declared by subjects (no owner/owns/
- *  reads) writes source.subjects, owner null and no nodes: format only in
- *  6.0, whose config reads a version 1 okf.json alone (the subject layer,
- *  a later release, makes it reachable). */
+/** The v3 provenance block. A soul declared by subjects (okf.json version 2:
+ *  no owner/owns/reads) writes source.subjects, owner null and no nodes. */
 export function provenance(source, bases, ev) {
   const decl = source.decl, owns = decl.owns ?? [], subjects = Array.isArray(decl.subjects) ? { subjects: [...decl.subjects] } : {};
   return {
