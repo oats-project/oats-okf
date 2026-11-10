@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fs, join, safePath, readJSON, atomic, fail } from './io.mjs';
-import { loadBindings, declaration, settings, validateBindings, resolveNodes } from './config.mjs';
+import { loadBindings, declaration, settings, validateBindings, resolveNodes, resolveSubjects } from './config.mjs';
 import { short } from './consult.mjs';
 import { loadInvocationKnowledgeBinding } from './binding-wire.mjs';
 import { validateBase } from './stores.mjs';
@@ -24,26 +24,31 @@ export function ensureInstanceKnowledge(home) {
 }
 const firstLine=text=>String(text||'unknown error').split(/\r?\n/).map(s=>s.trim()).find(Boolean) || 'unknown error';
 function validateRefs(bindings,decl,primed={}) {
-  const accepted={},referenced=refsByAlias(decl);
+  const accepted={},referenced=refsByAlias(decl,bindings);
   for(const [alias,base] of Object.entries(bindings.bases)) if(base.kind==='directory' && Object.hasOwn(referenced,alias)) {
-    accepted[alias]={nodes:validateBase(base.path,base).meta.nodes};
+    const validated=validateBase(base.path,base);accepted[alias]={nodes:validated.meta.nodes,subjects:validated.subjects};
   }
   for(const [alias,v] of Object.entries(primed)) {
     if(!v?.ok) fail(v?.error?.code || 'E_VALIDATION',`base "${alias}" at ${short(v?.receipt || {base:alias,kind:'git',commit:'unknown'})}: ${v?.error?.message || 'base is not a validated knowledge tree'}`);
-    accepted[alias]={nodes:v.nodes};
+    accepted[alias]={nodes:v.nodes,subjects:v.subjects ?? null};
   }
   const unprimedGit=new Set(Object.entries(bindings.bases).filter(([alias,base])=>base.kind==='git' && !Object.hasOwn(primed,alias)).map(([alias])=>alias));
   const notSkipped=ref=>!unprimedGit.has(ref.split('/')[0]);
   resolveNodes({...decl,owns:decl.owns.filter(notSkipped),reads:decl.reads.filter(notSkipped)},bindings,accepted);
+  resolveSubjects(decl,bindings,accepted);
+  return accepted;
 }
-function refsByAlias(decl) {
+/** The bases a declaration reads: its nodes' bases (v1), or every bound base
+ *  (v2: a subject may live in any base with the subject layout). */
+function refsByAlias(decl,bindings) {
   const out={};
+  if(decl.version===2) {for(const alias of Object.keys(bindings.bases)) out[alias]=[];return out;}
   for(const ref of [...decl.owns,...decl.reads]) {const [alias,node]=ref.split('/');(out[alias]??=[]).push(node);}
   for(const alias of Object.keys(out)) out[alias]=[...new Set(out[alias])];
   return out;
 }
 function primeGitBases(bindings,decl) {
-  const refs=refsByAlias(decl);
+  const refs=refsByAlias(decl,bindings);
   const allAliases=Object.keys(refs).filter(alias=>bindings.bases[alias]?.kind==='git');
   const aliases=allAliases.slice(0,64), skipped=allAliases.slice(64);
   if(!aliases.length) return {warnings:[],primed:{}};
@@ -85,6 +90,6 @@ export function consultSource(home) {
  *  Successful cached checks leave freshness to consultation. → { decl, warnings }. */
 export function checkSeat(home) {
   const {decl,bindings}=consultSource(home),priming=primeGitBases(bindings,decl);
-  validateRefs(bindings,decl,priming.primed);
-  return {decl,warnings:priming.warnings};
+  const accepted=validateRefs(bindings,decl,priming.primed);
+  return {decl,bindings,accepted,warnings:priming.warnings};
 }

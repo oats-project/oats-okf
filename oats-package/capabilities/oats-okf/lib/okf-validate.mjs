@@ -8,10 +8,18 @@
  * reserved files (index.md, log.md) carry no `type`.
  * Producer lints (--strict, warnings): broken intra-bundle links (log.md exempt),
  * links missing .md, concepts unreachable from any index.md, missing title/description.
- * Exit: 0 conformant, 1 errors (or warnings with --strict), 2 usage.
+ * Subject layout (okf-base.json lists the reserved nodes claims, subjects and
+ * verdicts; see okf-reindex.mjs), errors: a malformed flow list; a claim whose
+ * `about` is missing, empty or names a subject with no file; a subject file
+ * off subjects/<kind>/<slug>.md or whose type does not match its kind; a
+ * Verdict outside verdicts/ or a malformed verdict; a claim under claims/
+ * without `id`; a duplicate id. Lints (--strict): an old-node claim without
+ * `id`; a generated index that differs from okf-reindex.mjs's output.
+ * Exit: 0 conformant, 1 errors (or warnings with --strict and OKF_STRICT_EXIT), 2 usage.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve, dirname, posix } from "node:path";
+import { parseFrontmatter, bridged, subjectOfPath, place, KINDS, VERDICTS, SUBJECT_REF, titleHash, staleViews } from "./okf-reindex.mjs";
 
 const args = process.argv.slice(2);
 const strict = args.includes("--strict");
@@ -31,22 +39,9 @@ const files = [];
 })(root);
 
 const errors = [], warnings = [];
+const subjectLayout = bridged(root);
 const rel = (p) => relative(root, p).split("\\").join("/");
 const isReserved = (p) => ["index.md", "log.md"].includes(posix.basename(rel(p)));
-
-function parseFrontmatter(text) {
-  if (!text.startsWith("---")) return { present: false };
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
-  if (!m) return { present: true, parsed: false };
-  const meta = {};
-  for (const line of m[1].split("\n")) {
-    if (/^\s*#/.test(line) || !line.trim()) continue;
-    const kv = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
-    if (kv) meta[kv[1]] = kv[2].replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "").trim();
-    else if (!/^\s+/.test(line)) return { present: true, parsed: false };
-  }
-  return { present: true, parsed: true, meta, body: text.slice(m[0].length) };
-}
 
 const concepts = new Map(); // rel path -> { meta, body }
 for (const f of files) {
@@ -65,11 +60,65 @@ for (const f of files) {
   if (!fm.present) { errors.push(`${r}: missing YAML frontmatter`); continue; }
   if (!fm.parsed) { errors.push(`${r}: unparseable YAML frontmatter`); continue; }
   if (!fm.meta.type) errors.push(`${r}: missing or empty required field 'type'`);
+  if (subjectLayout) for (const key of fm.listErrors) errors.push(`${r}: malformed flow list in '${key}' (flat [a, "b"] items only)`);
   if (strict) {
     if (!fm.meta.title) warnings.push(`${r}: missing recommended field 'title'`);
     if (!fm.meta.description) warnings.push(`${r}: missing recommended field 'description'`);
   }
   concepts.set(r, { meta: fm.meta, body: fm.body });
+}
+
+if (subjectLayout) {
+  // The subject layout's semantic checks (okf.json v2 subjects, `about:` edges, verdicts).
+  const list = (v) => Array.isArray(v) ? v : null;
+  const subjects = new Set(), ids = new Map();
+  for (const [r, c] of concepts) if (!c.reserved && subjectOfPath(r)) subjects.add(subjectOfPath(r).ref);
+  const legacy = new Map();
+  for (const [r, c] of concepts) {
+    if (c.reserved || !c.meta) continue;
+    const m = c.meta, where = place(r), type = typeof m.type === "string" ? m.type : "";
+    if (type === "Verdict" && where !== "verdicts") errors.push(`${r}: a Verdict lives only under verdicts/`);
+    if (where === "subjects") {
+      const s = subjectOfPath(r);
+      if (!s) { errors.push(`${r}: not a subject file: subjects hold only subjects/<${Object.keys(KINDS).join("|")}>/<slug>.md`); continue; }
+      if (!SUBJECT_REF.test(s.ref)) errors.push(`${r}: a subject slug is lowercase letters, digits, '.', '_' and '-'`);
+      if (type !== KINDS[s.kind]) errors.push(`${r}: a subject in subjects/${s.kind}/ has type ${KINDS[s.kind]}, not ${JSON.stringify(m.type)}`);
+      for (const key of ["in-workstreams", "depends-on", "legacy-nodes"]) if (m[key] !== undefined && !list(m[key])) errors.push(`${r}: '${key}' must be a flow list`);
+      for (const ref of list(m["in-workstreams"]) ?? []) if (!ref.startsWith("workstream/") || !subjects.has(ref)) errors.push(`${r}: in-workstreams names ${JSON.stringify(ref)}, not a workstream subject of this base`);
+      for (const ref of list(m["depends-on"]) ?? []) if (!ref.startsWith("system/") || !subjects.has(ref)) errors.push(`${r}: depends-on names ${JSON.stringify(ref)}, not a system subject of this base`);
+      for (const node of list(m["legacy-nodes"]) ?? []) {
+        if (legacy.has(node)) errors.push(`${r}: legacy node ${JSON.stringify(node)} is already absorbed by ${legacy.get(node)}`);
+        else legacy.set(node, r);
+      }
+      continue;
+    }
+    if (where === "verdicts") {
+      const id = /^verdicts\/([a-z0-9][a-z0-9._-]*)\.md$/.exec(r)?.[1];
+      if (!id) errors.push(`${r}: a verdict is verdicts/<id>.md, named by the claim id it rules on`);
+      if (type !== "Verdict") errors.push(`${r}: only Verdict files live under verdicts/`);
+      else {
+        if (!VERDICTS.includes(m.verdict)) errors.push(`${r}: verdict must be one of ${VERDICTS.join(", ")}`);
+        for (const key of ["claim-type", "claim-title"]) if (!m[key] || typeof m[key] !== "string") errors.push(`${r}: missing '${key}'`);
+        if (m["title-hash"] !== titleHash(m["claim-type"], m["claim-title"])) errors.push(`${r}: title-hash must be ${titleHash(m["claim-type"], m["claim-title"])} (sha256 of <claim-type>|<normalized claim-title>, 16 hex)`);
+        if (["duplicate", "superseded"].includes(m.verdict) && !m.canonical) errors.push(`${r}: a ${m.verdict} verdict names the canonical claim id`);
+      }
+      continue;
+    }
+    // A claim or document: in claims/ or an old node.
+    const about = list(m.about);
+    if (!about || !about.length) errors.push(`${r}: 'about' must list one or more subjects, as [<kind>/<slug>, ...]`);
+    else for (const ref of about) if (!SUBJECT_REF.test(ref) || !subjects.has(ref)) errors.push(`${r}: about names ${JSON.stringify(ref)}, which has no subject file subjects/${ref}.md`);
+    if (!m.id) { if (r.startsWith("claims/")) errors.push(`${r}: missing 'id' (stamped by the maintainer at acceptance)`); else if (strict) warnings.push(`${r}: missing 'id' (stamped by the maintainer at acceptance)`); }
+    else if (typeof m.id !== "string") errors.push(`${r}: 'id' must be a scalar`);
+    else if (ids.has(m.id)) errors.push(`${r}: id ${m.id} is also ${ids.get(m.id)}`);
+    else ids.set(m.id, r);
+  }
+  if (strict) {
+    try {
+      const metas = new Map([...concepts].filter(([, c]) => !c.reserved).map(([r, c]) => [r, c.meta]));
+      for (const s of staleViews(root, metas)) warnings.push(`${s.path}: generated index is ${s.status}; run okf-reindex.mjs`);
+    } catch (e) { errors.push(`generated indexes: ${e.message}`); }
+  }
 }
 
 if (strict) {
@@ -112,7 +161,7 @@ if (strict) {
 
 const conceptCount = [...concepts.values()].filter((c) => !c.reserved).length;
 if (asJson) {
-  console.log(JSON.stringify({ bundle: root, concepts: conceptCount, errors, warnings, conformant: errors.length === 0 }, null, 2));
+  console.log(JSON.stringify({ bundle: root, layout: subjectLayout ? "subjects" : "plain", concepts: conceptCount, errors, warnings, conformant: errors.length === 0 }, null, 2));
 } else {
   console.log(`OKF validate — ${root}`);
   console.log(`  ${conceptCount} concept(s), ${errors.length} error(s), ${warnings.length} warning(s)`);

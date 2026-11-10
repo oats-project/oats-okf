@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fs, join, dirname, withLock } from './io.mjs';
+import { fs, join, dirname, withLock, fail } from './io.mjs';
 import { withBase, verdict, cacheDir, cacheLock, clearDeadCacheLock } from './consult.mjs';
 import { resolveNodes } from './config.mjs';
 
@@ -34,7 +34,7 @@ export function runWorker(bindings, alias, refs = null, decl = null) {
     const v = verdict(ctx, { fetchMissing: !ctx.offline }), wanted = Array.isArray(refs?.[alias]) ? refs[alias] : null;
     const nodes = v.ok ? Object.fromEntries((wanted || []).filter(node => Object.hasOwn(v.nodes, node)).map(node => [node, v.nodes[node]])) : v.nodes;
     return v.ok
-      ? { alias, primed: true, ok: true, receipt: ctx.receipt, digest: v.digest, nodes }
+      ? { alias, primed: true, ok: true, receipt: ctx.receipt, digest: v.digest, nodes, subjects: v.subjects ?? null }
       : { alias, primed: true, ok: false, receipt: ctx.receipt, error: v.error };
   };
   return withBase(bindings, alias, { preferCached: true }, ctx => {
@@ -43,6 +43,8 @@ export function runWorker(bindings, alias, refs = null, decl = null) {
       const here = ref => ref.startsWith(`${alias}/`);
       try {
         resolveNodes({ ...decl, owns: decl.owns.filter(here), reads: decl.reads.filter(here) }, bindings, { [alias]: cached });
+        // okf 6.0, v2: a declared subject this cached commit lacks may be new upstream.
+        if (decl.version === 2 && Array.isArray(cached.subjects) && decl.subjects.some(ref => !cached.subjects.includes(ref))) fail('E_CONFIG', 'subject not in the cached commit');
       } catch (error) {
         if (!['E_CONFIG', 'E_OWNER'].includes(error.code)) throw error;
         // A node/owner may have changed upstream since this cache was fetched.

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { fs, join, dirname, safePath, readJSON, atomic, tree, materialize, digest, hash, withLock, exec, cleanEnv, fail, relPath, overlaps, resolve, within, redactUrls, displayRepo } from './io.mjs';
 import { metadata, noGit, gitTimeoutMs } from './config.mjs';
+import { isBridgedMeta, subjectOfPath } from './okf-reindex.mjs';
 const validator = fileURLToPath(new URL('./okf-validate.mjs', import.meta.url));
 // Never let local replace refs reinterpret frozen OIDs, including inside Git's
 // transport subprocesses. Override even an explicitly supplied command env.
@@ -47,7 +48,13 @@ export function validateBase(root, base) {
   const files=tree(root,{git:base.kind==='git' && base.root==='.'}); const meta=metadata(files,base);
   const result=JSON.parse(exec(process.execPath,[validator,root,'--strict','--json'],{acceptedStatus:[0,1]}));
   if(result.errors.length || result.warnings.length) fail('E_VALIDATION', [...result.errors,...result.warnings].join('; '));
-  return {files,meta,digest:digest(files)};
+  return {files,meta,digest:digest(files),subjects:subjectsOf(files,meta)};
+}
+/** okf 6.0: the subject refs of a base with the subject layout (its subject
+ *  files, subjects/<kind>/<slug>.md), or null for a plain base. */
+export function subjectsOf(files,meta) {
+  if(!isBridgedMeta(meta)) return null;
+  return Object.keys(files).map(p=>subjectOfPath(p)?.ref).filter(Boolean).sort();
 }
 /** Git must never fetch a missing blob on its own, one round trip per object:
  *  a read of a blob the stage lacks fails instead (git 2.45+; an older git
