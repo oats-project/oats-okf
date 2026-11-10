@@ -187,7 +187,8 @@ the craft):
   under `claims/` with `about: [<kind>/<slug>, ...]` (one or more existing
   subjects). You may also add a new system or project subject file under
   `subjects/system/` or `subjects/project/` when a claim needs one, and set
-  `status: superseded` on a concept your claim supersedes. Never touch
+  `status: superseded` on a concept your claim supersedes; the claim says so
+  with `supersedes: [/<path>]` (or the concept's id). Never touch
   `verdicts/`, `subjects/workstream/`, `okf-base.json`, the root `index.md`
   by hand, or any other existing concept (`E_SCOPE` names the path and the
   rule). The tool's check is advisory; the maintainer's review is the gate.

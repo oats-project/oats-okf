@@ -622,6 +622,26 @@ export function withLayout(source, flags, fn) {
   if (!found.length) fail('E_USAGE', `bases ${aliases.join(', ')} have no subject layout`);
   return withBase(source.bindings, found[0], opts, fn);
 }
+/** Where each subject ref lives: the one bound base with the subject layout
+ *  holding its file (--base narrows the search to one). → Map ref → alias.
+ *  A ref in two bases is ambiguous (E_USAGE, pass --base). */
+function subjectBases(source, flags, refs) {
+  const aliases = flags.base ? [flags.base] : Object.keys(source.bindings.bases), layouts = [];
+  const found = new Map(refs.map(ref => [ref, []]));
+  for (const alias of aliases) withBase(source.bindings, alias, { fresh: !!flags.fresh }, ctx => {
+    if (!hasSubjectLayout(ctx)) return;
+    layouts.push(alias);
+    for (const ref of refs) if (entry(ctx, subjectFile(ref))?.type === 'file') found.get(ref).push(alias);
+  });
+  if (!layouts.length) fail('E_USAGE', aliases.length === 1 ? `base ${aliases[0]} has no subject layout` : `bases ${aliases.join(', ')} have no subject layout`);
+  for (const [ref, at] of found) {
+    if (at.length > 1) fail('E_USAGE', `subject ${ref} is in several bases (${at.join(', ')}); pass --base ALIAS`);
+    if (!at.length) fail('E_NOT_FOUND', `no bound base with the subject layout (${layouts.join(', ')}) has subject ${ref} (/${subjectFile(ref)}); \`oats okf subjects\` lists them`);
+  }
+  return new Map([...found].map(([ref, at]) => [ref, at[0]]));
+}
+/** fn(ctx) on the base holding one subject. */
+const withSubject = (source, flags, ref, fn) => withBase(source.bindings, subjectBases(source, flags, [ref]).get(ref), {}, fn);
 function subjectEntry(ctx, ref) {
   const file = subjectFile(ref), e = entry(ctx, file);
   if (!e || e.type !== 'file') fail('E_NOT_FOUND', `${ctx.alias} has no subject ${ref} (${shown(file)}) at ${short(ctx.receipt)}; \`oats okf subjects\` lists them`);
@@ -638,12 +658,15 @@ const plural = (type, n) => { const t = type.toLowerCase(); return n === 1 ? t :
 export const countText = counts => [...counts].map(([type, n]) => `${n} ${plural(type, n)}`).join(', ');
 function subjectIndexes(source, flags, refs) {
   refs.forEach(subjectArg);
-  const declared = new Set(source.decl.subjects ?? []);
-  return withLayout(source, flags, ctx => {
-    const indexes = refs.map(ref => { const v = readView(ctx, ref); return { base: ctx.alias, node: null, subject: ref, relation: declared.has(ref) ? 'subject' : null, path: v.path, text: v.text, receipt: ctx.receipt }; });
-    const text = indexes.map(x => `## ${x.base}/${x.subject}${x.relation ? ` (${x.relation})` : ''}\n\n${x.text.trimEnd()}\n`).join('\n');
-    return { result: { indexes }, text: `${text}\n${footer([ctx.receipt])}` };
+  const declared = new Set(source.decl.subjects ?? []), where = subjectBases(source, flags, refs), byRef = new Map(), receipts = [];
+  // Each subject from the base that holds it, in declaration order.
+  for (const alias of [...new Set(where.values())]) withBase(source.bindings, alias, {}, ctx => {
+    receipts.push(ctx.receipt);
+    for (const ref of refs.filter(r => where.get(r) === alias)) { const v = readView(ctx, ref); byRef.set(ref, { base: alias, node: null, subject: ref, relation: declared.has(ref) ? 'subject' : null, path: v.path, text: v.text, receipt: ctx.receipt }); }
   });
+  const indexes = refs.map(ref => byRef.get(ref));
+  const text = indexes.map(x => `## ${x.base}/${x.subject}${x.relation ? ` (${x.relation})` : ''}\n\n${x.text.trimEnd()}\n`).join('\n');
+  return { result: { indexes }, text: `${text}\n${footer(receipts)}` };
 }
 export function subjects(source, flags, positionals) {
   if (positionals.length) fail('E_USAGE', 'subjects takes no argument; filter with --kind system|workstream|project');
@@ -658,7 +681,7 @@ export function subjects(source, flags, positionals) {
 }
 export function subject(source, flags, positionals) {
   const ref = subjectArg(onePath(positionals, 'subject <kind>/<slug>'));
-  return withLayout(source, flags, ctx => {
+  return withSubject(source, flags, ref, ctx => {
     const { file, e } = subjectEntry(ctx, ref), text = read(ctx, file, e), meta = parseFrontmatter(text).meta ?? {};
     const list = key => Array.isArray(meta[key]) ? meta[key] : [];
     const { path, view } = readView(ctx, ref), counts = viewCounts(view);
@@ -678,7 +701,7 @@ export function claims(source, flags, positionals) {
   if (positionals.length) fail('E_USAGE', 'claims takes --about <kind>/<slug> [--type T] [--kind K]');
   if (flags.about === undefined) fail('E_USAGE', 'claims needs --about <kind>/<slug>');
   const ref = subjectArg(flags.about), same = (a, b) => b === undefined || (a ?? '').toLowerCase() === b.toLowerCase();
-  return withLayout(source, flags, ctx => {
+  return withSubject(source, flags, ref, ctx => {
     const { path, view } = readView(ctx, ref);
     const rows = view.sections.filter(x => same(x.type, flags.type) && same(x.kind, flags.kind)).flatMap(x => x.entries.map(c => ({ type: x.type, kind: x.kind, title: c.title, path: c.path, description: c.description })));
     const text = rows.map(r => `${shown(r.path)}  [${r.type}${r.kind ? `/${r.kind}` : ''}] ${r.title}${r.description ? ` — ${r.description}` : ''}`).join('\n');

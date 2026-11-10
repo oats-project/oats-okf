@@ -372,13 +372,12 @@ function checkFiles(owned, list) {
     if (c.status !== 'D' && c.mode !== '100644') fail('E_SCOPE', `${shown}: only regular, non-executable Markdown files may be proposed`);
   }
 }
+/** Node ownership (a version-1 soul); checkFiles has already judged root
+ *  containment, hidden paths and modes. */
 function checkScope(owned, scope, list) {
   for (const c of list) {
     const shown = JSON.stringify(c.path).slice(0, 200);
-    if (owned.base.root !== '.' && !c.path.startsWith(`${owned.base.root}/`)) fail('E_SCOPE', `${shown} is outside base ${owned.alias}'s root`);
-    const rel = owned.base.root === '.' ? c.path : c.path.slice(owned.base.root.length + 1);
-    if (rel.split('/').some(p => p.startsWith('.'))) fail('E_SCOPE', `${shown}: hidden paths are not knowledge`);
-    if (c.status !== 'D' && c.mode !== '100644') fail('E_SCOPE', `${shown}: only regular, non-executable Markdown files may be proposed`);
+    const rel = baseRel(owned.base, c.path);
     if (rel === 'index.md') continue;
     const other = scope.others.find(n => rel === n.path || rel.startsWith(`${n.path}/`));
     if (other) fail('E_OWNER', `${shown} is in node ${owned.alias}/${other.node}, which this soul does not own; leave that claim for the node's owner`);

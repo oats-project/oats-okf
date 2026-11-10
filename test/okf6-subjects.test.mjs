@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS } from './fixtures/bridged-base.mjs';
+import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
+import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
@@ -91,7 +91,7 @@ test('validator v2: a stale generated index is a --strict warning, an error exit
 
 test('validator v2 on a plain version-1 base: unchanged (same findings as v5.8.0, list-looking values are not checked)',t=>{
   const dir=writePlainBase(join(tmp(t,'okf6-plain-'),'base'));
-  edit(join(dir,'peer/lesson.md'),'description: A fake','tags: [a, [b]]\nabout: [system/nope]\ndescription: A fake');
+  edit(join(dir,'peer/lesson.md'),'description: A fake','tags: [a, [b]]\nkeywords: [unclosed\nabout: [system/nope]\ndescription: A fake');
   write(join(dir,'expert/orphan.md'),'---\ntype: Decision\n---\n\nSee [missing](missing.md).\n');
   write(join(dir,'expert/untyped.md'),'---\ntitle: No type\n---\n');
   const old=join(dirname(dir),'old.mjs');
@@ -116,6 +116,16 @@ test('the flow-list parser: bare and JSON-quoted items, empty, and malformed or 
   assert.deepEqual(flowList('["a, b", "c\\"d", e f]'),['a, b','c"d','e f']);
   assert.deepEqual(flowList('[]'),[]);
   for(const bad of ['[a, [b]]','[a,,b]','[a, ]','["a]','[a "b"]']) assert.equal(flowList(bad),null,bad);
+});
+
+test('flow lists through the frontmatter parser: an unclosed list is malformed, a quoted \' #\' survives, a bracketed scalar stays a scalar',t=>{
+  const fm=parseFrontmatter('---\ntags: [broken\nkeys: ["C # compiler", tool] # a comment\ntitle: [WIP] a draft\nnote: plain # comment\n---\n');
+  assert.deepEqual(fm.listErrors,['tags']);
+  assert.deepEqual([fm.meta.keys,fm.meta.title,fm.meta.note],[['C # compiler','tool'],'[WIP] a draft','plain']);
+  const dir=bridged(t);edit(join(dir,'peer/lesson.md'),'kind: lesson','kind: lesson\ntags: [broken');
+  assert.ok(validate(dir).out.errors.includes("peer/lesson.md: malformed flow list in 'tags' (flat [a, \"b\"] items only)"));
+  edit(join(dir,'peer/lesson.md'),'tags: [broken','tags: ["C # compiler", tool]');
+  assert.deepEqual(validate(dir).out.errors,[]);
 });
 
 // ------------------------------------------------------------- regenerator
@@ -156,6 +166,29 @@ test('the regenerator refuses a plain base (exit 2) and its views parse back to 
   // generate() is the same function the validator compares against.
   const expected=generate(readConcepts(dir),fs.readFileSync(join(dir,'index.md'),'utf8'));
   for(const [p,text] of expected) assert.equal(fs.readFileSync(join(dir,p),'utf8'),text,p);
+});
+
+const LINKS=[
+  ['a symlinked generated index',(dir,outside)=>{fs.rmSync(join(dir,'subjects/system/okf/index.md'));fs.symlinkSync(join(outside,'target.md'),join(dir,'subjects/system/okf/index.md'));}],
+  ['a symlinked directory above it',(dir,outside)=>{fs.rmSync(join(dir,'subjects/system/okf'),{recursive:true});fs.mkdirSync(join(outside,'dir'));fs.symlinkSync(join(outside,'dir'),join(dir,'subjects/system/okf'));}],
+  ['a hardlinked generated index',(dir,outside)=>{fs.rmSync(join(dir,'subjects/index.md'));fs.linkSync(join(outside,'target.md'),join(dir,'subjects/index.md'));}],
+];
+for(const [name,link] of LINKS) test(`the regenerator and propose refuse ${name} (E_PATH) and write nothing outside the base`,t=>{
+  for(const via of ['cli','propose']) {
+    const dir=bridged(t),outside=join(dirname(dir),'outside');
+    fs.mkdirSync(outside);fs.writeFileSync(join(outside,'target.md'),'outside bytes\n');
+    // A claim that makes the views stale, so a regeneration would write.
+    write(join(dir,'claims/insights/new.md'),'---\ntype: Insight\ntitle: New\ndescription: New.\nabout: [system/okf]\nid: ins-000000000009\n---\n');
+    link(dir,outside);
+    const snapshot=()=>fs.readdirSync(outside,{recursive:true}).map(n=>[n,fs.statSync(join(outside,n)).isFile()?fs.readFileSync(join(outside,n),'utf8'):'dir']);
+    const before=snapshot();
+    if(via==='cli') for(const args of [[],['--check']]) {
+      const r=spawnSync(process.execPath,[REINDEX,dir,...args],{encoding:'utf8'});
+      assert.equal(r.status,2,r.stdout+r.stderr);assert.match(r.stderr,/E_PATH/);
+    }
+    else assert.throws(()=>prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/insights/new.md',status:'A'}]}),e=>e.code==='E_PATH');
+    assert.deepEqual(snapshot(),before,`${via}: the outside files are unchanged`);
+  }
 });
 
 test('the shipped copies of the validator and the regenerator are byte-identical',()=>{
@@ -218,6 +251,45 @@ test('spawn: a version-2 soul is refused on a plain base and for a subject with 
   const missing=hook(deployment(t,{decl:{version:2,subjects:['system/okf','system/nope']}}),'spawn');
   assert.notEqual(missing.status,0);
   assert.equal(missing.out.warning,'oats-okf E_CONFIG: unresolved subject: system/nope');
+});
+
+test('spawn: a host that cached the plain base spawns a version-2 soul once the base is bridged upstream (the due cache is refreshed)',t=>{
+  const f=deployment(t,{plain:true,decl:{version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']}});
+  assert.equal(hook(f,'spawn').status,0,'the plain base is cached');
+  bridge(f.repo);f.git('add','-A');f.git('commit','-q','-m','bridge');
+  json(join(f.soul,'okf.json'),{version:2,subjects:['system/okf']});
+  const r=run(f,['spawn'],{extra:{OATS_EVENT:'spawn',OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile,'consult-max-age':0})}});
+  assert.equal(r.status,0,r.text);
+  assert.match(r.out.brief,/- system\/okf — The knowledge provider package\. \(1 decision, 1 insight\)/);
+});
+
+test('a version-2 soul whose subjects live in two bridged bases: spawn, the default index, subject and claims read each from its own base',t=>{
+  const dir=tmp(t,'okf6-two-bases-'),a=join(dir,'a'),b=join(dir,'b'),bindingsFile=join(dir,'deployment','okf-bindings.json'),soul=join(dir,'soul'),home=join(dir,'home'),user=join(dir,'user');
+  writePlainBase(a,{id:'base-a'});bridge(a);writePlainBase(b,{id:'base-b'});bridge(b);
+  // Base b's subjects are system/other and workstream/other.
+  const walk=d=>fs.readdirSync(d,{recursive:true}).filter(n=>n.endsWith('.md')).map(n=>join(d,n));
+  for(const file of walk(b)) fs.writeFileSync(file,fs.readFileSync(file,'utf8').replaceAll('system/okf','system/other').replaceAll('workstream/knowledge','workstream/other'));
+  fs.renameSync(join(b,'subjects/system/okf.md'),join(b,'subjects/system/other.md'));fs.renameSync(join(b,'subjects/workstream/knowledge.md'),join(b,'subjects/workstream/other.md'));
+  fs.rmSync(join(b,'subjects/system/okf'),{recursive:true});fs.rmSync(join(b,'subjects/workstream/knowledge'),{recursive:true});
+  reindex(b);assert.equal(validate(b,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  json(bindingsFile,{version:1,stateDir:join(dir,'state'),bases:{a:{id:'base-a',kind:'directory',path:a},b:{id:'base-b',kind:'directory',path:b}}});
+  json(join(soul,'okf.json'),{version:2,subjects:['system/okf','workstream/other']});
+  json(join(home,'instance.json'),{name:'worker-1',kind:'agent'});fs.mkdirSync(user);
+  const f={dir,soul,home,user,bindingsFile};
+  const spawned=hook(f,'spawn');
+  assert.equal(spawned.status,0,spawned.text);
+  assert.match(spawned.out.brief,/- system\/okf — The knowledge provider package\. \(1 decision, 1 insight\)\n- workstream\/other — How OATS keeps and proposes knowledge\. \(1 decision, 1 lesson\)/);
+  const index=run(f,['index','--json']);
+  assert.equal(index.status,0,index.text);
+  assert.deepEqual(index.out.result.indexes.map(x=>[x.base,x.subject]),[['a','system/okf'],['b','workstream/other']]);
+  assert.equal(run(f,['subject','workstream/other','--json']).out.result.base,'b');
+  assert.deepEqual(run(f,['claims','--about','system/okf','--json']).out.result.claims.map(c=>c.path),['expert/decision.md','claims/insights/consult-reads-one-blob.md']);
+  // The same ref in two bases is ambiguous; --base names one; a base-wide verb needs --base.
+  json(join(soul,'okf.json'),{version:2,subjects:['system/okf']});
+  assert.equal(run(f,['subject','system/okf','--base','a','--json']).out.result.base,'a');
+  write(join(b,'subjects/system/okf.md'),fs.readFileSync(join(a,'subjects/system/okf.md'),'utf8'));
+  assert.match(run(f,['subject','system/okf','--json']).out.error.message,/^subject system\/okf is in several bases \(a, b\); pass --base ALIAS$/);
+  assert.match(run(f,['subjects','--json']).out.error.message,/several bases have the subject layout \(a, b\); pass --base ALIAS/);
 });
 
 test('a version-1 soul on the bridged base: spawn brief and `index` unchanged from the plain base',t=>{
@@ -416,6 +488,24 @@ for(const [name,mutate,rule] of SCOPE) test(`propose --check, version 2: E_SCOPE
   const p=proposal(t);mutate(p.root);
   prepareSubjectProposal({root:p.root,decl:V2,ownedNodes:{},changes:p.changes()});
   assert.throws(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before}),e=>e.code==='E_SCOPE' && rule.test(e.message),name);
+});
+
+test('propose --check, version 2: status: superseded only on a concept one of the proposal\'s claims supersedes (by path or id)',t=>{
+  const cases=[
+    ['no superseding claim',null,true],
+    ['an unrelated replacement','supersedes: [/expert/decision.md]',true],
+    ['a replacement naming its path','supersedes: [/peer/lesson.md]',false],
+    ['a replacement naming its id','supersedes: [ins-000000000002]',false],
+  ];
+  for(const [name,supersedes,refused] of cases) {
+    const p=proposal(t);
+    edit(join(p.root,'peer/lesson.md'),'id: ins-000000000002','id: ins-000000000002\nstatus: superseded');
+    if(supersedes) write(join(p.root,'claims/insights/better.md'),`---\ntype: Insight\ntitle: Better\ndescription: Better.\nabout: [workstream/knowledge]\n${supersedes}\n---\n`);
+    prepareSubjectProposal({root:p.root,decl:V2,ownedNodes:{},changes:p.changes()});
+    const check=()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before});
+    if(refused) assert.throws(check,e=>e.code==='E_SCOPE' && /peer\/lesson\.md: status: superseded only on a concept a claim of this proposal supersedes/.test(e.message),name);
+    else assert.doesNotThrow(check,name);
+  }
 });
 
 test('propose --check: the regenerator is required; a hand-edited generated index is refused',t=>{

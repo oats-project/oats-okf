@@ -14,8 +14,8 @@
 //     other old-node file.
 //   both: the generated indexes are regenerated, and nothing else may differ
 //     in them from the regenerator's output.
-import { fs, join, dirname, fail } from './io.mjs';
-import { parseFrontmatter, generate, readConcepts, withSubjectsSection, subjectOfPath, place, isReservedFile, bridged as isBridged, orphanViews } from './okf-reindex.mjs';
+import { fs, join, fail } from './io.mjs';
+import { parseFrontmatter, generate, readConcepts, withSubjectsSection, subjectOfPath, place, isReservedFile, bridged as isBridged, orphanViews, assertSafeTree, writeInBase } from './okf-reindex.mjs';
 import { verdictLanes } from './verdicts.mjs';
 
 const read = (root, p) => { try { return fs.readFileSync(join(root, p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
@@ -64,6 +64,8 @@ export function addAbout(text, ref) {
  *  → { about: [paths], regenerated: [paths] } (nothing on a plain base). */
 export function prepareSubjectProposal({ root, decl, ownedNodes, changes }) {
   if (!isBridged(root)) return { about: [], regenerated: [] };
+  // Nothing is read or written through a symlink or a hardlink (E_PATH).
+  assertSafeTree(root);
   const about = [];
   if (decl.version !== 2) {
     const map = legacyMap(root);
@@ -74,12 +76,12 @@ export function prepareSubjectProposal({ root, decl, ownedNodes, changes }) {
       if (!fm.parsed || fm.meta.about !== undefined) continue;
       const ref = map.get(node);
       if (!ref) fail('E_SUBJECT', `${c.path}: no subject on this base names node ${node} in its legacy-nodes, so the claim has no subject; ask the knowledge maintainer to add ${node} to a subject's legacy-nodes, or move this soul to okf.json version 2`);
-      fs.writeFileSync(join(root, c.path), addAbout(text, ref));
+      writeInBase(root, c.path, addAbout(text, ref));
       about.push(c.path);
     }
   }
   const concepts = readConcepts(root), expected = generate(concepts, read(root, 'index.md') ?? ''), regenerated = [];
-  for (const [p, text] of expected) if (read(root, p) !== text) { fs.mkdirSync(dirname(join(root, p)), { recursive: true }); fs.writeFileSync(join(root, p), text); regenerated.push(p); }
+  for (const [p, text] of expected) if (read(root, p) !== text) { writeInBase(root, p, text); regenerated.push(p); }
   for (const p of orphanViews(root, concepts)) { fs.rmSync(join(root, p)); regenerated.push(p); }
   return { about, regenerated };
 }
@@ -87,8 +89,22 @@ export function prepareSubjectProposal({ root, decl, ownedNodes, changes }) {
 /** The write-surface rule over the proposal's changes (after preparation).
  *  `before(path)` reads the accepted text. Every violation is collected and
  *  refused together: E_SCOPE, naming each path and its rule. */
+/** What the proposal's own claims supersede: the base paths and ids in the
+ *  `supersedes:` lists of the claims it adds or changes. */
+function superseded(root, changes) {
+  const out = new Set();
+  for (const { path: p, status } of changes) {
+    if (status === 'D' || !p.endsWith('.md') || isReservedFile(p) || place(p) !== 'claim') continue;
+    const fm = parseFrontmatter(read(root, p) ?? '');
+    if (!fm.parsed || fm.meta.status === 'superseded') continue;
+    const list = Array.isArray(fm.meta.supersedes) ? fm.meta.supersedes : typeof fm.meta.supersedes === 'string' && fm.meta.supersedes ? [fm.meta.supersedes] : [];
+    for (const ref of list) out.add(String(ref).trim().replace(/^\/+/, ''));
+  }
+  return out;
+}
 export function checkWriteSurface({ root, decl, ownedNodes, changes, before }) {
   const bridgedBase = isBridged(root), owned = Object.values(ownedNodes), problems = [];
+  const supersedes = bridgedBase ? superseded(root, changes) : new Set();
   const v1Rule = `a version-1 soul writes only its owned nodes (${owned.map(p => `${p}/`).join(', ') || 'none'}) and the root index.md`;
   for (const { path: p, status } of changes) {
     const after = status === 'D' ? null : read(root, p);
@@ -115,7 +131,13 @@ export function checkWriteSurface({ root, decl, ownedNodes, changes, before }) {
     if (under(p, 'verdicts')) { problems.push(`${p}: only the knowledge maintainer writes verdicts/`); continue; }
     if (under(p, 'subjects/workstream')) { problems.push(`${p}: workstreams change only on a person's cited acceptance, by the knowledge maintainer`); continue; }
     if (p === 'okf-base.json') { problems.push(`${p}: a proposal never changes okf-base.json`); continue; }
-    if (status === 'M' && place(p) === 'claim' && onlySupersedes(before(p), after)) continue;
+    if (status === 'M' && place(p) === 'claim' && onlySupersedes(before(p), after)) {
+      // Only a concept one of the proposal's own claims supersedes, by path or id.
+      const id = parseFrontmatter(after).meta.id;
+      if (supersedes.has(p) || (typeof id === 'string' && id && supersedes.has(id))) continue;
+      problems.push(`${p}: status: superseded only on a concept a claim of this proposal supersedes (supersedes: [/${p}] or its id)`);
+      continue;
+    }
     problems.push(`${p}: outside the write surface (claims/**, new subjects/system/** and subjects/project/** files, status: superseded on a concept it supersedes)`);
   }
   if (bridgedBase) {

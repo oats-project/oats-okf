@@ -44,7 +44,8 @@ export function runWorker(bindings, alias, refs = null, decl = null) {
       try {
         resolveNodes({ ...decl, owns: decl.owns.filter(here), reads: decl.reads.filter(here) }, bindings, { [alias]: cached });
         // okf 6.0, v2: a declared subject this cached commit lacks may be new upstream.
-        if (decl.version === 2 && Array.isArray(cached.subjects) && decl.subjects.some(ref => !cached.subjects.includes(ref))) fail('E_CONFIG', 'subject not in the cached commit');
+        // A cached plain commit may have been bridged upstream since (null subjects).
+        if (decl.version === 2 && (!Array.isArray(cached.subjects) || decl.subjects.some(ref => !cached.subjects.includes(ref)))) fail('E_CONFIG', 'subject layout or subject not in the cached commit');
       } catch (error) {
         if (!['E_CONFIG', 'E_OWNER'].includes(error.code)) throw error;
         // A node/owner may have changed upstream since this cache was fetched.

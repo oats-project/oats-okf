@@ -165,7 +165,8 @@ base is.
   and, with `--strict`, generated-index freshness. A plain base gets exactly
   5.8's findings.
 - **The regenerator** `okf-reindex.mjs` (new, no dependencies, shipped beside
-  the validator): writes each subject's index, `subjects/index.md`,
+  the validator; refuses a base holding a symlink, a non-regular or a
+  multiply-linked file, and writes through temporary files renamed in place): writes each subject's index, `subjects/index.md`,
   `verdicts/index.md` and the root index's `## Subjects` section
   deterministically; `--check` exits 1 on a difference.
 - **`okf.json` version 2**, `{"version":2,"subjects":[...]}`: reading
@@ -179,7 +180,7 @@ base is.
   (`E_SUBJECT` when none names the node); the generated indexes are
   regenerated in the clone; a version-2 soul may write `claims/**`, new
   `subjects/system/**` and `subjects/project/**` files and `status:
-  superseded` (`E_SCOPE` otherwise, every path and rule named; advisory, the
+  superseded` on a concept one of its claims supersedes (`E_SCOPE` otherwise, every path and rule named; advisory, the
   maintainer's review is the gate); a proposed claim may lack `id`; verdict
   lanes 1 and 2 (`E_VERDICT`, PR-body candidates). A version-2 soul proposes
   to the bound Git bases with the layout, its provenance carrying

@@ -329,8 +329,8 @@ and `verdicts` is read by subject (the okf-authoring skill, and the README's
   each new claim carries `about:` from the subject whose `legacy-nodes` names
   that node. A proposal from a version 2 soul may add or change files under
   `claims/**`, add files under `subjects/system/**` and
-  `subjects/project/**`, set `status: superseded` on a concept it
-  supersedes, and must carry the regenerated indexes; it never touches
+  `subjects/project/**`, set `status: superseded` on a concept one of its
+  claims supersedes (`supersedes:` naming its path or id), and must carry the regenerated indexes; it never touches
   `verdicts/**`, `subjects/workstream/**`, `okf-base.json`, the root
   `index.md` by hand, or another old-node file. An out-of-surface change is
   amended away or closes the PR with a verdict.

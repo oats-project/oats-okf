@@ -125,15 +125,17 @@ test('version 2: plan shows the subject write surface; a claim under claims/ (no
     [null, ['system/okf', 'workstream/knowledge'], [], [], ['kb']]);
 });
 
-test('version 2: E_SCOPE for verdicts/, a workstream subject and an old-node file', t => {
+test('version 2: E_SCOPE for verdicts/, a workstream subject, an old-node file and a supersession no claim makes', t => {
   for (const [path, text, rule] of [
     ['verdicts/dec-000000000099.md', '---\ntype: Verdict\n---\n', /verdicts\/dec-000000000099\.md: only the knowledge maintainer writes verdicts\//],
     ['subjects/workstream/new.md', '---\ntype: Workstream\ntitle: New\ndescription: x\n---\n', /subjects\/workstream\/new\.md: workstreams change only on a person's cited acceptance/],
     ['peer/lesson.md', null, /peer\/lesson\.md: outside the write surface/],
+    ['peer/lesson.md', 'status', /peer\/lesson\.md: status: superseded only on a concept a claim of this proposal supersedes/],
   ]) {
     const f = fixture(t, { decl: V2 }), plan = ok(f.run(['--plan', '--slug', 'pin']));
     const clone = edit(plan, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]'));
-    if (text) write(join(clone, path), text); else fs.appendFileSync(join(clone, path), 'An edit.\n');
+    if (text === 'status') fs.writeFileSync(join(clone, path), fs.readFileSync(join(clone, path), 'utf8').replace('id: ins-000000000002', 'id: ins-000000000002\nstatus: superseded'));
+    else if (text) write(join(clone, path), text); else fs.appendFileSync(join(clone, path), 'An edit.\n');
     refused(f.run(['--check', '--slug', 'pin']), 'E_SCOPE', rule);
   }
 });

@@ -285,7 +285,14 @@ node okf-reindex.mjs <base-dir> --check    # exit 1 when any differs; writes not
 node okf-validate.mjs <base-dir> --strict  # validator v2
 ```
 
-On a bridged base the validator also errors on: a malformed flow list; a
+The regenerator refuses (`E_PATH`, exit 2), before reading or writing, a
+base that holds a symlink, a non-regular file or a file with more than one
+link, and writes each generated file through a fresh temporary file renamed
+over it, so a checked-out base cannot redirect a write outside itself.
+
+On a bridged base the validator also errors on: a malformed flow list (a
+value starting with `[` that is not a flat list, or has no `]` at all; a
+`[WIP] title` scalar stays a scalar); a
 claim whose `about` is missing, empty, not a list or names a subject with no
 file; a subject file off `subjects/<kind>/<slug>.md` (lowercase slug), or
 whose `type` does not match its kind directory; an `in-workstreams` or
@@ -350,9 +357,12 @@ oats okf verdicts --check <claim file>
 - Each verb reads committed generated indexes (one blob each, plus the
   subject file for `subject`), never scans the base, and keeps the receipt
   (`alias@oid`): cite as before, `alias/path@oid`.
-- The base is `--base ALIAS`, else the only bound base, else the only bound
-  base with the layout. On a plain base each answers `E_USAGE: base <alias>
-  has no subject layout`.
+- `subject`, `claims` and `index <ref>` read each subject from the one bound
+  base with the layout that holds its file (a version-2 soul's subjects may
+  live in several bases; the same ref in two is `E_USAGE`, pass `--base`).
+  `subjects` and `verdicts --check` read `--base ALIAS`, else the only bound
+  base, else the only bound base with the layout. On a plain base each
+  answers `E_USAGE: base <alias> has no subject layout`.
 - `index` without an argument keeps its version-1 behaviour for a version-1
   soul, and `--base ALIAS` alone still reads the base's root index. A
   `<kind>/<slug>` argument reads a subject unless its kind is a bound alias.
@@ -369,8 +379,8 @@ does more on a base whose **accepted** `okf-base.json` has the layout:
 - the **write surface**: a version-1 soul writes its owned nodes and the root
   `index.md`, as before (`E_OWNER`, `E_SCOPE`); a version-2 soul may add or
   change files under `claims/**`, add files under `subjects/system/**` and
-  `subjects/project/**`, and set `status: superseded` on a concept it
-  supersedes; never `verdicts/**`, `subjects/workstream/**`,
+  `subjects/project/**`, and set `status: superseded` on a concept one of
+  its claims supersedes (`supersedes: [/<path>]` or the concept's id); never `verdicts/**`, `subjects/workstream/**`,
   `okf-base.json`, the root `index.md` beyond its generated section, a
   deletion, or another old-node file. For both, a generated index must be
   exactly the regenerator's output. Outside it: `E_SCOPE`, naming every path

@@ -13,13 +13,15 @@
  *   verdicts/index.md                 the verdict record, one line per verdict
  *   index.md                          its "## Subjects" section only
  * --check writes nothing and exits 1 when any of them differs.
- * Exit: 0 written or clean, 1 stale (--check), 2 usage or not a bridged base.
+ * It refuses (exit 2, E_PATH) a base holding a symlink, a non-regular file or a
+ * multiply-linked file, before reading or writing anything.
+ * Exit: 0 written or clean, 1 stale (--check), 2 usage, refusal or not a bridged base.
  *
  * The validator imports this module, so the views it checks are exactly the
  * ones written here, and consult parses them with the parsers below.
  */
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,6 +52,17 @@ export function flowList(value) {
   }
   return items;
 }
+/** A flow-list value without its trailing comment: ` #` outside double quotes. */
+function listValue(value) {
+  let quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (quoted && c === "\\") { i++; continue; }
+    if (c === '"') quoted = !quoted;
+    else if (!quoted && c === "#" && i > 0 && /\s/.test(value[i - 1])) return value.slice(0, i).trim();
+  }
+  return value.trim();
+}
 /** The OKF frontmatter subset: flat `key: scalar` lines and flow lists.
  *  `listErrors` names keys whose value looks like a list but is not one. */
 export function parseFrontmatter(text) {
@@ -61,10 +74,18 @@ export function parseFrontmatter(text) {
     if (/^\s*#/.test(line) || !line.trim()) continue;
     const kv = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
     if (!kv) { if (!/^\s+/.test(line)) return { present: true, parsed: false }; continue; }
-    const raw = kv[2].replace(/\s+#.*$/, "");
-    const list = /^\[.*\]$/.test(raw.trim()) ? flowList(raw.trim()) : undefined;
+    // A value starting with `[` is a flow list: its comment is stripped outside
+    // quotes, and an unclosed one (no `]` at all) is malformed. A bracketed
+    // scalar such as `[WIP] title` (a `]` but not at the end) stays a scalar,
+    // read as 5.8 read every value.
+    let list;
+    if (/^\s*\[/.test(kv[2])) {
+      const v = listValue(kv[2]);
+      if (v.endsWith("]")) list = flowList(v);
+      else if (!v.includes("]")) list = null;
+    }
     if (list === null) listErrors.push(kv[1]);
-    meta[kv[1]] = Array.isArray(list) ? list : raw.replace(/^["']|["']$/g, "").trim();
+    meta[kv[1]] = Array.isArray(list) ? list : kv[2].replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "").trim();
   }
   return { present: true, parsed: true, meta, listErrors, body: text.slice(m[0].length) };
 }
@@ -295,6 +316,41 @@ export function orphanViews(root, concepts) {
   }
   return out;
 }
+/** Before reading or writing a base: every entry under root (dot entries
+ *  aside, as everywhere in OKF) is a plain directory or a regular file with
+ *  one link, so no write can follow a symlink or a hardlink out of the base. */
+export function assertSafeTree(root) {
+  const bad = (p, why) => { throw Object.assign(new Error(`${relative(root, p) || "."}: ${why}; generated indexes are read and written only in plain directories and regular single-link files`), { code: "E_PATH" }); };
+  const st = lstatSync(root);
+  if (!st.isDirectory()) bad(root, "the base root is not a directory");
+  (function walk(d) {
+    for (const e of readdirSync(d)) {
+      if (e.startsWith(".")) continue;
+      const p = join(d, e), s = lstatSync(p);
+      if (s.isSymbolicLink()) bad(p, "a symlink");
+      else if (s.isDirectory()) walk(p);
+      else if (!s.isFile()) bad(p, "not a regular file");
+      else if (s.nlink !== 1) bad(p, "a file with more than one link");
+    }
+  })(root);
+}
+/** Write one generated file under root: its parent directories are created
+ *  or checked one plain directory at a time, and the bytes land through a
+ *  fresh temporary file renamed over the target (a rename replaces a link, it
+ *  never follows one). Call assertSafeTree(root) first. */
+export function writeInBase(root, p, text) {
+  const parts = p.split("/");
+  if (parts.some((x) => !x || x === "." || x === ".." || x.startsWith("."))) throw Object.assign(new Error(`${p}: not a base path`), { code: "E_PATH" });
+  let dir = root;
+  for (const part of parts.slice(0, -1)) {
+    dir = join(dir, part);
+    let s; try { s = lstatSync(dir); } catch (e) { if (e.code !== "ENOENT") throw e; mkdirSync(dir); continue; }
+    if (!s.isDirectory() || s.isSymbolicLink()) throw Object.assign(new Error(`${relative(root, dir)}: not a plain directory`), { code: "E_PATH" });
+  }
+  const temp = join(dir, `.okf-reindex-${randomBytes(8).toString("hex")}`);
+  writeFileSync(temp, text, { flag: "wx", mode: 0o644 });
+  try { renameSync(temp, join(dir, parts[parts.length - 1])); } catch (e) { rmSync(temp, { force: true }); throw e; }
+}
 const readOr = (file) => (existsSync(file) ? readFileSync(file, "utf8") : null);
 /** What --check reports: [{ path, status: missing | stale | orphan }]. */
 export function staleViews(root, concepts = readConcepts(root)) {
@@ -314,25 +370,27 @@ function main(argv) {
   const dir = argv.find((a) => !a.startsWith("--"));
   const unknown = argv.filter((a) => a.startsWith("--") && !["--check", "--json"].includes(a));
   if (!dir || !existsSync(dir) || unknown.length) { console.error("usage: okf-reindex.mjs <bundle-dir> [--check] [--json]"); return 2; }
-  const root = resolve(dir);
+  const root = realpathSync(resolve(dir));
   if (!bridged(root)) {
     const message = `${root} has no subject layout: okf-base.json does not list the reserved nodes ${RESERVED_NODES.join(", ")} (owner ${SENTINEL})`;
     if (asJson) console.log(JSON.stringify({ bundle: root, bridged: false, error: message })); else console.error(message);
     return 2;
   }
   let concepts, stale;
-  try { concepts = readConcepts(root); stale = staleViews(root, concepts); }
-  catch (e) { console.error(`okf-reindex: ${e.message}`); return 2; }
-  if (!check) {
-    const expected = generate(concepts, readOr(join(root, "index.md")) ?? "");
-    for (const s of stale) {
-      const file = join(root, s.path);
-      if (s.status === "orphan") {
-        rmSync(file);
-        try { if (!readdirSync(dirname(file)).length) rmSync(dirname(file), { recursive: true }); } catch { /* best effort */ }
-      } else { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, expected.get(s.path)); }
+  try {
+    assertSafeTree(root);
+    concepts = readConcepts(root); stale = staleViews(root, concepts);
+    if (!check) {
+      const expected = generate(concepts, readOr(join(root, "index.md")) ?? "");
+      for (const s of stale) {
+        const file = join(root, s.path);
+        if (s.status === "orphan") {
+          rmSync(file);
+          try { if (!readdirSync(dirname(file)).length) rmSync(dirname(file), { recursive: true }); } catch { /* best effort */ }
+        } else writeInBase(root, s.path, expected.get(s.path));
+      }
     }
-  }
+  } catch (e) { console.error(`okf-reindex: ${e.code ? `${e.code}: ` : ""}${e.message}`); return 2; }
   if (asJson) console.log(JSON.stringify({ bundle: root, bridged: true, check, changed: stale }, null, 2));
   else {
     console.log(`OKF reindex — ${root}`);
