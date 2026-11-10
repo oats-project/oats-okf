@@ -388,7 +388,7 @@ async function checkPhase(req) {
   const probes=new Map(await Promise.all(gitBases.map(async ([alias,base])=>[alias,await lsRemote(base)])));
   for(const [alias,base] of Object.entries(bindings.bases)) {
     if(base.kind==='directory') {
-      try { const validated=validateBase(base.path,base);accepted[alias]={...validated.meta,subjects:validated.subjects}; }
+      try { const validated=validateBase(base.path,base,{reader:true});accepted[alias]={...validated.meta,subjects:validated.subjects}; }
       catch(error) { const out=checkError(error,'validate');problems.push(out.problem); }
       continue;
     }

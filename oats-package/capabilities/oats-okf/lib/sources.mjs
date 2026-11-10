@@ -26,7 +26,7 @@ const firstLine=text=>String(text||'unknown error').split(/\r?\n/).map(s=>s.trim
 function validateRefs(bindings,decl,primed={}) {
   const accepted={},referenced=refsByAlias(decl,bindings);
   for(const [alias,base] of Object.entries(bindings.bases)) if(base.kind==='directory' && Object.hasOwn(referenced,alias)) {
-    const validated=validateBase(base.path,base);accepted[alias]={nodes:validated.meta.nodes,subjects:validated.subjects,stale:validated.stale,at:`${alias}@directory`};
+    const validated=validateBase(base.path,base,{reader:true});accepted[alias]={nodes:validated.meta.nodes,subjects:validated.subjects,stale:validated.stale,at:`${alias}@directory`};
   }
   for(const [alias,v] of Object.entries(primed)) {
     if(!v?.ok) fail(v?.error?.code || 'E_VALIDATION',`base "${alias}" at ${short(v?.receipt || {base:alias,kind:'git',commit:'unknown'})}: ${v?.error?.message || 'base is not a validated knowledge tree'}`);

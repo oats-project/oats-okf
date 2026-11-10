@@ -12,6 +12,7 @@ import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
 import { acceptedReader } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
+import { migrate } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 import { prepareSubjectProposal, checkWriteSurface, proposalFindings, proposalVerdicts, verdictSection, legacyMap } from '../oats-package/capabilities/oats-okf/lib/write-surface.mjs';
@@ -330,8 +331,22 @@ test('readers tolerate stale generated indexes (an older view format, a missing 
   const claim=join(f.dir,'claim.md');write(claim,'---\ntype: Decision\ntitle: New\ndescription: x\nabout: [system/okf]\n---\n');
   assert.equal(run(f,['verdicts','--check',claim,'--json']).out.result.warnings.length,1);
   const bases=run(f,['bases','--json']);assert.equal(bases.status,0);assert.equal(bases.out.result.bases?.[0]?.validated?.ok ?? bases.out.result[0]?.validated?.ok,true,bases.text);
-  assert.throws(()=>validateBase(f.repo,{id:'base-1',kind:'git',root:'.'},{strict:true}),e=>e.code==='E_VALIDATION' && /generated index is stale/.test(e.message));
-  assert.equal(validateBase(f.repo,{id:'base-1',kind:'git',root:'.'}).stale,2);
+  assert.throws(()=>validateBase(f.repo,{id:'base-1',kind:'git',root:'.'}),e=>e.code==='E_VALIDATION' && /generated index is stale/.test(e.message));
+  assert.equal(validateBase(f.repo,{id:'base-1',kind:'git',root:'.'},{reader:true}).stale,2);
+});
+
+test('writers stay strict: a migration that would leave a subject index stale is refused before the accepted base is touched',t=>{
+  const dir=tmp(t,'okf6-migrate-'),basePath=join(dir,'base');writePlainBase(basePath);bridge(basePath);
+  fs.rmSync(join(basePath,'expert/decision.md'));fs.writeFileSync(join(basePath,'expert/index.md'),'# expert\n');reindex(basePath);
+  assert.equal(validate(basePath,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  const legacy=join(dir,'legacy');
+  write(join(legacy,'index.md'),'# Migrated knowledge\n\n* [Migrated decision](migrated.md) - A migrated decision.\n');
+  write(join(legacy,'migrated.md'),'---\ntype: Decision\ntitle: Migrated decision\ndescription: A migrated decision.\nabout: [system/okf]\nid: dec-00000000000f\n---\n\n# Migrated decision\n');
+  const before=fs.readFileSync(join(basePath,'subjects/system/okf/index.md'),'utf8');
+  assert.throws(()=>migrate({bases:{kb:{id:'base-1',kind:'directory',path:basePath}},stateDir:join(dir,'state')},{legacy,alias:'kb',node:'expert',output:join(dir,'stage')}),
+    e=>e.code==='E_VALIDATION' && /subjects\/system\/okf\/index\.md: generated index is stale/.test(e.message));
+  assert.equal(fs.existsSync(join(basePath,'expert/migrated.md')),false,'nothing accepted');
+  assert.equal(fs.readFileSync(join(basePath,'subjects/system/okf/index.md'),'utf8'),before);
 });
 
 test('spawn: a version-2 soul\'s brief lists one line per subject with counts from its generated index',t=>{

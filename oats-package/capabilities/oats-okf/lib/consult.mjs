@@ -331,7 +331,7 @@ export function verdict(ctx, { fetchMissing = true, saveResult = true } = {}) {
     try { const v = run(); return { version: 3, ok: true, digest: v.digest, nodes: v.meta.nodes, subjects: v.subjects, stale: v.stale ?? 0 }; }
     catch (e) { if (!VALIDATION_CODES.has(e.code)) throw e; return { version: 3, ok: false, error: { code: e.code, message: e.message } }; }
   };
-  if (ctx.kind === 'directory') return judge(() => validateBase(ctx.base.path, ctx.base));
+  if (ctx.kind === 'directory') return judge(() => validateBase(ctx.base.path, ctx.base, { reader: true }));
   const file = validationFile(ctx);
   if (fs.existsSync(file)) { const cached = readJSON(file); if (cached?.version === 3 && cached.commit === ctx.commit && cached.root === ctx.base.root) return cached; }
   const scratch = fs.mkdtempSync(join(saveResult ? dirname(ctx.cache) : fs.realpathSync(tmpdir()), saveResult ? '.validate-' : 'okf-validate-'));
@@ -355,7 +355,7 @@ export function verdict(ctx, { fetchMissing = true, saveResult = true } = {}) {
         if (missing.stdout.split('\n').some(line => line.startsWith('?'))) unavailable(ctx.base, ctx.alias, 'read', new Error('cached validation needs missing objects'));
       }
       materializeBatch(ctx, rows, join(scratch, 'objects'));
-      return validateBase(root, ctx.base);
+      return validateBase(root, ctx.base, { reader: true });
     });
     if (saveResult) save(file, { ...result, commit: ctx.commit, root: ctx.base.root, at: new Date().toISOString() });
     return result;
@@ -656,7 +656,7 @@ const warned = [];
 export const takeWarnings = () => warned.splice(0);
 function noteStale(ctx) {
   let n = 0;
-  if (ctx.kind === 'directory') { try { n = validateBase(ctx.base.path, ctx.base).stale; } catch { return; } }
+  if (ctx.kind === 'directory') { try { n = validateBase(ctx.base.path, ctx.base, { reader: true }).stale; } catch { return; } }
   else {
     const file = validationFile(ctx);
     if (!fs.existsSync(file)) return;
