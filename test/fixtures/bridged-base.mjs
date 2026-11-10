@@ -28,7 +28,7 @@ export function writePlainBase(dir, { id = 'base-1', owners = { expert: 'owner-1
 }
 
 export const REJECTED = { id: 'dec-0000000000aa', type: 'Decision', title: 'Keep a harvester per proposal', description: 'A harvester judges every proposal.', reason: 'No harvester runs on any base; the proposer publishes and the maintainer gates.' };
-export const SUBJECT_COUNTS = { 'system/okf': { Decision: 1, Insight: 1 }, 'workstream/knowledge': { Decision: 1, Lesson: 1 } };
+export const SUBJECT_COUNTS = { 'system/okf': { Decision: 1, Insight: 1 }, 'workstream/knowledge': { Decision: 1, Insight: 1 } };
 
 /** The bridged layout added to a plain base at dir, then regenerated. */
 export function bridge(dir) {

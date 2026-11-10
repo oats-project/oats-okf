@@ -57,6 +57,12 @@ export function addAbout(text, ref) {
   return `---\n${lines.join('\n')}\n---${m[2]}${text.slice(m[0].length)}`;
 }
 
+/** Replace the frontmatter's `about:` line with the given list, touching no other line. */
+export function setAbout(text, refs) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(text);
+  const lines = m[1].split('\n').map(l => /^about:/.test(l) ? `about: [${refs.join(', ')}]` : l);
+  return `---\n${lines.join('\n')}\n---${m[2]}${text.slice(m[0].length)}`;
+}
 /** okf 6.0 preparation of a proposal clone on a bridged base, before the
  *  checks: a version-1 soul's new claims get `about:` from `legacy-nodes`,
  *  then every generated index is regenerated. `changes`: [{path, status}]
@@ -72,11 +78,15 @@ export function prepareSubjectProposal({ root, decl, ownedNodes, changes }) {
     for (const c of changes.filter(c => c.status === 'A' && c.path.endsWith('.md') && !isReservedFile(c.path))) {
       const node = Object.entries(ownedNodes).find(([, path]) => under(c.path, path))?.[0];
       if (!node) continue; // outside the owned nodes: the scope check names it
-      const text = read(root, c.path), fm = parseFrontmatter(text ?? '');
-      if (!fm.parsed || fm.meta.about !== undefined) continue;
+      // Every new claim: its node's subject first (E_SUBJECT when none absorbs
+      // the node), whatever `about:` the proposer wrote.
       const ref = map.get(node);
       if (!ref) fail('E_SUBJECT', `${c.path}: no subject on this base names node ${node} in its legacy-nodes, so the claim has no subject; ask the knowledge maintainer to add ${node} to a subject's legacy-nodes, or move this soul to okf.json version 2`);
-      writeInBase(root, c.path, addAbout(text, ref));
+      const text = read(root, c.path), fm = parseFrontmatter(text ?? '');
+      if (!fm.parsed) continue; // the validator refuses it
+      if (fm.meta.about === undefined) writeInBase(root, c.path, addAbout(text, ref));
+      else if (Array.isArray(fm.meta.about)) { if (fm.meta.about.includes(ref)) continue; writeInBase(root, c.path, setAbout(text, [ref, ...fm.meta.about])); }
+      else fail('E_SUBJECT', `${c.path}: about must be a flow list [<kind>/<slug>, ...]; it is completed with ${ref}, the subject of node ${node}`);
       about.push(c.path);
     }
   }

@@ -268,7 +268,11 @@ validator (`git show v5.8.0:oats-package/capabilities/oats-okf/lib/okf-validate.
 | `verdicts/<id>.md` | the maintainer's verdict on a claim id | `type: Verdict`, `verdict: rejected \| superseded \| duplicate`, `claim-type`, `claim-title`, `claim-description`, `title-hash`, `reason`, `pr`, `decided-by`, `decided-on`, `canonical` (the id) for `duplicate` and `superseded` |
 | `subjects/<kind>/<slug>/index.md`, `subjects/index.md`, `verdicts/index.md`, the root `index.md`'s `## Subjects` section | **generated**: a subject's claims by type (and kind), the subjects by kind, the verdict record, the root link | none |
 
-Frontmatter stays flat: scalars and flow lists (`[a, "b"]`, bare or
+Claim types: each file keeps the `type` it was accepted with; the layer reads
+`Lesson`, `Conclusion` and `Limitation` as **Insight** (default kinds
+`lesson`, `finding`, `constraint`) and `Roadmap` as **Decision** (kind
+`direction`) in the generated views, the brief's counts, `claims --type` and
+the title hash. Frontmatter stays flat: scalars and flow lists (`[a, "b"]`, bare or
 JSON-double-quoted items). `title-hash` is the first 16 hex digits of the
 sha256 of `<claim-type>|<claim-title>`, the title lowercased, trimmed and
 its whitespace collapsed. `claims/index.md` is written by hand.
@@ -374,7 +378,9 @@ oats okf verdicts --check <claim file>
 does more on a base whose **accepted** `okf-base.json` has the layout:
 
 - a version-1 soul's new claims in its owned nodes get `about:` from the
-  subject whose `legacy-nodes` names the node (`E_SUBJECT` when none does);
+  subject whose `legacy-nodes` names the node, added first to any `about:`
+  the proposer wrote (`E_SUBJECT` when none does, or when `about` is not a
+  list);
 - every generated index is regenerated in the clone (the diff shows it);
 - the **write surface**: a version-1 soul writes its owned nodes and the root
   `index.md`, as before (`E_OWNER`, `E_SCOPE`); a version-2 soul may add or

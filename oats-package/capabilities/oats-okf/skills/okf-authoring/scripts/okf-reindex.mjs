@@ -21,7 +21,7 @@
  * ones written here, and consult parses them with the parsers below.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,6 +63,19 @@ function listValue(value) {
   }
   return value.trim();
 }
+/** Where the bracket opened at 0 closes (outside double quotes), or -1 when
+ *  it never does: `[a, [b] junk` is unclosed, `[WIP] title` closes at 4. */
+function closesAt(value) {
+  let depth = 0, quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (quoted) { if (c === "\\") i++; else if (c === '"') quoted = false; continue; }
+    if (c === '"') quoted = true;
+    else if (c === "[") depth++;
+    else if (c === "]" && --depth === 0) return i;
+  }
+  return -1;
+}
 /** The OKF frontmatter subset: flat `key: scalar` lines and flow lists.
  *  `listErrors` names keys whose value looks like a list but is not one. */
 export function parseFrontmatter(text) {
@@ -80,9 +93,9 @@ export function parseFrontmatter(text) {
     // read as 5.8 read every value.
     let list;
     if (/^\s*\[/.test(kv[2])) {
-      const v = listValue(kv[2]);
-      if (v.endsWith("]")) list = flowList(v);
-      else if (!v.includes("]")) list = null;
+      const v = listValue(kv[2]), closed = closesAt(v);
+      if (closed === v.length - 1) list = flowList(v);
+      else if (closed < 0) list = null;
     }
     if (list === null) listErrors.push(kv[1]);
     meta[kv[1]] = Array.isArray(list) ? list : kv[2].replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "").trim();
@@ -97,10 +110,22 @@ export function isBridgedMeta(m) {
   if (!m || typeof m !== "object" || m.version !== 1 || !m.nodes || typeof m.nodes !== "object") return false;
   return RESERVED_NODES.every((n) => Object.hasOwn(m.nodes, n) && m.nodes[n]?.path === n && m.nodes[n]?.owner === SENTINEL);
 }
+/** Whether the base at root declares the subject layout. okf-base.json is
+ *  read only when it is a regular single-link file under 1 MiB, never through
+ *  a link or from a device or FIFO; anything else is a plain base here (and
+ *  is refused by every consumer's own tree check). */
 export function bridged(root) {
   const file = join(root, "okf-base.json");
-  if (!existsSync(file)) return false;
-  try { return isBridgedMeta(JSON.parse(readFileSync(file, "utf8"))); } catch { return false; }
+  let fd;
+  try {
+    const st = lstatSync(file);
+    if (!st.isFile() || st.nlink !== 1 || st.size > 1024 * 1024) return false;
+    fd = openSync(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.ino !== st.ino || opened.size > 1024 * 1024) return false;
+    return isBridgedMeta(JSON.parse(readFileSync(fd, "utf8")));
+  } catch { return false; }
+  finally { if (fd !== undefined) closeSync(fd); }
 }
 export const subjectRef = (kind, slug) => `${kind}/${slug}`;
 /** subjects/<kind>/<slug>.md → { kind, slug, ref }, else null. */
@@ -118,11 +143,20 @@ export function place(p) {
   if (p.startsWith("verdicts/")) return "verdicts";
   return "claim";
 }
-/** sha256 of `<Type>|<title>`, the title lowercased, trimmed and its
+/** The claim type a concept's `type` maps to (design §2.2): the bridge keeps
+ *  each file's legacy `type` and its `kind`, and the layer reads Lesson,
+ *  Conclusion and Limitation as Insight and Roadmap as Decision. */
+export const LEGACY_TYPES = { Lesson: ["Insight", "lesson"], Conclusion: ["Insight", "finding"], Limitation: ["Insight", "constraint"], Roadmap: ["Decision", "direction"] };
+export function claimType(type, kind) {
+  const t = String(type ?? "").trim(), k = typeof kind === "string" ? kind.trim() : "";
+  const mapped = Object.hasOwn(LEGACY_TYPES, t) ? LEGACY_TYPES[t] : null;
+  return { type: mapped ? mapped[0] : t, kind: k || (mapped ? mapped[1] : "") };
+}
+/** sha256 of `<Type>|<title>` (the mapped claim type), the title lowercased, trimmed and its
  *  whitespace collapsed; 16 hex. A candidate key, never an identity. */
 export function titleHash(type, title) {
   const norm = String(title ?? "").toLowerCase().trim().replace(/\s+/g, " ");
-  return createHash("sha256").update(`${String(type ?? "").trim()}|${norm}`).digest("hex").slice(0, 16);
+  return createHash("sha256").update(`${claimType(type).type}|${norm}`).digest("hex").slice(0, 16);
 }
 
 // ------------------------------------------------------------- render
@@ -171,7 +205,8 @@ export function generate(concepts, rootIndex = "") {
     }
     const types = new Map();
     for (const c of claimsOf.get(ref)) {
-      const type = one(c.meta.type) || "Untyped", kind = typeof c.meta.kind === "string" ? one(c.meta.kind) : "";
+      const mapped = claimType(typeof c.meta.type === "string" ? one(c.meta.type) : "", typeof c.meta.kind === "string" ? one(c.meta.kind) : "");
+      const type = mapped.type || "Untyped", kind = mapped.kind;
       if (!types.has(type)) types.set(type, new Map());
       const kinds = types.get(type);
       if (!kinds.has(kind)) kinds.set(kind, []);
@@ -371,6 +406,7 @@ function main(argv) {
   const unknown = argv.filter((a) => a.startsWith("--") && !["--check", "--json"].includes(a));
   if (!dir || !existsSync(dir) || unknown.length) { console.error("usage: okf-reindex.mjs <bundle-dir> [--check] [--json]"); return 2; }
   const root = realpathSync(resolve(dir));
+  try { assertSafeTree(root); } catch (e) { console.error(`okf-reindex: ${e.code ? `${e.code}: ` : ""}${e.message}`); return 2; }
   if (!bridged(root)) {
     const message = `${root} has no subject layout: okf-base.json does not list the reserved nodes ${RESERVED_NODES.join(", ")} (owner ${SENTINEL})`;
     if (asJson) console.log(JSON.stringify({ bundle: root, bridged: false, error: message })); else console.error(message);

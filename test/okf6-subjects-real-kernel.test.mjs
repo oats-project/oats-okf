@@ -76,7 +76,7 @@ test(`real OATS ${KERNEL}: a version-2 home reads subject indexes from a bridged
   await t.test('a) a version-2 soul spawns against the bridged base; its brief lists its subjects; `oats okf index` prints their generated indexes', () => {
     const home = ok(['spawn', 'reader', '--name', 'reader-1', '--no-launch']).out.result.home;
     const task = fs.readFileSync(join(home, 'TASK.md'), 'utf8');
-    assert.ok(task.includes('- system/okf — The knowledge provider package. (1 decision, 1 insight)\n- workstream/knowledge — How OATS keeps and proposes knowledge. (1 decision, 1 lesson)'), task);
+    assert.ok(task.includes('- system/okf — The knowledge provider package. (1 decision, 1 insight)\n- workstream/knowledge — How OATS keeps and proposes knowledge. (1 decision, 1 insight)'), task);
     const index = ok(['okf', 'index'], { cwd: home, as: 'reader-1', json: false });
     assert.match(index.stdout, /^## project\/system\/okf \(subject\)\n\n# oats-okf\n/);
     assert.match(index.stdout, /\n## project\/workstream\/knowledge \(subject\)\n\n# Knowledge\n/);

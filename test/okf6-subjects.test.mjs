@@ -119,13 +119,36 @@ test('the flow-list parser: bare and JSON-quoted items, empty, and malformed or 
 });
 
 test('flow lists through the frontmatter parser: an unclosed list is malformed, a quoted \' #\' survives, a bracketed scalar stays a scalar',t=>{
-  const fm=parseFrontmatter('---\ntags: [broken\nkeys: ["C # compiler", tool] # a comment\ntitle: [WIP] a draft\nnote: plain # comment\n---\n');
-  assert.deepEqual(fm.listErrors,['tags']);
+  const fm=parseFrontmatter('---\ntags: [broken\nkeys: ["C # compiler", tool] # a comment\ntitle: [WIP] a draft\nnote: plain # comment\nnested: [a, [b] junk\nquoted: ["]", x\n---\n');
+  assert.deepEqual(fm.listErrors,['tags','nested','quoted']);
   assert.deepEqual([fm.meta.keys,fm.meta.title,fm.meta.note],[['C # compiler','tool'],'[WIP] a draft','plain']);
   const dir=bridged(t);edit(join(dir,'peer/lesson.md'),'kind: lesson','kind: lesson\ntags: [broken');
   assert.ok(validate(dir).out.errors.includes("peer/lesson.md: malformed flow list in 'tags' (flat [a, \"b\"] items only)"));
   edit(join(dir,'peer/lesson.md'),'tags: [broken','tags: ["C # compiler", tool]');
   assert.deepEqual(validate(dir).out.errors,[]);
+});
+
+test('legacy types map to claim types in the views, counts and filters (Lesson, Conclusion, Limitation → Insight; Roadmap → Decision), the files untouched',t=>{
+  const dir=bridged(t);
+  const add=(name,type,kind)=>write(join(dir,`claims/insights/${name}.md`),`---\ntype: ${type}\ntitle: ${name}\ndescription: ${name}.\nabout: [system/okf]\n${kind?`kind: ${kind}\n`:''}id: x-${name}\n---\n`);
+  add('conclusion','Conclusion','finding');add('limitation','Limitation','constraint');add('roadmap','Roadmap','direction');add('unkinded','Lesson');
+  reindex(dir);
+  const view=parseView(fs.readFileSync(join(dir,'subjects/system/okf/index.md'),'utf8'));
+  assert.deepEqual(view.sections.map(s=>[s.type,s.kind,s.entries.map(e=>e.title)]),[
+    ['Decision',null,['Pin the owner at spawn']],['Decision','direction',['roadmap']],
+    ['Insight','constraint',['limitation']],['Insight','finding',['conclusion','Consult reads one committed index']],['Insight','lesson',['unkinded']]]);
+  assert.match(fs.readFileSync(join(dir,'claims/insights/roadmap.md'),'utf8'),/^type: Roadmap$/m,'the file keeps its type');
+  assert.equal(titleHash('Lesson','A title'),titleHash('Insight','A title'),'the title hash keys on the mapped type');
+  assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+});
+
+test('validator v2 on a bridged base: type must be a non-empty scalar; title and description lists are --strict warnings',t=>{
+  const dir=bridged(t);edit(join(dir,'peer/lesson.md'),'type: Lesson','type: []');reindex(dir);
+  assert.ok(validate(dir).out.errors.includes("peer/lesson.md: missing or empty required field 'type'"));
+  edit(join(dir,'peer/lesson.md'),'type: []','type: [Lesson]');reindex(dir);
+  assert.ok(validate(dir).out.errors.includes("peer/lesson.md: 'type' must be a non-empty scalar, not a list"));
+  edit(join(dir,'peer/lesson.md'),'type: [Lesson]','type: Lesson');edit(join(dir,'peer/lesson.md'),'title: Fakes hide refusals','title: [Fakes, refusals]');reindex(dir);
+  assert.ok(validate(dir).out.warnings.includes("peer/lesson.md: 'title' must be a scalar, not a list"));
 });
 
 // ------------------------------------------------------------- regenerator
@@ -160,7 +183,7 @@ test('the regenerator refuses a plain base (exit 2) and its views parse back to 
   const view=parseView(fs.readFileSync(join(dir,'subjects/workstream/knowledge/index.md'),'utf8'));
   assert.equal(view.title,'Knowledge');assert.equal(view.description,'How OATS keeps and proposes knowledge.');
   assert.deepEqual(view.members.map(m=>m.path),['subjects/system/okf.md']);
-  assert.deepEqual(view.sections.map(s=>[s.type,s.kind,s.entries.map(e=>e.path)]),[['Decision',null,['expert/decision.md']],['Lesson','lesson',['peer/lesson.md']]]);
+  assert.deepEqual(view.sections.map(s=>[s.type,s.kind,s.entries.map(e=>e.path)]),[['Decision',null,['expert/decision.md']],['Insight','lesson',['peer/lesson.md']]]);
   assert.deepEqual(parseSubjectsIndex(fs.readFileSync(join(dir,'subjects/index.md'),'utf8')).map(s=>s.ref),['system/okf','workstream/knowledge']);
   assert.deepEqual(parseVerdictsIndex(fs.readFileSync(join(dir,'verdicts/index.md'),'utf8')),[{id:REJECTED.id,path:`verdicts/${REJECTED.id}.md`,title:REJECTED.title,verdict:'rejected',claimType:'Decision',titleHash:titleHash(REJECTED.type,REJECTED.title),description:REJECTED.description}]);
   // generate() is the same function the validator compares against.
@@ -172,6 +195,8 @@ const LINKS=[
   ['a symlinked generated index',(dir,outside)=>{fs.rmSync(join(dir,'subjects/system/okf/index.md'));fs.symlinkSync(join(outside,'target.md'),join(dir,'subjects/system/okf/index.md'));}],
   ['a symlinked directory above it',(dir,outside)=>{fs.rmSync(join(dir,'subjects/system/okf'),{recursive:true});fs.mkdirSync(join(outside,'dir'));fs.symlinkSync(join(outside,'dir'),join(dir,'subjects/system/okf'));}],
   ['a hardlinked generated index',(dir,outside)=>{fs.rmSync(join(dir,'subjects/index.md'));fs.linkSync(join(outside,'target.md'),join(dir,'subjects/index.md'));}],
+  ['a symlinked okf-base.json',(dir,outside)=>{fs.renameSync(join(dir,'okf-base.json'),join(outside,'okf-base.json'));fs.symlinkSync(join(outside,'okf-base.json'),join(dir,'okf-base.json'));}],
+  ['okf-base.json linked to a FIFO',(dir,outside)=>{fs.rmSync(join(dir,'okf-base.json'));spawnSync('mkfifo',[join(outside,'fifo')]);fs.symlinkSync(join(outside,'fifo'),join(dir,'okf-base.json'));}],
 ];
 for(const [name,link] of LINKS) test(`the regenerator and propose refuse ${name} (E_PATH) and write nothing outside the base`,t=>{
   for(const via of ['cli','propose']) {
@@ -180,12 +205,13 @@ for(const [name,link] of LINKS) test(`the regenerator and propose refuse ${name}
     // A claim that makes the views stale, so a regeneration would write.
     write(join(dir,'claims/insights/new.md'),'---\ntype: Insight\ntitle: New\ndescription: New.\nabout: [system/okf]\nid: ins-000000000009\n---\n');
     link(dir,outside);
-    const snapshot=()=>fs.readdirSync(outside,{recursive:true}).map(n=>[n,fs.statSync(join(outside,n)).isFile()?fs.readFileSync(join(outside,n),'utf8'):'dir']);
+    const snapshot=()=>fs.readdirSync(outside,{recursive:true}).map(n=>[n,fs.statSync(join(outside,n)).isFile()?fs.readFileSync(join(outside,n),'utf8'):'other']);
     const before=snapshot();
     if(via==='cli') for(const args of [[],['--check']]) {
-      const r=spawnSync(process.execPath,[REINDEX,dir,...args],{encoding:'utf8'});
+      const r=spawnSync(process.execPath,[REINDEX,dir,...args],{encoding:'utf8',timeout:20000});
       assert.equal(r.status,2,r.stdout+r.stderr);assert.match(r.stderr,/E_PATH/);
     }
+    else if(/okf-base/.test(name)) assert.deepEqual(prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/insights/new.md',status:'A'}]}),{about:[],regenerated:[]},'a linked okf-base.json is never read: no layout, nothing written (validateTree refuses the link)');
     else assert.throws(()=>prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/insights/new.md',status:'A'}]}),e=>e.code==='E_PATH');
     assert.deepEqual(snapshot(),before,`${via}: the outside files are unchanged`);
   }
@@ -240,7 +266,7 @@ test('spawn: a version-2 soul\'s brief lists one line per subject with counts fr
   const f=deployment(t),r=hook(f,'spawn');
   assert.equal(r.status,0,r.text);
   assert.equal(r.out.warning,undefined,r.text);
-  assert.ok(r.out.brief.includes('`oats okf index` for your subjects:\n- system/okf — The knowledge provider package. (1 decision, 1 insight)\n- workstream/knowledge — How OATS keeps and proposes knowledge. (1 decision, 1 lesson)\nthen `oats okf subject KIND/SLUG`, `oats okf claims --about KIND/SLUG`'),r.out.brief);
+  assert.ok(r.out.brief.includes('`oats okf index` for your subjects:\n- system/okf — The knowledge provider package. (1 decision, 1 insight)\n- workstream/knowledge — How OATS keeps and proposes knowledge. (1 decision, 1 insight)\nthen `oats okf subject KIND/SLUG`, `oats okf claims --about KIND/SLUG`'),r.out.brief);
   assert.doesNotMatch(r.out.brief,/owns:|reads:/);
 });
 
@@ -278,7 +304,7 @@ test('a version-2 soul whose subjects live in two bridged bases: spawn, the defa
   const f={dir,soul,home,user,bindingsFile};
   const spawned=hook(f,'spawn');
   assert.equal(spawned.status,0,spawned.text);
-  assert.match(spawned.out.brief,/- system\/okf — The knowledge provider package\. \(1 decision, 1 insight\)\n- workstream\/other — How OATS keeps and proposes knowledge\. \(1 decision, 1 lesson\)/);
+  assert.match(spawned.out.brief,/- system\/okf — The knowledge provider package\. \(1 decision, 1 insight\)\n- workstream\/other — How OATS keeps and proposes knowledge\. \(1 decision, 1 insight\)/);
   const index=run(f,['index','--json']);
   assert.equal(index.status,0,index.text);
   assert.deepEqual(index.out.result.indexes.map(x=>[x.base,x.subject]),[['a','system/okf'],['b','workstream/other']]);
@@ -340,8 +366,8 @@ test('`oats okf claims --about` lists the subject\'s index entries, filtered by 
   const f=deployment(t);
   const all=run(f,['claims','--about','workstream/knowledge','--json']);
   assert.equal(all.status,0,all.text);
-  assert.deepEqual(all.out.result.claims.map(c=>[c.type,c.kind,c.path]),[['Decision',null,'expert/decision.md'],['Lesson','lesson','peer/lesson.md']]);
-  assert.deepEqual(run(f,['claims','--about','workstream/knowledge','--type','lesson','--json']).out.result.claims.map(c=>c.path),['peer/lesson.md']);
+  assert.deepEqual(all.out.result.claims.map(c=>[c.type,c.kind,c.path]),[['Decision',null,'expert/decision.md'],['Insight','lesson','peer/lesson.md']]);
+  assert.deepEqual(run(f,['claims','--about','workstream/knowledge','--type','insight','--kind','lesson','--json']).out.result.claims.map(c=>c.path),['peer/lesson.md']);
   assert.deepEqual(run(f,['claims','--about','system/okf','--kind','finding','--json']).out.result.claims.map(c=>c.path),['claims/insights/consult-reads-one-blob.md']);
   assert.equal(run(f,['claims','--about','system/okf']).stdout.split('\n')[0],'/expert/decision.md  [Decision] Pin the owner at spawn — The owner is pinned when the instance spawns.');
   assert.equal(run(f,['claims','--json']).out.error.code,'E_USAGE');
@@ -446,6 +472,22 @@ test('propose --check, version 1 on a bridged base: a new claim gets about: from
   assert.deepEqual(v.out.warnings,["expert/new.md: missing 'id' (stamped by the maintainer at acceptance)"]);
   assert.deepEqual(proposalFindings(v.out.warnings,p.changes()),[],'a proposed claim waits for the maintainer\'s id');
   assert.deepEqual(proposalFindings(["peer/lesson.md: missing 'id' (stamped by the maintainer at acceptance)"],p.changes()),["peer/lesson.md: missing 'id' (stamped by the maintainer at acceptance)"],'only for its own files');
+});
+
+test('propose --check, version 1: a new claim that already has about: gets its node\'s subject too, keeping the others; E_SUBJECT without a mapping',t=>{
+  const p=proposal(t);
+  write(join(p.root,'expert/new.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: [workstream/knowledge]'));
+  write(join(p.root,'expert/both.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: [system/okf, workstream/knowledge]').replace('A new decision','Both'));
+  assert.deepEqual(prepareSubjectProposal({root:p.root,decl:V1,ownedNodes:OWNED,changes:p.changes()}).about,['expert/new.md']);
+  assert.match(fs.readFileSync(join(p.root,'expert/new.md'),'utf8'),/^about: \[system\/okf, workstream\/knowledge\]$/m);
+  assert.match(fs.readFileSync(join(p.root,'subjects/system/okf/index.md'),'utf8'),/\(\/expert\/new\.md\)/);
+  const q=proposal(t);
+  edit(join(q.root,'subjects/system/okf.md'),'legacy-nodes: [expert]','legacy-nodes: []');
+  write(join(q.root,'expert/new.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: [workstream/knowledge]'));
+  assert.throws(()=>prepareSubjectProposal({root:q.root,decl:V1,ownedNodes:OWNED,changes:q.changes()}),e=>e.code==='E_SUBJECT');
+  const r=proposal(t);
+  write(join(r.root,'expert/new.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: workstream/knowledge'));
+  assert.throws(()=>prepareSubjectProposal({root:r.root,decl:V1,ownedNodes:OWNED,changes:r.changes()}),e=>e.code==='E_SUBJECT' && /about must be a flow list/.test(e.message));
 });
 
 test('propose --check, version 1: E_SUBJECT when no subject names the owned node; E_SCOPE outside the owned nodes',t=>{

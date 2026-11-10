@@ -59,8 +59,12 @@ for (const f of files) {
   }
   if (!fm.present) { errors.push(`${r}: missing YAML frontmatter`); continue; }
   if (!fm.parsed) { errors.push(`${r}: unparseable YAML frontmatter`); continue; }
-  if (!fm.meta.type) errors.push(`${r}: missing or empty required field 'type'`);
-  if (subjectLayout) for (const key of fm.listErrors) errors.push(`${r}: malformed flow list in '${key}' (flat [a, "b"] items only)`);
+  if (!fm.meta.type || (subjectLayout && Array.isArray(fm.meta.type) && !fm.meta.type.length)) errors.push(`${r}: missing or empty required field 'type'`);
+  if (subjectLayout) {
+    for (const key of fm.listErrors) errors.push(`${r}: malformed flow list in '${key}' (flat [a, "b"] items only)`);
+    if (fm.meta.type && typeof fm.meta.type !== "string") errors.push(`${r}: 'type' must be a non-empty scalar, not a list`);
+    for (const key of ["title", "description"]) if (strict && Array.isArray(fm.meta[key])) warnings.push(`${r}: '${key}' must be a scalar, not a list`);
+  }
   if (strict) {
     if (!fm.meta.title) warnings.push(`${r}: missing recommended field 'title'`);
     if (!fm.meta.description) warnings.push(`${r}: missing recommended field 'description'`);

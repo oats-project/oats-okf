@@ -168,7 +168,9 @@ base is.
   the validator; refuses a base holding a symlink, a non-regular or a
   multiply-linked file, and writes through temporary files renamed in place): writes each subject's index, `subjects/index.md`,
   `verdicts/index.md` and the root index's `## Subjects` section
-  deterministically; `--check` exits 1 on a difference.
+  deterministically, reading legacy types as claim types (Lesson,
+  Conclusion, Limitation → Insight; Roadmap → Decision) without rewriting a
+  file; `--check` exits 1 on a difference.
 - **`okf.json` version 2**, `{"version":2,"subjects":[...]}`: reading
   defaults with no owner, owns or reads, resolved at spawn and readiness
   (`E_CONFIG: unresolved subject: <ref>`; `E_CONFIG: base <alias> has no
