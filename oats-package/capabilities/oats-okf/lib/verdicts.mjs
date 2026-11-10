@@ -9,20 +9,20 @@
 //      the reviewer, never a refusal.
 // Pure: the caller supplies the committed verdicts/index.md and a reader for
 // one verdict file, so consult reads blobs and propose reads its clone.
-import { parseFrontmatter, parseVerdictsIndex, titleHash } from './okf-reindex.mjs';
+import { parseFrontmatter, parseVerdictsIndex, titleHash, textKey } from './okf-reindex.mjs';
 
 const scalar = v => typeof v === 'string' ? v.trim() : '';
 
 /** → { id, titleHash, identity, candidates, refusal } (refusal null or a message). */
 export function verdictLanes(meta, indexText, readVerdict) {
   const rows = parseVerdictsIndex(indexText ?? '');
-  const byId = new Map(rows.map(r => [r.id, r]));
+  const byId = new Map(rows.map(r => [textKey(r.id), r]));  // ids read from an untrusted index
   const id = scalar(meta?.id), reconsiders = scalar(meta?.reconsiders);
   const hash = titleHash(meta?.type, meta?.title);
   let identity = null, refusal = null;
-  const known = [id, reconsiders].filter(Boolean).find(k => byId.has(k));
+  const known = [id, reconsiders].filter(Boolean).find(k => byId.has(textKey(k)));
   if (known) {
-    const row = byId.get(known);
+    const row = byId.get(textKey(known));
     let ruled = {};
     try { ruled = parseFrontmatter(readVerdict(known) ?? '').meta ?? {}; } catch { ruled = {}; }
     identity = { id: known, verdict: row.verdict, claimType: row.claimType, title: row.title, path: row.path,

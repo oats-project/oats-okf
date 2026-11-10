@@ -680,6 +680,14 @@ function readView(ctx, ref) {
 }
 const plural = (type, n) => { const t = type.toLowerCase(); return n === 1 ? t : /(s|x|ch|sh)$/.test(t) ? `${t}es` : /[^aeiou]y$/.test(t) ? `${t.slice(0, -1)}ies` : `${t}s`; };
 export const countText = counts => [...counts].map(([type, n]) => `${n} ${plural(type, n)}`).join(', ');
+/** A view's claim counts by type, for display: a type over HEADING_CHARS is
+ *  cut (types that then read alike are counted together), so the answer and
+ *  its JSON keys stay bounded whatever an untrusted committed index holds. */
+function shownCounts(view) {
+  const out = new Map();
+  for (const [type, n] of viewCounts(view)) { const t = cutHeading(type); out.set(t, (out.get(t) ?? 0) + n); }
+  return out;
+}
 function subjectIndexes(source, flags, refs) {
   refs.forEach(subjectArg);
   const declared = new Set(source.decl.subjects ?? []), where = subjectBases(source, flags, refs), byRef = new Map(), receipts = [];
@@ -708,7 +716,7 @@ export function subject(source, flags, positionals) {
   return withSubject(source, flags, ref, ctx => {
     const { file, e } = subjectEntry(ctx, ref), text = read(ctx, file, e), meta = parseFrontmatter(text).meta ?? {};
     const list = key => Array.isArray(meta[key]) ? meta[key] : [];
-    const { path, view } = readView(ctx, ref), counts = viewCounts(view);
+    const { path, view } = readView(ctx, ref), counts = shownCounts(view);
     const members = view.members.map(m => subjectOfPath(m.path)?.ref).filter(Boolean);
     const result = { base: ctx.alias, ref, path: file, title: view.title, description: view.description, legacyNodes: list('legacy-nodes'), inWorkstreams: list('in-workstreams'), dependsOn: list('depends-on'), members, counts: Object.fromEntries(counts), index: path, text, receipt: ctx.receipt };
     const lines = [
@@ -726,13 +734,17 @@ const cutHeading = v => v.length > HEADING_CHARS ? `${v.slice(0, HEADING_CHARS)}
 export function claims(source, flags, positionals) {
   if (positionals.length) fail('E_USAGE', 'claims takes --about <kind>/<slug> [--type T] [--kind K]');
   if (flags.about === undefined) fail('E_USAGE', 'claims needs --about <kind>/<slug>');
-  const ref = subjectArg(flags.about), same = (a, b) => b === undefined || (a ?? '').toLowerCase() === b.toLowerCase();
+  const ref = subjectArg(flags.about);
   return withSubject(source, flags, ref, ctx => {
     const { path, view } = readView(ctx, ref);
     // Each row repeats its section's type and kind: those read from an
     // untrusted committed index are cut to HEADING_CHARS so a long heading
     // over many entries cannot multiply the answer (the filter sees them whole).
-    const rows = view.sections.filter(x => same(x.type, flags.type) && same(x.kind, flags.kind)).flatMap(x => {
+    // The filter is compared once per distinct type and kind (keyed by the
+    // parser's textKey), not once per section: one long type over many kinds.
+    const memo = (want, cache = new Map()) => (text, key) => { if (want === undefined) return true; if (!cache.has(key)) cache.set(key, (text ?? '').toLowerCase() === want); return cache.get(key); };
+    const typeOk = memo(flags.type?.toLowerCase()), kindOk = memo(flags.kind?.toLowerCase());
+    const rows = view.sections.filter(x => typeOk(x.type, x.typeKey) && kindOk(x.kind, x.kindKey)).flatMap(x => {
       const type = cutHeading(x.type), kind = x.kind === null ? null : cutHeading(x.kind);
       return x.entries.map(c => ({ type, kind, title: c.title, path: c.path, description: c.description }));
     });
@@ -778,7 +790,7 @@ export function subjectBriefLines(bindings, decl, accepted) {
     let line = ref;
     if (alias) try {
       line = withBase(bindings, alias, { preferCached: true }, ctx => {
-        const { view } = readView(ctx, ref), counts = countText(viewCounts(view));
+        const { view } = readView(ctx, ref), counts = countText(shownCounts(view));
         return `${ref} — ${view.description || view.title}${counts ? ` (${counts})` : ' (no claims yet)'}`;
       });
     } catch { /* the bare ref; consult reads it later */ }

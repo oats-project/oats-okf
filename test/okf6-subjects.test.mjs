@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX, VALIDATE } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue, keyValue } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
+import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue, keyValue, textKey, GENERATED_NOTE } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
@@ -566,6 +566,42 @@ test('a committed subject index with very many sections is read in linear time (
   for(const args of [['claims','--about','system/okf','--type','Type-99999','--fresh','--json']]) {
     started=Date.now();const r=run(f,args);
     assert.equal(r.status,0,r.text.slice(0,300));assert.ok(Date.now()-started<15000,`${args[0]} took ${Date.now()-started} ms`);
+  }
+});
+
+test('one long committed type over many kinds: `claims --type` compares the filter once per type, not per section',t=>{
+  const f=deployment(t),view=join(f.repo,'subjects/system/okf/index.md');
+  const lines=[`## ${'T'.repeat(2000000)}`,''];for(let i=0;i<50000;i++) lines.push(`### k${i}`,'',`* [C${i}](/claims/c${i}.md) - D`,'');
+  fs.appendFileSync(view,'\n'+lines.join('\n'));f.git('add','-A');f.git('commit','-q','-m','long type, many kinds');
+  const started=Date.now(),r=run(f,['claims','--about','system/okf','--type','Decision','--kind','nope','--fresh','--json']);
+  assert.equal(r.status,0,r.text.slice(0,300));assert.ok(Date.now()-started<8000,`claims took ${Date.now()-started} ms`);
+  const s2=run(f,['subject','system/okf','--fresh','--json']);
+  assert.equal(s2.status,0,s2.text.slice(0,300));
+  assert.equal(s2.out.result.counts[`${'T'.repeat(200)}…`],50000);
+});
+
+test('text from a base or an index is keyed by textKey: many long distinct types, kinds or ids stay linear (V8 hashes a long string by its length)',()=>{
+  assert.equal(textKey('Decision'),'Decision');assert.equal(textKey('x'.repeat(16000)),'x'.repeat(16000));
+  assert.match(textKey('x'.repeat(16001)),/^\u0000sha256:[0-9a-f]{64}$/);assert.notEqual(textKey('x'.repeat(16001)),textKey('y'.repeat(16001)));
+  const prefix='T'.repeat(17000),types=Array.from({length:2500},(_,i)=>`${prefix}${String(i).padStart(6,'0')}`);
+  let started=Date.now();const v=parseView(['# S','',GENERATED_NOTE,'',...types.flatMap((ty,i)=>[`## ${ty}`,`### ${ty}`,`* [C${i}](/claims/c${i}.md)`])].join('\n'));
+  assert.ok(Date.now()-started<3000,`parseView took ${Date.now()-started} ms`);assert.equal(v.sections.length,2500);
+  const concepts=new Map([['subjects/system/okf.md',{type:'System',title:'S'}],...types.map((ty,i)=>[`claims/c${i}.md`,{type:ty,kind:ty,title:`C${i}`,about:['system/okf',...(i<5?[prefix+'x'.repeat(7),prefix+'y'.repeat(7)]:[])]}])]);
+  started=Date.now();const out=generate(concepts);
+  assert.ok(Date.now()-started<3000,`generate took ${Date.now()-started} ms`);
+  assert.equal(parseView(out.get('subjects/system/okf/index.md')).sections.length,2500);
+});
+
+test('a claim type spelled like the membership heading stays a claim; members are the subject files under it',t=>{
+  const dir=bridged(t);
+  edit(join(dir,'claims/insights/consult-reads-one-blob.md'),'type: Insight','type: In this workstream');
+  edit(join(dir,'claims/insights/consult-reads-one-blob.md'),'about: [system/okf]','about: [system/okf, workstream/knowledge]');
+  reindex(dir);assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  for(const ref of ['system/okf','workstream/knowledge']) {
+    const v=parseView(fs.readFileSync(join(dir,`subjects/${ref}/index.md`),'utf8'));
+    assert.deepEqual(v.sections.filter(x=>x.type==='In this workstream').flatMap(x=>x.entries.map(e=>e.path)),['claims/insights/consult-reads-one-blob.md'],ref);
+    assert.ok(v.members.every(m=>m.path.startsWith('subjects/')),ref);
+    if(ref==='workstream/knowledge') assert.deepEqual(v.members.map(m=>m.path),['subjects/system/okf.md']);
   }
 });
 

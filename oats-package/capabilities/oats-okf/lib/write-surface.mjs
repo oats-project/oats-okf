@@ -15,7 +15,7 @@
 //   both: the generated indexes are regenerated, and nothing else may differ
 //     in them from the regenerator's output.
 import { fs, join, fail } from './io.mjs';
-import { parseFrontmatter, generate, readConcepts, withSubjectsSection, subjectOfPath, place, isReservedFile, bridged as isBridged, orphanViews, assertSafeTree, writeInBase } from './okf-reindex.mjs';
+import { parseFrontmatter, generate, readConcepts, withSubjectsSection, subjectOfPath, place, isReservedFile, bridged as isBridged, orphanViews, assertSafeTree, writeInBase, textKey } from './okf-reindex.mjs';
 import { verdictLanes } from './verdicts.mjs';
 
 const read = (root, p) => { try { return fs.readFileSync(join(root, p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
@@ -42,7 +42,8 @@ export function legacyMap(root) {
   const out = new Map();
   for (const [p, meta] of readConcepts(root)) {
     const s = subjectOfPath(p);
-    if (s && Array.isArray(meta['legacy-nodes'])) for (const node of meta['legacy-nodes']) if (!out.has(node)) out.set(node, s.ref);
+    // keyed by textKey: node names are untrusted base text (a real node name is short, its own key)
+    if (s && Array.isArray(meta['legacy-nodes'])) for (const node of meta['legacy-nodes']) if (!out.has(textKey(node))) out.set(textKey(node), s.ref);
   }
   return out;
 }

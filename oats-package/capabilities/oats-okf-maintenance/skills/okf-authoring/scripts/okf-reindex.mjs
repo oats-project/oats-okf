@@ -234,6 +234,13 @@ const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 /** Every generated file's expected content, from the concepts' frontmatter
  *  (`concepts`: Map of base path → meta, reserved files excluded) and the
  *  current root index.md text. → Map of base path → text. */
+/** The Map/Set key for text read from a base or a committed index (untrusted).
+ *  V8 hashes a string longer than 16383 characters by its length alone, so
+ *  many long keys of one length make each insertion compare against all the
+ *  others (quadratic); such text is keyed by its sha256 instead, computed once.
+ *  Short text is its own key. */
+export const KEY_CHARS = 16000;
+export const textKey = (text) => text.length <= KEY_CHARS ? text : `\u0000sha256:${createHash("sha256").update(text).digest("hex")}`;
 export function generate(concepts, rootIndex = "") {
   const subjects = new Map();
   for (const [p, meta] of concepts) {
@@ -245,7 +252,8 @@ export function generate(concepts, rootIndex = "") {
   const claimsOf = new Map([...subjects.keys()].map((ref) => [ref, []]));
   for (const [p, meta] of [...concepts].sort(([a], [b]) => byText(a, b))) {
     if (place(p) !== "claim" || !Array.isArray(meta?.about)) continue;
-    for (const ref of new Set(meta.about)) if (claimsOf.has(ref)) claimsOf.get(ref).push({ path: p, meta });
+    // Only this base's subject refs are keyed (a long untrusted item is never one).
+    for (const ref of new Set(meta.about.filter((r) => claimsOf.has(r)))) claimsOf.get(ref).push({ path: p, meta });
   }
   const order = (ref) => Object.keys(KINDS).indexOf(ref.split("/")[0]);
   const sortedRefs = [...subjects.keys()].sort((a, b) => order(a) - order(b) || byText(a, b));
@@ -254,7 +262,7 @@ export function generate(concepts, rootIndex = "") {
   const membersOf = new Map();
   for (const r of sortedRefs) {
     const list = subjects.get(r).meta["in-workstreams"];
-    if (Array.isArray(list)) for (const w of new Set(list)) if (w !== r) { if (!membersOf.has(w)) membersOf.set(w, []); membersOf.get(w).push(r); }
+    if (Array.isArray(list)) for (const w of new Set(list.filter((x) => subjects.has(x)))) if (w !== r) { if (!membersOf.has(w)) membersOf.set(w, []); membersOf.get(w).push(r); }
   }
   for (const ref of sortedRefs) {
     const s = subjects.get(ref), title = one(s.meta.title) || s.slug;
@@ -269,21 +277,21 @@ export function generate(concepts, rootIndex = "") {
         lines.push("");
       }
     }
+    // type → kind → entries, keyed by textKey (types and kinds are free text).
     const types = new Map();
     for (const c of claimsOf.get(ref)) {
       const mapped = claimType(typeof c.meta.type === "string" ? one(c.meta.type) : "", typeof c.meta.kind === "string" ? one(c.meta.kind) : "");
-      const type = mapped.type || "Untyped", kind = mapped.kind;
-      if (!types.has(type)) types.set(type, new Map());
-      const kinds = types.get(type);
-      if (!kinds.has(kind)) kinds.set(kind, []);
-      kinds.get(kind).push(entry(one(c.meta.title) || fallbackTitle(c.path), c.path, c.meta.description));
+      const type = mapped.type || "Untyped", kind = mapped.kind, tk = textKey(type), kk = textKey(kind);
+      if (!types.has(tk)) types.set(tk, { type, kinds: new Map() });
+      const kinds = types.get(tk).kinds;
+      if (!kinds.has(kk)) kinds.set(kk, { kind, entries: [] });
+      kinds.get(kk).entries.push(entry(one(c.meta.title) || fallbackTitle(c.path), c.path, c.meta.description));
     }
     if (!types.size) lines.push("No claims are about this subject yet.", "");
-    for (const type of [...types.keys()].sort(byText)) {
+    for (const { type, kinds } of [...types.values()].sort((a, b) => byText(a.type, b.type))) {
       lines.push(`## ${type}`, "");
-      const kinds = types.get(type);
-      if (kinds.has("")) lines.push(...kinds.get(""), "");
-      for (const kind of [...kinds.keys()].filter(Boolean).sort(byText)) lines.push(`### ${kind}`, "", ...kinds.get(kind), "");
+      if (kinds.has("")) lines.push(...kinds.get("").entries, "");
+      for (const { kind, entries } of [...kinds.values()].filter((k) => k.kind).sort((a, b) => byText(a.kind, b.kind))) lines.push(`### ${kind}`, "", ...entries, "");
     }
     out.set(viewFile(ref), lines.join("\n").replace(/\n+$/, "") + "\n");
   }
@@ -334,10 +342,13 @@ export function parseEntry(line) {
   return m ? { title: m[1], path: m[2], description: m[3] ?? "" } : null;
 }
 /** A generated subject view → { title, description, members, sections:
- *  [{ type, kind, entries }] } (kind null for entries directly under a type). */
+ *  [{ type, kind, typeKey, kindKey, entries }] } (kind null for entries
+ *  directly under a type; the keys are textKey of each). Members are the
+ *  subject-file entries under the membership heading: a claim type spelled
+ *  like that heading stays a claim section. */
 export function parseView(text) {
   const lines = String(text).split(/\r?\n/), out = { title: "", description: "", members: [], sections: [] };
-  let type = null, kind = null, inMembers = false, sawNote = false;
+  let type = null, kind = null, typeKey = null, kindKey = null, inMembers = false, sawNote = false;
   const byType = new Map();
   let current = null;
   for (const line of lines) {
@@ -345,31 +356,34 @@ export function parseView(text) {
     if (line.startsWith(GENERATED_NOTE)) { sawNote = true; continue; }
     if (!sawNote && out.title && line.trim() && !line.startsWith("#")) { out.description = line.trim(); continue; }
     const h2 = /^## (.+)$/.exec(line), h3 = /^### (.+)$/.exec(line);
-    if (h2) { inMembers = h2[1].trim() === MEMBERS; type = inMembers ? null : h2[1].trim(); kind = null; current = null; continue; }
-    if (h3) { kind = h3[1].trim(); current = null; continue; }
+    if (h2) { type = h2[1].trim(); typeKey = textKey(type); inMembers = type === MEMBERS; kind = null; kindKey = null; current = null; continue; }
+    if (h3) { kind = h3[1].trim(); kindKey = textKey(kind); current = null; continue; }
     const e = parseEntry(line);
     if (!e) continue;
-    if (inMembers) out.members.push(e);
+    if (inMembers && kind === null && subjectOfPath(e.path)) out.members.push(e);
     else if (type) {
       // A committed index is untrusted: the section is looked up once per
       // heading, never per entry (no scan of the sections seen so far, no
       // heading-sized key per entry); out.sections keeps first-seen order.
       if (!current) {
-        if (!byType.has(type)) byType.set(type, new Map());
-        const kinds = byType.get(type);
-        current = kinds.get(kind);
-        if (!current) { out.sections.push(current = { type, kind, entries: [] }); kinds.set(kind, current); }
+        if (!byType.has(typeKey)) byType.set(typeKey, new Map());
+        const kinds = byType.get(typeKey);
+        current = kinds.get(kindKey);
+        if (!current) { out.sections.push(current = { type, kind, typeKey, kindKey, entries: [] }); kinds.set(kindKey, current); }
       }
       current.entries.push(e);
     }
   }
   return out;
 }
-/** Claim counts by type from a parsed view, in view order. */
+/** Claim counts by type from a parsed view, in view order: [[type, n], ...]. */
 export function counts(view) {
   const out = new Map();
-  for (const s of view.sections) out.set(s.type, (out.get(s.type) ?? 0) + s.entries.length);
-  return out;
+  for (const s of view.sections) {
+    const c = out.get(s.typeKey);
+    if (c) c[1] += s.entries.length; else out.set(s.typeKey, [s.type, s.entries.length]);
+  }
+  return [...out.values()];
 }
 /** subjects/index.md → [{ ref, kind, slug, title, description }]. */
 export function parseSubjectsIndex(text) {

@@ -367,9 +367,10 @@ oats okf verdicts --check <claim file>
 - Each verb reads committed generated indexes (one blob each, plus the
   subject file for `subject`), never scans the base, and keeps the receipt
   (`alias@oid`): cite as before, `alias/path@oid`. A committed index is
-  untrusted input: it is parsed in linear time, and `claims` cuts a type or
-  kind heading over 200 characters in each row (`--type`/`--kind` match the
-  whole heading).
+  untrusted input: it is parsed in linear time (a filter is compared once per
+  distinct type and kind; text over 16,000 characters is keyed by its sha256),
+  and `claims` and `subject` cut a type or kind heading over 200 characters in
+  what they show (`--type`/`--kind` match the whole heading).
 - `subject`, `claims` and `index <ref>` read each subject from the one bound
   base with the layout that holds its file (a version-2 soul's subjects may
   live in several bases; the same ref in two is `E_USAGE`, pass `--base`).

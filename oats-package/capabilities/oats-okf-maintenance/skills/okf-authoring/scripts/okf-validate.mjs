@@ -19,7 +19,7 @@
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve, dirname, posix } from "node:path";
-import { parseFrontmatter, bridged, subjectOfPath, place, KINDS, VERDICTS, SUBJECT_REF, titleHash, staleViews } from "./okf-reindex.mjs";
+import { parseFrontmatter, bridged, subjectOfPath, place, KINDS, VERDICTS, SUBJECT_REF, titleHash, staleViews, textKey } from "./okf-reindex.mjs";
 
 const args = process.argv.slice(2);
 const strict = args.includes("--strict");
@@ -92,8 +92,9 @@ if (subjectLayout) {
       for (const ref of list(m["in-workstreams"]) ?? []) if (!ref.startsWith("workstream/") || !subjects.has(ref)) errors.push(`${r}: in-workstreams names ${JSON.stringify(ref)}, not a workstream subject of this base`);
       for (const ref of list(m["depends-on"]) ?? []) if (!ref.startsWith("system/") || !subjects.has(ref)) errors.push(`${r}: depends-on names ${JSON.stringify(ref)}, not a system subject of this base`);
       for (const node of list(m["legacy-nodes"]) ?? []) {
-        if (legacy.has(node)) errors.push(`${r}: legacy node ${JSON.stringify(node)} is already absorbed by ${legacy.get(node)}`);
-        else legacy.set(node, r);
+        const key = textKey(String(node));
+        if (legacy.has(key)) errors.push(`${r}: legacy node ${JSON.stringify(node)} is already absorbed by ${legacy.get(key)}`);
+        else legacy.set(key, r);
       }
       continue;
     }
@@ -115,8 +116,8 @@ if (subjectLayout) {
     else for (const ref of about) if (!SUBJECT_REF.test(ref) || !subjects.has(ref)) errors.push(`${r}: about names ${JSON.stringify(ref)}, which has no subject file subjects/${ref}.md`);
     if (!m.id) { if (r.startsWith("claims/")) errors.push(`${r}: missing 'id' (stamped by the maintainer at acceptance)`); else if (strict) warnings.push(`${r}: missing 'id' (stamped by the maintainer at acceptance)`); }
     else if (typeof m.id !== "string") errors.push(`${r}: 'id' must be a scalar`);
-    else if (ids.has(m.id)) errors.push(`${r}: id ${m.id} is also ${ids.get(m.id)}`);
-    else ids.set(m.id, r);
+    else if (ids.has(textKey(m.id))) errors.push(`${r}: id ${m.id} is also ${ids.get(textKey(m.id))}`);
+    else ids.set(textKey(m.id), r);
   }
   if (strict) {
     try {
