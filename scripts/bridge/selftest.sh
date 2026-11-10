@@ -31,6 +31,8 @@ echo 'REVIEW-PROBE' >> "$T/c/knowledge/nodes/oats-okf-expert/index.md"
 expect_fail "verify: a legacy node index edited" node "$S/verify.mjs" "$T/c" "$BASE"
 fresh "$BRIDGED"; echo '* extra line' >> "$T/c/knowledge/log.md"
 expect_fail "verify: an extra root log line" node "$S/verify.mjs" "$T/c" "$BASE"
+fresh "$BRIDGED"; sed -i '1s/^{$/{\n  "review-probe": true,/' "$T/c/knowledge/okf-base.json"; grep -q review-probe "$T/c/knowledge/okf-base.json"
+expect_fail "verify: an extra top-level field in okf-base.json" node "$S/verify.mjs" "$T/c" "$BASE"
 fresh "$BRIDGED"; echo 'extra body line' >> "$T/c/$L"
 expect_fail "verify: a concept body changed" node "$S/verify.mjs" "$T/c" "$BASE"
 

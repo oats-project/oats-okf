@@ -59,12 +59,10 @@ for (const [rel, old] of before) {
   const added = insertedLines(old, now);
   if (!added) { fail(`not a pure insertion: ${rel}`); continue; }
   if (rel === 'okf-base.json') {
-    const o = JSON.parse(old), n = JSON.parse(now);
-    for (const [k, v] of Object.entries(o.nodes)) assert.deepEqual(n.nodes[k], v, `okf-base.json changed node ${k}`);
-    const extra = Object.keys(n.nodes).filter(k => !(k in o.nodes));
-    if (JSON.stringify(extra) !== JSON.stringify(RESERVED)) fail(`okf-base.json added ${extra}`);
-    for (const k of RESERVED) assert.deepEqual(n.nodes[k], { path: k, owner: '00000000-0000-0000-0000-000000000000' });
-    assert.equal(n.version, 1); assert.equal(n.id, o.id);
+    // The whole object must be the original plus exactly the three reserved nodes, appended in order.
+    const expected = JSON.parse(old);
+    for (const k of RESERVED) expected.nodes[k] = { path: k, owner: '00000000-0000-0000-0000-000000000000' };
+    if (JSON.stringify(JSON.parse(now)) !== JSON.stringify(expected)) fail('okf-base.json: more than the three reserved nodes added');
     counts.otherChanged.push(rel); continue;
   }
   if (rel === 'index.md') {
