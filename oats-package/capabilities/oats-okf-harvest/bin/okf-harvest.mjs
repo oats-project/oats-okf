@@ -7,7 +7,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const REMOVED_SPAWN = 'E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; rename the trigger template oats.okf:harvest-review to oats.okf:proposal-review. See the 6.0 release note.';
+export const REMOVED_SPAWN = 'E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review, and keep oats.okf:harvest-review beside it while 5.x okf-harvest PRs may still open. See the 6.0 release note.';
 export const REMOVED_COMMAND = 'was removed in oats.okf 5.0, and the harvester itself in 6.0: there are no harvest runs to complete or report. The instance proposes its knowledge itself with `oats okf propose`';
 const HELP = `oats.okf-harvest is a removed-capability stub (oats.okf 6.0, until 7.0).
 Its spawn hook refuses every harvester spawn with E_REMOVED and the fix:

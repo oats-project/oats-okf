@@ -802,7 +802,7 @@ A spawn of `oats.okf/knowledge-harvester` is refused by the stub soul's
 required spawn hook, before any home is kept:
 
 ```text
-oats-okf-harvest E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; rename the trigger template oats.okf:harvest-review to oats.okf:proposal-review. See the 6.0 release note.
+oats-okf-harvest E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review, and keep oats.okf:harvest-review beside it while 5.x okf-harvest PRs may still open. See the 6.0 release note.
 ```
 
 The hand steps, from the deployment directory:
@@ -832,8 +832,8 @@ The hand steps, from the deployment directory:
    `proposal-review` the 6.0 `okf-proposal` PRs, `harvest-review` the 5.x
    `okf-harvest` PRs only (as in 5.8). Without `proposal-review` no new
    proposal is reviewed automatically. Keep `harvest-review` while a 5.x
-   harvester may still open an `okf-harvest` PR, then remove it; that
-   completes the rename the removal error asks for.
+   harvester may still open an `okf-harvest` PR, then remove it (the removal
+   error says the same).
    - **A workspace automation file** (in a member repository) is
      re-instantiated from the package template at the pinned commit, so the
      old file keeps working for `okf-harvest` PRs. Copy it under the new
