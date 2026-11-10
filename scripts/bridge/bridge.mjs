@@ -61,11 +61,11 @@ const SUBJECTS = [
   ['system', 'oats-apps', 'oats.apps package', `${GH}awebai/oats-apps`, ['provider-integration'], ['oats-apps-expert'],
     'App guidance capabilities `oats.folio` and `oats.library`: aweb apps used from an OATS instance.'],
   ['system', 'oats-cloning', 'oats.cloning package', `${GH}oats-project/oats-cloning`, ['coordination'], [],
-    'Clones a running instance for a new goal: a fresh instance of the source\'s soul that starts with what the source knew, as far as the goal needs.'],
+    'Cloning a running instance for a new goal.'],
   ['system', 'oats-engineering', 'oats.engineering coordination package', `${GH}oats-project/oats-engineering`, ['coordination'], [],
-    'The engineering coordination package: engineering-expert and developer capabilities, adversarial code review and the code-reviewer soul. Its successor is a template organisations copy, not a package.'],
+    'The engineering coordination package: engineering-expert and developer capabilities, adversarial code review and the code-reviewer soul.'],
   ['system', 'aweb', 'aweb', `${GH}awebai/aweb`, ['messaging'], [],
-    'The aweb messaging service OATS integrates: identities, teams, mail and chat. Integrated, not built in the OATS repositories.'],
+    'The aweb messaging service OATS integrates: identities, teams, mail and chat.'],
   ['workstream', 'oats-direction', 'OATS direction', null, [], ['oats-maintainer'],
     'Stewardship and project-wide decisions: what OATS is, how it ships and is reviewed, and plans that cross areas.'],
   ['workstream', 'coordination', 'Coordination', null, [], ['oats-expert'],
@@ -77,17 +77,17 @@ const SUBJECTS = [
   ['workstream', 'positioning', 'Positioning', null, [], ['market-research-expert'],
     'Dated, attributable research and fair, scoped comparisons of OATS with other approaches.'],
   ['workstream', 'workspace-administration', 'Workspace administration', null, [], ['oats-setup-admin'],
-    'Administering a workspace\'s OATS configuration: which changes went wrong and why, how refusals were read, what verification caught. Never one deployment\'s state.'],
+    'Administering a workspace\'s OATS configuration: which changes went wrong and why, how refusals were read, what verification caught.'],
   ['workstream', 'knowledge', 'Knowledge', null, [], [],
     'How OATS keeps knowledge across packages: what counts as knowledge, and how it is consulted, proposed, reviewed and accepted.'],
   ['workstream', 'messaging', 'Messaging', null, [], [],
     'How instances and people message each other across providers: identities, teams, delivery and wakes.'],
   ['project', 'coordination-rethink', 'Coordination rethink', null, ['coordination'], [],
-    'A bounded plan to rethink how OATS coordinates work across instances and people; its parts include the knowledge base by subject.'],
+    'The plan to rethink how OATS instances and people coordinate work.'],
   ['project', 'okf-5', 'oats.okf 5', null, ['knowledge'], [],
-    'The oats.okf 5 release line: remote consultation of accepted bases and its proposal and review flow, up to the subject layer of 6.0.'],
+    'The oats.okf 5 release line.'],
   ['project', 'roster-2026-11', 'Roster, November 2026', null, ['oats-direction', 'coordination'], [],
-    'The November 2026 roster change: souls split by way of working, and the area souls folded into one engineering expert once the subject layout lands.'],
+    'The November 2026 change to the roster of OATS souls.'],
 ].map(([kind, slug, title, repo, inWorkstreams, legacyNodes, description]) =>
   ({ kind, slug, ref: `${kind}/${slug}`, title, repo, inWorkstreams, legacyNodes, description }));
 const SUBJECT_TYPE = { system: 'System', workstream: 'Workstream', project: 'Project' };
@@ -252,10 +252,10 @@ for (const s of SUBJECTS) {
   if (s.inWorkstreams.length) fm.push(`in-workstreams: ${list(s.inWorkstreams)}`);
   fm.push('status: active');
   if (s.legacyNodes.length) fm.push(`legacy-nodes: ${list(s.legacyNodes)}`);
-  let body = `\n# ${s.title}\n\n${s.description}\n`;
-  if (s.inWorkstreams.length) body += `\nPart of: ${s.inWorkstreams.map(w => `[${w}](/subjects/workstream/${w}.md)`).join(', ')}.\n`;
-  if (s.legacyNodes.length) body += `\nAbsorbs the node${s.legacyNodes.length > 1 ? 's' : ''} ${s.legacyNodes.map(n => `[${n}](/nodes/${n}/index.md)`).join(', ')}, whose concepts stay where they are and name this subject in \`about:\`.\n`;
-  body += `\nWhat the base knows about it: [generated view](/${viewPath(s)}).\n`;
+  const facts = [];
+  if (s.legacyNodes.length) facts.push(`Legacy node${s.legacyNodes.length > 1 ? 's' : ''}: ${s.legacyNodes.map(n => `[${n}](/nodes/${n}/index.md)`).join(', ')}.`);
+  if (s.repo) facts.push(`Repository: <${s.repo}>.`);
+  const body = `\n# ${s.title}\n${facts.length ? `\n${facts.join(' ')}\n` : ''}`;
   plan(`subjects/${s.kind}/${s.slug}.md`, `---\n${fm.join('\n')}\n---\n${body}`);
 
   const mine = concepts.filter(c => c.about.includes(s.ref));
@@ -267,24 +267,22 @@ for (const s of SUBJECTS) {
   }
   plan(viewPath(s), view);
 }
-let subjectsIndex = '# Subjects\n\nWhat the knowledge in this base is about. Generated from the subject files; do not edit by hand. Each subject file links its generated view of the concepts about it.\n';
+let subjectsIndex = '# Subjects\n\nGenerated from the subject files; do not edit by hand.\n';
 for (const kind of ['system', 'workstream', 'project']) {
   const rows = SUBJECTS.filter(s => s.kind === kind).sort((a, b) => cmp(a.slug, b.slug));
   subjectsIndex += `\n## ${KIND_HEADING[kind]}\n\n${rows.map(s => `* [${s.title}](/subjects/${s.ref}.md) - ${s.description}`).join('\n')}\n`;
 }
 plan('subjects/index.md', subjectsIndex);
-plan('claims/index.md', '# Claims\n\nNew claims land here, one file per claim under `claims/<type-plural>/`, each with a stable `id:` and an `about:` naming at least one [subject](/subjects/index.md). The concepts accepted before the subject layout stay in their node directories and carry `about:` too; each subject\'s generated view lists both.\n\nNo claims have landed here yet.\n');
-plan('verdicts/index.md', '# Verdicts\n\nThe knowledge maintainer\'s record of claims it rejected, superseded or found to duplicate an accepted one: one `verdicts/<id>.md` per verdict (`type: Verdict`), which a proposer checks before proposing a claim again.\n\nNo verdicts are recorded yet.\n');
-const nodeLog = (name, what) => `# ${name} log\n\n## ${DATE}\n\n* **Creation**: Reserved node added by ${PR}: ${what}\n`;
-plan('claims/log.md', nodeLog('claims', 'where new claims land, about one or more subjects.'));
-plan('subjects/log.md', nodeLog('subjects', `${SUBJECTS.length} subject files (${SUBJECTS.filter(s => s.kind === 'system').length} systems, ${SUBJECTS.filter(s => s.kind === 'workstream').length} workstreams, ${SUBJECTS.filter(s => s.kind === 'project').length} projects) and their generated views.`));
-plan('verdicts/log.md', nodeLog('verdicts', 'the record of rejected, superseded and duplicate claims; empty so far.'));
+plan('claims/index.md', '# Claims\n\nOne file per claim under `claims/<type-plural>/`, each with `id:` and `about:`. None yet.\n');
+plan('verdicts/index.md', '# Verdicts\n\nOne `verdicts/<id>.md` (`type: Verdict`) per rejected, superseded or duplicate claim. None yet.\n');
+const nodeLog = name => `# ${name} log\n\n## ${DATE}\n\n* **Creation**: Reserved node added by ${PR}.\n`;
+for (const name of RESERVED) plan(`${name}/log.md`, nodeLog(name));
 
 // 4. Root index: a "Subjects" section at the end (replaced on rerun).
 const SECTION = '\n## Subjects\n\n'
-  + '* [Subjects](subjects/index.md) - What the knowledge is about: systems, workstreams and projects, each with a generated view of the concepts about it.\n'
-  + '* [Claims](claims/index.md) - Where new claims land, each about one or more subjects.\n'
-  + '* [Verdicts](verdicts/index.md) - The maintainer\'s record of rejected, superseded and duplicate claims.\n';
+  + '* [Subjects](subjects/index.md) - Systems, workstreams and projects, each with a generated view of the concepts about it.\n'
+  + '* [Claims](claims/index.md) - Claims by type, each about one or more subjects.\n'
+  + '* [Verdicts](verdicts/index.md) - Rejected, superseded and duplicate claims.\n';
 const rootIndex = read('index.md');
 const cut = rootIndex.indexOf('\n## Subjects\n');
 plan('index.md', (cut < 0 ? rootIndex : rootIndex.slice(0, cut)) + SECTION);
