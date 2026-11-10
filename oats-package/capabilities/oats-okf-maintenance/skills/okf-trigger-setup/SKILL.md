@@ -1,25 +1,32 @@
 ---
 name: okf-trigger-setup
 description: >-
-  Set up and verify the OKF harvest-review trigger, which spawns a knowledge
-  maintainer for each harvest PR: declare it as a workspace automation
-  (`oats-triggers/okf-harvest-review.yaml` in a member repo, `from:
-  oats.okf:harvest-review`, with `runsOn` naming the one host and `owner` the
-  GitHub account that can merge on the knowledge-base repo), or locally with
-  `oats trigger add` for a machine-private setup. Covers messaging, the
-  self-approval limit and `oats trigger test`. Use when setting up knowledge
-  operations, when harvest PRs are not being reviewed, when moving the
-  reviewer to another host, or when asked whether a host may run the
-  maintainer.
+  Set up and verify the OKF proposal-review trigger (harvest-review is its
+  old name), which spawns a knowledge maintainer for each knowledge PR
+  (labels okf-proposal and okf-harvest): declare it as a workspace automation
+  (`oats-triggers/okf-proposal-review.yaml` in a member repo, `from:
+  oats.okf:proposal-review`, with `runsOn` naming the one host and `owner`
+  the GitHub account that can merge on the knowledge-base repo), or locally
+  with `oats trigger add` for a machine-private setup. Covers protecting the
+  accepted branch (a ruleset: PRs only, merged by the maintainer's account),
+  the self-approval limit and `oats trigger test`. Use when
+  setting up knowledge operations, when knowledge PRs are not being
+  reviewed, when moving the reviewer to another host, or when asked whether
+  a host may run the maintainer.
 ---
 
-# Setting up the harvest-review trigger
+# Setting up the proposal-review trigger
 
-The trigger makes a harvest PR get reviewed: when a PR labelled `okf-harvest`
-opens on the knowledge-base (KB) repository, the host tick spawns a new
-`oats.okf/knowledge-maintainer` to review it. It runs on one
-machine, acting as one GitHub account, and that account must be able to
-**merge** on the KB repository.
+The trigger makes a knowledge PR get reviewed: when a PR labelled
+`okf-proposal` (an instance's own proposal, oats.okf 6) or `okf-harvest` (a
+5.x harvest PR) opens on the knowledge-base (KB) repository, the host tick
+spawns a new `oats.okf/knowledge-maintainer` to review it and gate its merge.
+It runs on one machine, acting as one GitHub account, and that account must
+be able to **merge** on the KB repository.
+
+`harvest-review` is the template's old name: through oats.okf 6.x it is an
+identical alias (`from: oats.okf:harvest-review` keeps working and fires on
+both labels). Never declare both: that reviews every PR twice.
 
 ## 1. Choose the host and the account
 
@@ -29,12 +36,15 @@ machine, acting as one GitHub account, and that account must be able to
 - **The host (`runsOn`)** is the one machine that runs the trigger, named by
   its `oats-local.yaml` `host: { name: <slug> }`, and logged in with `gh` as
   that account.
-- **Harvesters run anywhere**: working agents spawn a harvester for each
-  proposal in their own deployment; the review host need not be one of them.
+- **Proposers run anywhere**: working agents open their own proposal PRs
+  (`oats okf propose`) from their own deployment; the review host need not
+  be one of them. Each proposing host needs a `gh`/Git account that can
+  create branches on the KB repository (or use a fork flow), never one that
+  can push the accepted branch.
 
 ## 2. The self-approval limit
 
-GitHub forbids approving your own account's PR. If the harvester's host and
+GitHub forbids approving your own account's PR. If the proposer's host and
 the reviewer's account are the same GitHub account, then either:
 - the KB repository's `main` must not require approving reviews (merge
   permission is enough; the maintainer records its verdict as a PR comment,
@@ -43,16 +53,51 @@ the reviewer's account are the same GitHub account, then either:
 
 Say which one applies when you report the setup.
 
+## 2a. Protect the accepted branch
+
+The maintainer is the only gate: the knowledge base changes only
+through PRs the knowledge maintainer merges. **Every Git base's accepted
+branch must refuse direct pushes and force-pushes and accept changes by pull
+request only, merged by the knowledge maintainer's account.** Proposing
+hosts then need only branch-create access (or a fork flow); none of them can
+change the accepted branch.
+
+On GitHub, add a **branch ruleset** on the KB repository (Settings → Rules →
+Rulesets → New branch ruleset), enforcement **Active**, targeting the
+accepted branch:
+
+- **Restrict updates**: only actors on the bypass list may update the branch.
+- **Require a pull request before merging.**
+- **Block force pushes** and **Restrict deletions.**
+- **Bypass list**: the role or team that holds the maintainer's account (the
+  trigger's `owner`), set to **For pull requests only**, so it too changes
+  the branch only by merging a PR. Rulesets grant bypass to roles, teams and
+  apps, not to a single user: give the maintainer account a role or team no
+  proposing account has.
+
+The classic equivalent (Settings → Branches → a protection rule on the
+accepted branch: require a pull request, restrict who can push to the
+maintainer's account, no force pushes, no deletions) meets it too, as does a
+deployment that protects the branch by other means. Then check:
+
+```sh
+oats okf bases --soul <a soul that reads the base>    # protection: enforced | none | unknown, per Git base
+```
+
+`oats okf bases` reads the branch's active rulesets with one `gh api
+repos/<owner>/<repo>/rules/branches/<branch>`: `enforced` when a rule
+requires a PR or restricts updates, `none` when no such ruleset applies,
+`unknown` when `gh` is absent, the read fails or the base is not on GitHub.
+It is read-only and never refuses anything. Classic branch protection is not
+visible to that read, so a classically protected base reports `none`: say
+which one you set up when you report it.
+
 ## 3. Messaging
 
-The harvester and the maintainer message each other through the soul's
-messaging capability (`oats.aweb`, the workspace default). Both live in the
-deployment's default team, like every instance: there is no okf team to
-declare or map. A deployment that wants them in another team opts them in
-locally, as for any soul.
-
-Without a messaging capability they cannot message each other: the
-maintainer's notices and questions do not reach the harvester.
+The maintainer messages nobody about a PR: the proposer reads the PR, and the
+`okf-review` verdict comment is the record. A maintainer instance still gets
+the soul's messaging capability (`oats.aweb`, the workspace default) for its
+own hand-back; there is no okf team to declare or map.
 
 ## 4. Declare it in the workspace (the default)
 
@@ -60,11 +105,11 @@ A team relies on the review, so declare it in Git, in a member repository (the
 workspace's host repo), in its `oats-triggers/` folder:
 
 ```yaml
-# <member>/oats-triggers/okf-harvest-review.yaml
+# <member>/oats-triggers/okf-proposal-review.yaml
 kind: oats-trigger
 schemaVersion: 1
-description: Review every OKF harvest PR on the knowledge base
-from: oats.okf:harvest-review
+description: Review and gate every OKF knowledge PR on the knowledge base
+from: oats.okf:proposal-review
 set: { repo: github.com/<owner>/<kb-repo> }     # optional: base, harness, model
 runsOn: <host.name of the one machine>
 owner: github.com/<the merge-capable account>
@@ -72,13 +117,13 @@ owner: github.com/<the merge-capable account>
 
 - `kind: oats-trigger` and `schemaVersion: 1` make the file self-describing; a
   wrong kind is `E_AUTOMATION_SCHEMA`.
-- The id is `id:` if present, else the filename stem (`okf-harvest-review`).
+- The id is `id:` if present, else the filename stem (`okf-proposal-review`).
   Two files with the same id in one member are `E_AUTOMATION_DUPLICATE`.
 - A file named `*.oats-trigger.yaml` anywhere in the member works too (never
   under `oats-package/`, `.git/` or `node_modules/`); `oats-triggers/` is the
   canonical place.
 
-Or let the CLI write it: `oats trigger add --from oats.okf:harvest-review
+Or let the CLI write it: `oats trigger add --from oats.okf:proposal-review
 --set repo=github.com/<owner>/<kb-repo> --workspace <member>` (it prints the
 file when that repository is not the current checkout). Commit and merge it
 like any other change.
@@ -87,7 +132,7 @@ A host runs it only when **both** its `host.name` equals `runsOn` **and** its
 `gh` account equals `owner`. Everywhere else it is listed with the reason:
 `assigned-elsewhere`, `owner-mismatch` or `host-unnamed`. That keeps exactly
 one machine on it, and the operator's consent explicit. A host can opt out
-without a commit: `automations.disabled: [<member>/okf-harvest-review]` in its
+without a commit: `automations.disabled: [<member>/okf-proposal-review]` in its
 `oats-local.yaml`. Changes reach the host within about ten minutes (after
 `oats sync`, or the tick's refresh).
 
@@ -97,8 +142,8 @@ For a personal or experimental setup, add it to this deployment only. It runs
 on this host with this host's `gh`, with no `runsOn` or `owner`:
 
 ```sh
-oats trigger add --from oats.okf:harvest-review --set repo=github.com/<owner>/<kb-repo>
-#   optional: --set base=main --set harness=claude --set model=opus --id okf-harvest-review
+oats trigger add --from oats.okf:proposal-review --set repo=github.com/<owner>/<kb-repo>
+#   optional: --set base=main --set harness=claude --set model=opus --id okf-proposal-review
 ```
 
 Never run the same review from two places: one workspace declaration, or one
@@ -107,7 +152,7 @@ local trigger on one host.
 ## 6. Test it on the host that runs it
 
 ```sh
-oats trigger test <member>/okf-harvest-review   # or: oats trigger test okf-harvest-review (local)
+oats trigger test <member>/okf-proposal-review   # or: oats trigger test okf-proposal-review (local)
 oats schedule host status                     # is the host timer installed and active?
 oats trigger status
 ```
@@ -133,8 +178,8 @@ their place.
 - **Why a schedule command here:** the shared host tick that
   `oats schedule host install` installs is what polls PR triggers such as this
   one ([OATS v0.41.0 schedules, Triggers](https://github.com/awebai/oats/blob/v0.41.0/docs/schedules.md)).
-  The timer supports this review trigger. It adds no scheduler job, and harvest
-  needs no timer: working agents propose at their checkpoints.
+  The timer supports this review trigger. It adds no scheduler job, and
+  proposing needs no timer: working agents propose at their checkpoints.
 
 - `oats trigger test` checks gh auth and where its credential comes from, the
   repository and your merge permissions, the soul, its messaging capability,
@@ -148,10 +193,12 @@ their place.
 
 ## 7. Labels
 
-Harvest PRs carry `okf-harvest` (the harvester creates the label if the
-repository lacks it). To pre-create it:
+Proposal PRs carry `okf-proposal` (`oats okf propose` creates the label if
+the repository lacks it); 5.x harvest PRs carry `okf-harvest`. To pre-create
+them:
 
 ```sh
+gh label create okf-proposal --repo <owner>/<repo> --force --color 0E8A16 --description "OKF knowledge proposal PR (oats.okf)"
 gh label create okf-harvest --repo <owner>/<repo> --force --color 0E8A16 --description "OKF harvest PR (oats.okf)"
 ```
 

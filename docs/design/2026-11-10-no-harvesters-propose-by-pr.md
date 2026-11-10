@@ -60,8 +60,11 @@ hash), and the helper's publication codes unchanged (`E_BASE_MOVED` after recove
 prints the safe report; the instance does not retry.
 
 Source identity: the home's `instance.json` (`instance`, `createdAt`, soul name) and the soul's `okf.json`
-through the kernel's `OATS_SOUL` as consult does; `okf-harvest-policy.json` for the opt-out. A home without the
-policy file (a 5.0/5.1 home) is `E_SOURCE` with "respawn or `oats instance upgrade`". Consistency, not
+through the kernel's `OATS_SOUL` as consult does; `okf-harvest-policy.json` for the opt-out. A live home without the
+policy file (a 5.0/5.1 home) is `E_SOURCE` with "respawn or `oats instance upgrade`". In the recovery form a
+copied home without the policy file (a retired 4.x or 5.0/5.1 seat) is decided as 5.8's harvester hook decided
+it: the opt-out from the recorded `soul.yaml` text, other soul `harvest` values `E_SOURCE`, removed 4.x keys by
+recorded origin on a retired source only (#125, #128); that accepted path survives the harvester's removal. Consistency, not
 authorship, as today. Ownership: `okf.json owns` resolved against the clone's `okf-base.json` with
 `resolveNodes`; the write surface is the owned nodes' directories plus the root `index.md`. Directory bases:
 `E_UNSUPPORTED` as today's harvester drop ("convert it to a Git base").

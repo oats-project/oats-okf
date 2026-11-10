@@ -1,6 +1,6 @@
 schemaVersion: 2
 name: knowledge-harvester
-description: Judges one working instance's knowledge proposal against the OKF promotion doctrine and the source's own records, opens one labelled harvest PR on the source's owned nodes with Git and gh, hands it over and retires on success or nothing promotable; publication failure retains the live home and reports the error without retiring.
+description: Removed in oats.okf 6.0 (a stub until 7.0). Every spawn is refused with E_REMOVED naming the fix; the instance proposes its own knowledge with `oats okf propose`.
 work: directory
 knowledge: none
 background: true   # listed under the clients' Background section (OATS >=0.69.2, the package floor)

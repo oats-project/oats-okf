@@ -6,19 +6,19 @@
     "model": { "path": "spawn.model", "default": "opus", "description": "the maintainer's model" }
   },
   "definition": {
-    "id": "okf-harvest-review",
+    "id": "okf-proposal-review",
     "enabled": true,
     "kind": "trigger",
     "on": {
       "source": "github.pull_request",
       "events": ["opened", "reopened", "ready_for_review"],
-      "labels": ["okf-harvest"],
+      "labels": ["okf-proposal", "okf-harvest"],
       "poll": "2m"
     },
     "spawn": {
       "soul": "oats.okf/knowledge-maintainer",
       "purpose": "review-pr-{number}",
-      "task": "Review knowledge-base PR {repo}#{number} ({url}). Load the knowledge-review skill first."
+      "task": "Review knowledge-base PR {repo}#{number} ({url}) and gate its merge. Load the knowledge-review skill first."
     },
     "concurrency": { "max": 2, "perKey": 1 }
   }

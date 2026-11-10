@@ -27,7 +27,7 @@ jobs:
           echo "npm test validates the manifests and runs the provider in-process and through its CLI with disposable Git/directory bases."
           echo "SKIPPED here: test/okf5-real-kernel.test.mjs and test/okf6-subjects-real-kernel.test.mjs (need OATS_OKF_REAL_CLI); the real-kernel-0692 job runs them on released OATS 0.69.2."
           echo "SKIPPED here: test/okf5-kernel-upgrade.test.mjs (needs OATS_OKF_UPGRADE_CLI); the kernel-upgrade-0692 job runs it on released OATS 0.69.2."
-          echo "NOT COVERED: OKF acquire/lock/restore/trust, a model-run harvester, real GitHub PRs."
+          echo "NOT COVERED: OKF acquire/lock/restore/trust, a model-run proposer or maintainer, real GitHub PRs."
 
   kernel-upgrade-0692:
     runs-on: ubuntu-latest
@@ -66,7 +66,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/okf-real-kernel" --ignore-scripts --no-audit --no-fund --package-lock=false @awebai/oats@0.69.2
           echo "OATS_OKF_REAL_CLI=$RUNNER_TEMP/okf-real-kernel/node_modules/@awebai/oats/bin/oats.mjs" >> "$GITHUB_ENV"
-      - name: Real kernel - source spawn, capture, retirement, refusals and both package souls' background defaults
+      - name: Real kernel - source spawn proposing by PR (plan, check), the recovery form, refusals, no harvester, and the maintainer soul
         shell: bash
         run: |
           set -o pipefail
@@ -82,4 +82,4 @@ jobs:
       - name: Evidence boundary
         run: |
           echo 'Real released OATS 0.69.2 CLI; isolated file-Git workspace, package pinned from this exact checkout, a real on-disk Git knowledge base.'
-          echo 'Source, harvesters and maintainer are spawned for real with --no-launch; no model, messaging, GitHub PR, host timer or production deployment.'
+          echo 'Sources and the maintainer are spawned for real with --no-launch; oats okf propose runs --plan and --check; no model, messaging, GitHub PR, host timer or production deployment.'

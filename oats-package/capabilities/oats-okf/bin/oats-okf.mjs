@@ -6,11 +6,12 @@ import { CONSULT, subjectBriefLines } from '../lib/consult.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, forgetMigration } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
-import { refuseLegacySettings, removeLegacySettings } from '../lib/legacy-settings.mjs';
+import { refuseLegacySettings, refuseKnowledgeKeys, removeLegacySettings } from '../lib/legacy-settings.mjs';
 import { writeHarvestPolicy, harvestPolicy } from '../lib/harvest-policy.mjs';
 import { upgradePlan, upgradeApply } from '../lib/upgrade.mjs';
+import { propose } from '../lib/propose.mjs';
 const HELP=`oats okf status [--home PATH] [--json]
-  (spawn-recorded harvest duty: on, off, or unknown; no base/network read)
+  (spawn-recorded duty to propose, as harvest and publish: on, off, or unknown; no base/network read)
 oats okf inspect [--home PATH] [--json]
 oats okf bases [--fresh] [--json]
 oats okf index [--base ALIAS] [NODE | ALIAS/NODE] [--fresh] [--json]
@@ -18,6 +19,10 @@ oats okf cat --base ALIAS PATH [--from PATH] [--fresh] [--json]
 oats okf ls --base ALIAS [DIR] [--fresh] [--json]
 oats okf links --base ALIAS PATH [--fresh] [--json]
 oats okf search [--base ALIAS | --all] [--node NODE] [--regex] [--case-sensitive] TEXT [--fresh] [--json]
+oats okf propose --plan | --check | --apply --slug SLUG [--digest DIGEST] [--home PATH] [--json]
+  (from the instance home: clone the owned bases, check the edits and print the
+  outgoing diff and digest, then open one okf-proposal PR per changed base;
+  operator form from the deployment: --home <instance home | retirement recovery> --soul SOUL)
 Subject layout (a base whose okf-base.json lists the reserved nodes claims,
 subjects and verdicts; each reads one committed generated index):
 oats okf subjects [--kind system|workstream|project] [--base ALIAS] [--fresh] [--json]
@@ -35,9 +40,10 @@ oats okf unlock --lock PATH --token TOKEN [--json]
 oats okf setup --remove-legacy-settings [--plan] --soul SOUL [--json]
   (from the deployment: deletes only settings.oats.okf.harvest/harvest-runtime/harvest-model
   from its oats-local.yaml; --plan writes nothing)
-Knowledge reaches the accepted base through reviewed proposals. Read the compulsory
-okf-propose skill for checkpoint, opt-out and spawn instructions; check oats okf status
-from your instance home. Consultation settings use one absolute bindings-file.
+Knowledge reaches the accepted base only through PRs the knowledge maintainer merges.
+Read the compulsory okf-propose skill for checkpoint and opt-out instructions; check
+oats okf status from your instance home, then oats okf propose. Consultation settings
+use one absolute bindings-file.
 `;
 // okf 5.0.0: the 4.x harvest surfaces refuse, naming the new way; they never
 // capture, run, complete or drain anything.
@@ -48,7 +54,7 @@ from your instance home. Consultation settings use one absolute bindings-file.
 // hook that reported one is quarantined when the spawn rolls back. This hook
 // only writes working memory and the policy in the home (removed with it) and
 // primes the shared host cache.
-const NEW_WAY='the working agent follows the compulsory okf-propose skill and checks `oats okf status` from its instance home before proposing at a finished task or PR hand-over; oats.okf 5.0 keeps no source custody, runs or drains and never processes 4.x ones (README#upgrading-to-50)';
+const NEW_WAY='run `oats okf propose` from the instance home: the working agent proposes its own knowledge by PR at its checkpoints (the compulsory okf-propose skill; `oats okf status` first); oats.okf keeps no source custody, runs or drains (README#upgrading-to-60)';
 const removed=(what)=>fail('E_REMOVED',`${what} was removed in oats.okf 5.0: ${NEW_WAY}`);
 const args=process.argv.slice(2);
 if(args.includes('--help') || args.includes('-h')) {process.stdout.write(HELP);}
@@ -69,11 +75,11 @@ else {
   const event=process.env.OATS_EVENT || args[0];
   const hook=['spawn','soul-scaffold'].includes(event);
   const consult=Object.hasOwn(CONSULT,event);
-  let exit=0,answer,text,textMode=consult && !args.includes('--json');
+  let exit=0,answer,text,textMode=(consult || event==='propose') && !args.includes('--json');
   try {
     // Removed 4.x commands refuse whatever their (old) flags were.
     if(['harvest','run-source','complete','retry','harvest-status'].includes(event)) removed(`oats okf ${event}`);
-    const flags={},positionals=[]; const boolean=new Set(['json','confirm','fresh','all','regex','case-sensitive','remove-legacy-settings','plan','enable','disable','install-host','remove-schedules']);
+    const flags={},positionals=[]; const boolean=new Set(['json','confirm','fresh','all','regex','case-sensitive','remove-legacy-settings','plan','check','apply','enable','disable','install-host','remove-schedules']);
     for(let i=1;i<args.length;i++) {
       if(consult && args[i]==='--') {positionals.push(...args.slice(i+1));break;}
       if(!args[i].startsWith('--')) {if(!consult) fail('E_USAGE',`unexpected argument ${args[i]}`);positionals.push(args[i]);continue;}
@@ -85,7 +91,7 @@ else {
     // forwarded 4.x harvest setting refuses with where it was set and the fix.
     // The one exemption is the cleanup that removes it (help is answered above).
     const cleanup=event==='setup' && flags['remove-legacy-settings']===true;
-    if(!cleanup) refuseLegacySettings();
+    if(!cleanup) {refuseLegacySettings();refuseKnowledgeKeys();}
     for(const name of ['OATS_SOURCE_RECEIPT_FILE','OATS_INVOCATION_CONTEXT_FILE']) if(Object.hasOwn(process.env,name)) removed(`the captured source receipt/invocation context (${name})`);
     if(flags.source!==undefined) removed('--source (a 4.x source descriptor)');
     const accepted={
@@ -94,15 +100,18 @@ else {
       links:['home','base','fresh'],search:['home','base','all','node','regex','case-sensitive','fresh'],
       subjects:['home','base','kind','fresh'],subject:['home','base','fresh'],claims:['home','base','about','type','kind','fresh'],verdicts:['home','base','check','fresh'],
       setup:['remove-legacy-settings','plan','harvest','enable','disable','install-host','remove-schedules'],init:['base','nodes','output','confirm'],
+      propose:['home','plan','check','apply','slug','digest'],
       migrate:['source-home','legacy','base','node','output','deliver','cutover','soul-dir','forget'],unlock:['lock','token']
     };
     for(const k of Object.keys(flags)) if(!['json','soul',...(accepted[event] || [])].includes(k)) fail('E_USAGE',`unknown flag --${k} for ${event}`);
     if(!cleanup && loadInvocationKnowledgeBinding().kind==='captured' && ['setup','init','migrate','unlock'].includes(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
     const home=resolve(flags.home || process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());
     let result;
-    if(event==='status') result=harvestPolicy(home);
+    // oats.okf 6: `publish` is the same spawn-recorded value under its new name.
+    if(event==='status') {const p=harvestPolicy(home);result={...p,publish:p.harvest};}
     else if(event==='read') fail('E_REMOVED','okf 4.0.0 removed read: use `oats okf cat --base ALIAS PATH` (same path, text and receipt)');
     else if(consult) {const answer=CONSULT[event](consultSource(home),flags,positionals);result=answer.result;text=answer.text;}
+    else if(event==='propose') {const answer=propose(home,flags);result=answer.result;text=answer.text;}
     else if(event==='refresh') fail('E_REMOVED','okf 3.0.0 has no per-instance views; index/cat always read the accepted state: run `oats okf index`, then `oats okf cat --base ALIAS PATH`');
     else if(event==='soul-scaffold') {
       // Souls are portable declarations, never an implicit knowledge store.
@@ -141,7 +150,8 @@ else {
   } catch(e) {const code=e.code || 'E_OKF',message=redactUrls(e.message);exit=1;answer=hook?{warning:`oats-okf ${code}: ${message}`}:{schemaVersion:1,ok:false,error:{code,message,...(e.result?{result:e.result}:{})}};}
   // Consult commands print text unless --json; every other answer is JSON.
   // Let Node drain the pipe; no process.exit after a possibly large answer.
-  if(textMode && exit) process.stderr.write(`oats okf ${event}: ${answer.error.code}: ${answer.error.message}\n`);
+  // A propose refusal's safe details (finding locations, retained report) go with it.
+  if(textMode && exit) process.stderr.write(`oats okf ${event}: ${answer.error.code}: ${answer.error.message}\n${answer.error.result?JSON.stringify(answer.error.result,null,2)+'\n':''}`);
   else if(textMode) process.stdout.write(text+'\n');
   else process.stdout.write(JSON.stringify(answer)+'\n');
   process.exitCode=exit;

@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import { refuseLegacySettings, withoutDefaults } from './legacy-settings.mjs';
+import { refuseLegacySettings, refuseKnowledgeKeys, withoutDefaults } from './legacy-settings.mjs';
 import { SUBJECT_REF } from './okf-reindex.mjs';
 import { fs, join, resolve, dirname, fail, readJSON, safePath, relPath, identifier, overlaps, hash, embedsCredential } from './io.mjs';
 const obj = v => v && typeof v === 'object' && !Array.isArray(v);
@@ -9,12 +9,14 @@ function keys(value, allowed, label, code='E_CONFIG') {
 }
 export function settings() {
   refuseLegacySettings(); // okf 5.0: a forwarded harvest/harvest-runtime/harvest-model names its fix first
+  refuseKnowledgeKeys(); // okf 6.0: knowledge.propose refuses; publish is only the soul's off
   // A 4.x manifest default (harvest off, harvest-runtime pi) is dropped, never a 5.0 setting;
   // `harvest` left here can only be the soul's own opt-out (off): refuseLegacySettings refused any other.
   const s = withoutDefaults(JSON.parse(process.env.OATS_SETTINGS || '{}'));
-  keys(s,['bindings-file','state-dir','git-timeout','consult-max-age','harvest'],'OATS_SETTINGS');
+  keys(s,['bindings-file','state-dir','git-timeout','consult-max-age','screen-terms-file','harvest','publish'],'OATS_SETTINGS');
   if(s['git-timeout']!==undefined && (!Number.isInteger(s['git-timeout']) || s['git-timeout']<1)) fail('E_CONFIG','git-timeout must be a positive integer number of seconds');
   if(s['consult-max-age']!==undefined && (!Number.isInteger(s['consult-max-age']) || s['consult-max-age']<0)) fail('E_CONFIG','consult-max-age must be a non-negative integer number of seconds');
+  if(s['screen-terms-file']!==undefined && (typeof s['screen-terms-file']!=='string' || !isAbsolute(s['screen-terms-file']) || resolve(s['screen-terms-file'])!==s['screen-terms-file'])) fail('E_CONFIG','screen-terms-file must be a normalized absolute path');
   if(s['state-dir']!==undefined && (typeof s['state-dir']!=='string' || !isAbsolute(s['state-dir']) || resolve(s['state-dir'])!==s['state-dir'])) fail('E_CONFIG','state-dir must be a normalized absolute path');
   return s;
 }

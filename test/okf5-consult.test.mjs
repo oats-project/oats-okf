@@ -62,6 +62,28 @@ test('git base: bases primes the host cache and reports the accepted commit',t=>
   assert.ok(fs.existsSync(join(f.stateDir,'cache','base-1.git')));
   const text=run(f,['bases']);
   assert.ok(text.stdout.includes(`project@${head.slice(0,12)}`),text.stdout);
+  // oats.okf 6.0: a base that is not on GitHub reports unknown protection, with no gh call.
+  assert.equal(row.protection,'unknown');assert.match(text.stdout,/protection: unknown/);
+});
+
+test('bases reports accepted-branch protection from one gh rules read: enforced, none or unknown, never a refusal',async()=>{
+  const {protection}=await import('../oats-package/capabilities/oats-okf/lib/consult.mjs');
+  const base={kind:'git',repository:'https://github.com/acme/kb.git',acceptedBranch:'main',pr:{repository:'acme/kb'}};
+  const calls=[],answer=out=>({run:(args,timeout)=>{calls.push([args,timeout]);if(out instanceof Error) throw out;return JSON.stringify(out);}});
+  const prev=process.env.OATS_SETTINGS;process.env.OATS_SETTINGS=JSON.stringify({'git-timeout':7});
+  try {
+    assert.equal(protection(base,answer([{type:'pull_request',parameters:{}},{type:'deletion'}])),'enforced');
+    assert.deepEqual(calls[0],[['api','repos/acme/kb/rules/branches/main'],7000],'one read, bounded by the Git timeout');
+    assert.equal(protection(base,answer([{type:'update'}])),'enforced','restricting who may push enforces it');
+    assert.equal(protection(base,answer([{type:'deletion'},{type:'non_fast_forward'}])),'none');
+    assert.equal(protection(base,answer([])),'none');
+    assert.equal(protection(base,answer(new Error('gh: not found'))),'unknown','gh absent or failing');
+    assert.equal(protection(base,answer({message:'Not Found'})),'unknown');
+    for(const repository of ['git@github.com:acme/kb.git','ssh://git@github.com/acme/kb.git']) assert.equal(protection({...base,repository},answer([{type:'pull_request'}])),'enforced',repository);
+    const before=calls.length;
+    for(const repository of ['/srv/kb.git','https://gitlab.example/acme/kb.git']) assert.equal(protection({...base,repository},answer([{type:'pull_request'}])),'unknown',repository);
+    assert.equal(calls.length,before,'not on GitHub: no call');
+  } finally {if(prev===undefined) delete process.env.OATS_SETTINGS; else process.env.OATS_SETTINGS=prev;}
 });
 
 test('git base: cat and ls read the accepted state',t=>{
@@ -186,7 +208,7 @@ test('spawn primes only owns/reads bases, once each; consultation can still expl
   assert.equal(trace.calls().filter(a=>a.includes('clone')).length,1);
   assert.equal(trace.calls().some(a=>a.includes(bindings.bases.unused.repository)),false);
   assert.equal(fs.existsSync(join(f.stateDir,'cache','unused.git')),false);
-  assert.deepEqual(run(f,['status','--json']).out.result,{harvest:'on',reason:'default'});
+  assert.deepEqual(run(f,['status','--json']).out.result,{harvest:'on',reason:'default',publish:'on'});
   const explicit=run(f,['cat','--base','unused','/expert/index.md','--json']);
   assert.equal(explicit.out.error.code,'E_BASE_UNAVAILABLE');
   // The root declaration is still checked, even though unknown aliases cannot prime.

@@ -24,8 +24,9 @@ function classifyGitFailure(error) {
   if(/could not resolve host|failed to connect|connection refused|network is unreachable|no route to host|proxy/i.test(text)) return 'network';
   return 'unknown';
 }
-export function unavailable(base,alias,step,error) {
-  const reason=classifyGitFailure(error),detail=reason==='unknown'?`; original Git failure: ${redactUrls(String(error?.message || 'unknown failure'))}`:'';
+export function unavailable(base,alias,step,error,{detail:withDetail=true}={}) {
+  // withDetail false (oats okf propose): a fixed classification only, never the tool's own bytes.
+  const reason=classifyGitFailure(error),detail=reason==='unknown'&&withDetail?`; original Git failure: ${redactUrls(String(error?.message || 'unknown failure'))}`:'';
   const message=`Git base "${alias}" repository "${displayRepo(base.repository)}" is required by the deployment's bindings, but ${step} failed (reason: ${reason}${detail}); ${baseRemedy(alias)}`;
   baseError('E_BASE_UNAVAILABLE',message,base,alias,step,reason);
 }
@@ -33,11 +34,11 @@ export function requireNotShallow(base,alias,cwd) {
   const shallow=git(cwd,['rev-parse','--is-shallow-repository']);
   if(shallow==='true') baseError('E_BASE_SHALLOW',`Git base "${alias}" repository "${displayRepo(base.repository)}" is required by the deployment's bindings, but the repository is shallow; oats.okf requires full accepted history before staging; ${baseRemedy(alias)}`,base,alias,'clone','shallow');
 }
-export function preflightLocalRepository(base,alias) {
+export function preflightLocalRepository(base,alias,opts) {
   if(!base.repository.startsWith('/')) return;
-  if(!fs.existsSync(base.repository)) unavailable(base,alias,'clone',Object.assign(new Error('repository not found'),{code:'ENOENT'}));
+  if(!fs.existsSync(base.repository)) unavailable(base,alias,'clone',Object.assign(new Error('repository not found'),{code:'ENOENT'}),opts);
   try { requireNotShallow(base,alias,base.repository); }
-  catch(e) { if(e.code==='E_BASE_SHALLOW') throw e; unavailable(base,alias,'clone',e); }
+  catch(e) { if(e.code==='E_BASE_SHALLOW') throw e; unavailable(base,alias,'clone',e,opts); }
 }
 export const baseLock = b => `${b.path}.okf-lock`;
 // okf consult readers hold a directory base's lock briefly; staging and

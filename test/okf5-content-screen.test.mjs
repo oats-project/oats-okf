@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import * as screen from '../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-content-screen.mjs';
+import * as screen from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-content-screen.mjs';
 
 // Synthetic-only fixtures. No service is contacted, no credential is loaded,
 // and no fixture is written to disk. Nonreserved .tld strings are invented so
 // the tests exercise refusal rather than the package's example-domain policy.
 const { screenText, screenBytes, RULE_IDS } = screen;
-const MODULE = new URL('../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-content-screen.mjs', import.meta.url);
+const MODULE = new URL('../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-content-screen.mjs', import.meta.url);
 const LOCATION = 'outgoing-text-1';
 const MAX = 4 * 1024 * 1024;
 const BODY = 'Ab3dEf7hIj9kLm2nOp4qRs6tUv8wXy0z';
@@ -33,12 +33,25 @@ test('library exports a fixed, immutable rule vocabulary and only its two entry 
   assert.equal(new Set(RULE_IDS).size, RULE_IDS.length);
   assert.deepEqual(RULE_IDS, [
     'secret-pypi', 'secret-github', 'secret-service-token', 'secret-private-key',
-    'secret-credential-url', 'secret-assignment', 'contact-email', 'contact-phone',
+    'secret-credential-url', 'secret-assignment', 'contact-email', 'contact-phone', 'host-term',
   ]);
   const child = spawnSync(process.execPath, [fileURLToPath(MODULE), '--help'], { encoding: 'utf8' });
   assert.equal(child.status, 0);
   assert.equal(child.stdout, '');
   assert.equal(child.stderr, '');
+});
+
+// oats.okf 6.0: a host's own terms (setting screen-terms-file) add refusals only.
+test('host terms refuse case-insensitively by location only, and never allow anything', () => {
+  const terms = ['Project Nightjar', 'acme-internal'];
+  assert.deepEqual(screenText('a\nthe project NIGHTJAR plan\nb', LOCATION, { terms }), [{ location: LOCATION, line: 2, rule: 'host-term' }]);
+  assert.deepEqual(rules('see ACME-INTERNAL/wiki', { terms }), ['host-term']);
+  clean('project nightjars are birds', { terms: ['nightjar plan'] });
+  clean('nothing here', { terms: [] });
+  // A term never masks a fixed rule, and is matched in commits too.
+  assert.deepEqual(rules(`${EMAIL} acme-internal`, { terms, commit: true }), ['contact-email', 'host-term']);
+  for (const bad of [[''], ['a\nb'], ['x\0'], ['x'.repeat(257)], 'acme', [7], Array(10001).fill('t')]) inputError(() => screenText('x', LOCATION, { terms: bad }));
+  inputError(() => screenText('x', LOCATION, { terms, other: true }));
 });
 
 test('recognizes PyPI and all common GitHub prefixes, without generic identifier scans', () => {

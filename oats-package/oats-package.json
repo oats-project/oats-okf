@@ -1,7 +1,7 @@
 {
   "package": "oats.okf",
   "version": "5.8.0",
-  "description": "Official OATS knowledge operations on Open Knowledge Format bases: the working-soul knowledge slot (consultation and instance knowledge), the knowledge harvester and maintainer capabilities and package souls, and the harvest-review trigger template.",
+  "description": "Official OATS knowledge operations on Open Knowledge Format bases: the working-soul knowledge slot (consultation, instance knowledge and proposing knowledge by PR with `oats okf propose`), the knowledge maintainer capability and package soul that gates every merge, the proposal-review trigger template (harvest-review is its old name), and, until 7.0, the removed knowledge harvester's stub soul and capability, whose spawn always refuses with E_REMOVED naming the fix.",
   "compatibility": {
     "oats": ">=0.69.2"
   },
@@ -15,6 +15,7 @@
     "souls/knowledge-maintainer"
   ],
   "triggers": [
+    { "id": "proposal-review", "file": "triggers/proposal-review.json" },
     { "id": "harvest-review", "file": "triggers/harvest-review.json" }
   ]
 }
