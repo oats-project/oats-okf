@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 // oats.okf 5.0.0: harvest PRs carry a version 2 provenance block (no run or
 // input ids); 4.x version 1 PRs stay reviewable. PR metadata is data, never run.
@@ -149,15 +149,10 @@ test('review-context --checkout reports owned nodes from the ACCEPTED okf-base.j
   assert.deepEqual(b.read,[{ref:'kb/peer',path:'peer',owner:'owner-2'}]);
 });
 
-test('notify-harvester: a v2 notice has no harvest-status callback; the v1 notice is unchanged',()=>{
-  for(const state of ['question','amend-request','amended','merged','closed']) {
-    const n=notifyHarvester({pr:URL_,state},{},{view:view(pr(block(V2)))});
-    assert.doesNotMatch(n.body,/harvest-status|retire/,state);assert.equal(n.to,'harv');assert.match(n.send,/^optional/);
-  }
-  assert.equal(notifyHarvester({pr:URL_,state:'merged'},{},{view:view(pr(block(V2)))}).body,`Your harvest PR ${URL_} is merged. Nothing else is needed.`);
-  const v1=notifyHarvester({pr:URL_,state:'merged'},{},{view:view(pr(block(V1)))});
-  assert.deepEqual(v1,{to:'okf-harvest-source-1-20250101',instance:'okf-harvest-source-1-20250101',alias:null,subject:`okf: merged ${URL_}`,body:`Your harvest PR ${URL_} is merged. Confirm with oats okf-harvest harvest-status, then retire.`,send:'send this with your messaging capability'});
-  assert.equal(notifyHarvester({pr:URL_,state:'closed'},{},{view:view(pr(block(V1)))}).body,`Your harvest PR ${URL_} was closed without merge; see the okf-review comment for the reason. Confirm with oats okf-harvest harvest-status, then retire.`);
+test('notify-harvester is removed in 6.0 (E_REMOVED): there is no harvester; the proposer reads the PR',()=>{
+  for(const body of [block(V2),block(V1)]) assert.throws(()=>notifyHarvester({pr:URL_,state:'merged'},{},{view:view(pr(body))}),e=>e.code==='E_REMOVED'&&/there is no harvester; the proposer reads the PR/.test(e.message));
+  const out=spawnSync(process.execPath,[CLI,'notify-harvester','--pr',URL_,'--state','merged','--json'],{encoding:'utf8'});
+  assert.equal(out.status,1);assert.equal(JSON.parse(out.stdout).error.code,'E_REMOVED');
 });
 
 test('PR metadata strings are data, never executed',t=>{
@@ -171,7 +166,6 @@ test('PR metadata strings are data, never executed',t=>{
   const p=pr(`${sh}\n${block(shaped)}`,{headRefName:sh,labels:[{name:sh}]});
   const r=reviewContext({pr:URL_,checkout:dir},{},{view:view(p)});
   assert.equal(r.provenance.valid,true);assert.equal(r.harvester.alias,sh);
-  assert.equal(notifyHarvester({pr:URL_,state:'question'},{},{view:view(p)}).to,sh);
   assert.throws(()=>reviewContext({pr:URL_,checkout:dir},{},{view:view({...p,baseRefName:sh})}),{code:'E_GIT'});
   for(const where of [dir,process.cwd()]) assert.equal(fs.existsSync(join(where,MARK)),false,where);
 });

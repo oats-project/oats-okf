@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// oats.okf-maintenance: the maintainer's two helpers. review-context turns one
-// harvest PR (the trigger event or a URL) into a validated provenance and a
-// reading list; notify-harvester composes the okf-team message (C4). Neither
-// merges, comments or sends anything: the maintainer does that deliberately.
+// oats.okf-maintenance: the maintainer's helper. review-context turns one
+// knowledge PR (the trigger event or a URL) into a validated provenance and a
+// reading list. It merges, comments or sends nothing: the maintainer does that
+// deliberately. notify-harvester answers E_REMOVED (oats.okf 6.0).
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { isAbsolute, join, resolve, relative, dirname, basename } from 'node:path';
@@ -10,9 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { parseProvenance, safeRoot } from '../lib/provenance.mjs';
 
 const HELP = `oats okf-maintenance review-context (--event FILE | --pr URL) [--checkout DIR] [--json]
-oats okf-maintenance notify-harvester (--event FILE | --pr URL) --state question|amend-request|amended|merged|closed [--body TEXT] [--json]
+oats okf-maintenance notify-harvester   removed in oats.okf 6.0 (E_REMOVED): there is no harvester
 `;
-const STATES = ['question', 'amend-request', 'amended', 'merged', 'closed'];
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 const IDENTITY = /^(OATS_(?!HOME_DIR$|PACKAGE_CATALOG$)|PI_AGENT|GIT_)/;
 const cleanEnv = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => !IDENTITY.test(k)));
@@ -126,32 +125,10 @@ export function reviewContext(flags, env = process.env, { view = viewPr, git = g
   if (flags.checkout) result.checkout = checkoutFacts(flags.checkout, pr, p, git);
   return result;
 }
-export function notifyHarvester(flags, env = process.env, { view = viewPr } = {}) {
-  if (!STATES.includes(flags.state)) fail('E_USAGE', `--state must be one of ${STATES.join(', ')}`);
-  const ref = resolveRef(flags), pr = view(ref, env), provenance = parseProvenance(pr.body);
-  if (!provenance.valid) fail('E_PROVENANCE', `the PR has no valid provenance, so its harvester is unknown: ${provenance.problems.join('; ')}`);
-  if (provenance.value.version === 3) fail('E_PROVENANCE', 'a version 3 PR was proposed by its source instance: there is no harvester to notify; the proposer reads the PR');
-  const h = provenance.value.harvester;
-  // okf 5.0 (v2): the harvester normally retires after successful handover;
-  // publication failure may retain it. The notice concerns only this PR,
-  // with no callback; review never waits for the harvester.
-  const body = flags.body ?? (provenance.value.version === 2 ? {
-    merged: `Your harvest PR ${pr.url} is merged. Nothing else is needed.`,
-    closed: `Your harvest PR ${pr.url} was closed without merge; see the okf-review comment for the reason.`,
-    question: `A question on your harvest PR ${pr.url}: see the okf-review comment.`,
-    'amend-request': `An amendment request on your harvest PR ${pr.url}: see the okf-review comment.`,
-    amended: `I amended your harvest PR ${pr.url}; see the okf-review comment.`,
-  } : {
-    merged: `Your harvest PR ${pr.url} is merged. Confirm with oats okf-harvest harvest-status, then retire.`,
-    closed: `Your harvest PR ${pr.url} was closed without merge; see the okf-review comment for the reason. Confirm with oats okf-harvest harvest-status, then retire.`,
-    question: `A question on your harvest PR ${pr.url}: see the okf-review comment.`,
-    'amend-request': `An amendment request on your harvest PR ${pr.url}: see the okf-review comment and reply with the change you would make.`,
-    amended: `I amended your harvest PR ${pr.url}; see the okf-review comment.`,
-  })[flags.state];
-  return { to: h.alias || h.instance, instance: h.instance, alias: h.alias, subject: `okf: ${flags.state} ${pr.url}`, body, send: provenance.value.version === 2 ? 'optional: a 5.0 harvester normally retires after successful handover; publication failure may retain it, but review never waits for it; the okf-review comment is the record' : 'send this with your messaging capability' };
-}
+/** Removed in oats.okf 6.0: there is no harvester to notify. */
+export const NOTIFY_REMOVED = 'oats okf-maintenance notify-harvester was removed in oats.okf 6.0: there is no harvester; the proposer reads the PR, and the okf-review comment is the record';
+export function notifyHarvester() { fail('E_REMOVED', NOTIFY_REMOVED); }
 function text(event, r) {
-  if (event === 'notify-harvester') return `to: ${r.to}\nsubject: ${r.subject}\n\n${r.body}`;
   const lines = [`${r.pr.url} ${r.pr.state}${r.pr.draft ? ' (draft)' : ''} ${r.pr.head}@${String(r.pr.headSha).slice(0, 12)} → ${r.pr.base} [${r.pr.labels.join(', ')}]`];
   const v = r.provenance.value;
   lines.push(r.provenance.valid ? `provenance v${v.version}: ${v.version === 1 ? `run ${v.run}, ` : ''}source ${v.source.soul}/${v.source.instance}, ${v.version === 3 ? `proposer ${r.proposer.form} ${r.proposer.alias || r.proposer.instance || '(operator)'}` : `harvester ${r.harvester.alias || r.harvester.instance}`}` : `provenance INVALID: ${r.provenance.problems.join('; ')}`);
@@ -168,7 +145,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     try {
       let result;
       if (event === 'review-context') result = reviewContext(parseFlags(args.slice(1), ['event', 'pr', 'checkout', 'json']));
-      else if (event === 'notify-harvester') result = notifyHarvester(parseFlags(args.slice(1), ['event', 'pr', 'state', 'body', 'json']));
+      else if (event === 'notify-harvester') notifyHarvester();
       else fail('E_USAGE', `unknown command ${event}; see --help`);
       process.stdout.write((json ? JSON.stringify({ schemaVersion: 1, ok: true, result }) : text(event, result)) + '\n');
     } catch (e) {

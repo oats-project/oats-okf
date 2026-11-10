@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { uncertaintyDiagnostic } from '../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-publication.mjs';
+import { uncertaintyDiagnostic } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 
 // Real Git owns objects, reachability, pushes and leases. gh is deliberately
 // only an argv-checked local adapter: these tests do NOT prove GitHub delivery,
 // deletion of GitHub pull refs, or purging unreachable objects from storage.
 // Every value below is synthetic; no credentials or external remotes are used.
-const SCRIPT = fileURLToPath(new URL('../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-publication.mjs', import.meta.url));
+const SCRIPT = fileURLToPath(new URL('../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs', import.meta.url));
 const GITHUB = 'fixture-owner/fixture-knowledge';
 const BRANCH = 'okf-harvest/synthetic-publication';
 const REF = `refs/heads/${BRANCH}`;

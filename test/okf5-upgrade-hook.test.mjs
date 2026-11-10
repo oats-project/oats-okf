@@ -86,6 +86,21 @@ test('upgrade hook: a 5.3.0 home plans adopt; apply returns its empty meta and c
   assert.equal(status.status, 0, status.stdout + status.stderr); assert.equal(status.out.result.harvest, 'on');
 });
 
+// oats.okf 6.0 removes the harvester, not the spawn policy: the last 5.x
+// release's home adopts with its policy file byte for byte, and its duty reads
+// the same, now also as publish.
+test('upgrade hook: a 5.8.0 home adopts under 6.0 with its policy file unchanged', t => {
+  const f = fixture(t, released('v5.8.0'));
+  const bytes = fs.readFileSync(policy(f));
+  assert.deepEqual(JSON.parse(bytes), { version: 1, harvest: 'on', reason: 'default' });
+  const before = inventory(f.dir);
+  assert.deepEqual(f.upgrade('plan', {}).out, { adopt: true });
+  assert.deepEqual(f.upgrade('apply', {}).out, { meta: {} });
+  assert.deepEqual(inventory(f.dir), before, 'no byte of the home changed');
+  assert.deepEqual(fs.readFileSync(policy(f)), bytes);
+  assert.deepEqual(f.run(CLI, ['status', '--json']).out.result, { harvest: 'on', reason: 'default', publish: 'on' });
+});
+
 test('upgrade hook: a 5.1.0 home, spawned before the policy file, adopts and stays unknown', t => {
   const f = fixture(t, released('v5.1.0'));
   assert.equal(fs.existsSync(policy(f)), false, '5.1.0 writes no policy');

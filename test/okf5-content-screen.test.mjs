@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import * as screen from '../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-content-screen.mjs';
+import * as screen from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-content-screen.mjs';
 
 // Synthetic-only fixtures. No service is contacted, no credential is loaded,
 // and no fixture is written to disk. Nonreserved .tld strings are invented so
 // the tests exercise refusal rather than the package's example-domain policy.
 const { screenText, screenBytes, RULE_IDS } = screen;
-const MODULE = new URL('../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-content-screen.mjs', import.meta.url);
+const MODULE = new URL('../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-content-screen.mjs', import.meta.url);
 const LOCATION = 'outgoing-text-1';
 const MAX = 4 * 1024 * 1024;
 const BODY = 'Ab3dEf7hIj9kLm2nOp4qRs6tUv8wXy0z';

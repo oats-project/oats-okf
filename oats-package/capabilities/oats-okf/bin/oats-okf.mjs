@@ -6,12 +6,12 @@ import { CONSULT } from '../lib/consult.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, forgetMigration } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
-import { refuseLegacySettings, removeLegacySettings } from '../lib/legacy-settings.mjs';
+import { refuseLegacySettings, refuseKnowledgeKeys, removeLegacySettings } from '../lib/legacy-settings.mjs';
 import { writeHarvestPolicy, harvestPolicy } from '../lib/harvest-policy.mjs';
 import { upgradePlan, upgradeApply } from '../lib/upgrade.mjs';
 import { propose } from '../lib/propose.mjs';
 const HELP=`oats okf status [--home PATH] [--json]
-  (spawn-recorded harvest duty: on, off, or unknown; no base/network read)
+  (spawn-recorded duty to propose, as harvest and publish: on, off, or unknown; no base/network read)
 oats okf inspect [--home PATH] [--json]
 oats okf bases [--fresh] [--json]
 oats okf index [--base ALIAS] [NODE | ALIAS/NODE] [--fresh] [--json]
@@ -33,9 +33,10 @@ oats okf unlock --lock PATH --token TOKEN [--json]
 oats okf setup --remove-legacy-settings [--plan] --soul SOUL [--json]
   (from the deployment: deletes only settings.oats.okf.harvest/harvest-runtime/harvest-model
   from its oats-local.yaml; --plan writes nothing)
-Knowledge reaches the accepted base through reviewed proposals. Read the compulsory
-okf-propose skill for checkpoint, opt-out and spawn instructions; check oats okf status
-from your instance home. Consultation settings use one absolute bindings-file.
+Knowledge reaches the accepted base only through PRs the knowledge maintainer merges.
+Read the compulsory okf-propose skill for checkpoint and opt-out instructions; check
+oats okf status from your instance home, then oats okf propose. Consultation settings
+use one absolute bindings-file.
 `;
 // okf 5.0.0: the 4.x harvest surfaces refuse, naming the new way; they never
 // capture, run, complete or drain anything.
@@ -46,7 +47,7 @@ from your instance home. Consultation settings use one absolute bindings-file.
 // hook that reported one is quarantined when the spawn rolls back. This hook
 // only writes working memory and the policy in the home (removed with it) and
 // primes the shared host cache.
-const NEW_WAY='the working agent follows the compulsory okf-propose skill and checks `oats okf status` from its instance home before proposing at a finished task or PR hand-over; oats.okf 5.0 keeps no source custody, runs or drains and never processes 4.x ones (README#upgrading-to-50)';
+const NEW_WAY='run `oats okf propose` from the instance home: the working agent proposes its own knowledge by PR at its checkpoints (the compulsory okf-propose skill; `oats okf status` first); oats.okf keeps no source custody, runs, drains or harvesters (README#upgrading-to-60)';
 const removed=(what)=>fail('E_REMOVED',`${what} was removed in oats.okf 5.0: ${NEW_WAY}`);
 const args=process.argv.slice(2);
 if(args.includes('--help') || args.includes('-h')) {process.stdout.write(HELP);}
@@ -83,7 +84,7 @@ else {
     // forwarded 4.x harvest setting refuses with where it was set and the fix.
     // The one exemption is the cleanup that removes it (help is answered above).
     const cleanup=event==='setup' && flags['remove-legacy-settings']===true;
-    if(!cleanup) refuseLegacySettings();
+    if(!cleanup) {refuseLegacySettings();refuseKnowledgeKeys();}
     for(const name of ['OATS_SOURCE_RECEIPT_FILE','OATS_INVOCATION_CONTEXT_FILE']) if(Object.hasOwn(process.env,name)) removed(`the captured source receipt/invocation context (${name})`);
     if(flags.source!==undefined) removed('--source (a 4.x source descriptor)');
     const accepted={
@@ -98,7 +99,8 @@ else {
     if(!cleanup && loadInvocationKnowledgeBinding().kind==='captured' && ['setup','init','migrate','unlock'].includes(event)) fail('E_MIGRATION',`captured ${event} is not supported; use an explicit operator administration path`);
     const home=resolve(flags.home || process.env.OATS_INSTANCE_HOME || process.env.OATS_HOME || process.cwd());
     let result;
-    if(event==='status') result=harvestPolicy(home);
+    // oats.okf 6: `publish` is the same spawn-recorded value under its new name.
+    if(event==='status') {const p=harvestPolicy(home);result={...p,publish:p.harvest};}
     else if(event==='read') fail('E_REMOVED','okf 4.0.0 removed read: use `oats okf cat --base ALIAS PATH` (same path, text and receipt)');
     else if(consult) {const answer=CONSULT[event](consultSource(home),flags,positionals);result=answer.result;text=answer.text;}
     else if(event==='propose') {const answer=propose(home,flags);result=answer.result;text=answer.text;}

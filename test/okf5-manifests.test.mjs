@@ -5,11 +5,12 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-// oats.okf 5.8.0 package shape: versions, kernel floor, the slot's settings and
-// hooks, the shipped skills (shared copies identical) and both package souls.
+// oats.okf package shape (6.0: no harvester): versions, kernel floor, the
+// slot's settings and hooks, the shipped skills (shared copies identical), the
+// maintainer soul and both trigger templates.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PKG=join(ROOT,'oats-package');
-const CAPS=['oats-okf','oats-okf-harvest','oats-okf-maintenance'];
+const CAPS=['oats-okf','oats-okf-maintenance'];
 const readJson=p=>JSON.parse(fs.readFileSync(p,'utf8'));
 const cap=name=>readJson(join(PKG,'capabilities',name,'oats.json'));
 /** relative path → bytes, for every file under dir. */
@@ -41,7 +42,6 @@ test('every manifest is version 5.8.0 with the >=0.69.2 kernel floor',()=>{
 test('oats.okf declares exactly bindings-file, state-dir, git-timeout, consult-max-age and screen-terms-file',()=>{
   assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','screen-terms-file','state-dir']);
   assert.equal(cap('oats-okf').commands.propose,'bin/oats-okf.mjs propose');
-  assert.equal(cap('oats-okf-harvest').settings,undefined);
 });
 
 test('the vendored manifest schema is oats v0.27.1 plus the OATS v0.68.1 upgrade hook, byte for byte',()=>{
@@ -63,7 +63,27 @@ test('oats.okf ships consultation, capture, compulsory proposing and theory skil
   assert.equal(cap('oats-okf').commands.status,'bin/oats-okf.mjs status');
 });
 
-test('the three knowledge-theory copies are byte-identical',()=>{
+test('the package enumerates exactly the slot and the maintainer, one soul and both trigger templates; no harvester remains',()=>{
+  const pkg=readJson(join(PKG,'oats-package.json'));
+  assert.deepEqual(pkg.capabilities,['capabilities/oats-okf','capabilities/oats-okf-maintenance']);
+  assert.deepEqual(pkg.souls,['souls/knowledge-maintainer']);
+  assert.deepEqual(pkg.triggers,[{id:'proposal-review',file:'triggers/proposal-review.json'},{id:'harvest-review',file:'triggers/harvest-review.json'}]);
+  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities')).sort(),CAPS);
+  assert.deepEqual(fs.readdirSync(join(PKG,'souls')).sort(),['knowledge-maintainer']);
+  assert.equal(fs.existsSync(join(PKG,'capabilities','oats-okf-harvest')),false);
+  assert.equal(fs.existsSync(join(PKG,'souls','knowledge-harvester')),false);
+});
+
+test('proposal-review fires on okf-proposal and okf-harvest; harvest-review is its byte-identical alias',()=>{
+  const t=readJson(join(PKG,'triggers','proposal-review.json'));
+  assert.equal(t.definition.id,'okf-proposal-review');
+  assert.deepEqual(t.definition.on.labels,['okf-proposal','okf-harvest']);
+  assert.equal(t.definition.spawn.soul,'oats.okf/knowledge-maintainer');
+  assert.match(t.definition.spawn.task,/Load the knowledge-review skill first/);
+  assert.deepEqual(fs.readFileSync(join(PKG,'triggers','harvest-review.json')),fs.readFileSync(join(PKG,'triggers','proposal-review.json')));
+});
+
+test('the two knowledge-theory copies are byte-identical',()=>{
   const [first,...rest]=CAPS.map(name=>files(join(PKG,'capabilities',name,'skills','knowledge-theory')));
   assert.ok(Object.keys(first).length);
   for(const copy of rest) assert.deepEqual(copy,first);
@@ -75,7 +95,7 @@ test('every okf-authoring copy is byte-identical (the proposer\'s in oats.okf, t
   for(const b of rest) assert.deepEqual(b,a);
 });
 
-for (const [name, capability] of [['knowledge-harvester', 'oats.okf-harvest'], ['knowledge-maintainer', 'oats.okf-maintenance']]) {
+for (const [name, capability] of [['knowledge-maintainer', 'oats.okf-maintenance']]) {
   test(`the ${name} soul keeps no knowledge and defaults to background`,()=>{
     const soul=fs.readFileSync(join(PKG,'souls',name,'soul.yaml'),'utf8');
     assert.match(soul,/^knowledge: none$/m);
@@ -87,7 +107,7 @@ for (const [name, capability] of [['knowledge-harvester', 'oats.okf-harvest'], [
 // oats.okf 5.0.2 (#64): personal data is excluded by ONE sentence, the same
 // wherever an agent is told what to leave out. An instruction, never a check.
 const PERSONAL_DATA='Never include personal data about people outside the team (clients, correspondents, any other third party): a name, a contact detail, or anything else that identifies a person, including detail derived from correspondence. Keep the lesson and leave the person out. Naming the author of a published source you cite is fine.';
-const NAMES='That covers the names you choose as well: a note\'s file name, a task ref and an instance\'s name are published as provenance when knowledge is harvested.';
+const NAMES='That covers the names you choose as well: a note\'s file name, a task ref and an instance\'s name are published as provenance when knowledge is proposed.';
 // Markdown quoting, emphasis and line wrapping removed, so a sentence matches across lines.
 const prose=p=>fs.readFileSync(join(ROOT,p),'utf8').replace(/^> ?/gm,'').replace(/\*\*/g,'').replace(/\s+/g,' ');
 const count=(text,s)=>text.split(s).length-1;
@@ -121,8 +141,7 @@ test('okf-trigger-setup hands host timer installation to the operator',()=>{
 test('the personal-data exclusion is one sentence, the same at every place an agent is told what to exclude',()=>{
   const places={
     'oats-okf/skills/okf-instance-knowledge/SKILL.md':1,'oats-okf/injects/okf.md':1,'oats-okf/skills/okf-propose/SKILL.md':1,
-    // The harvester reads it twice: when it edits, and when it reads its diff.
-    'oats-okf-harvest/skills/knowledge-harvest/SKILL.md':2,'oats-okf-maintenance/skills/knowledge-review/SKILL.md':1,
+    'oats-okf-maintenance/skills/knowledge-review/SKILL.md':1,
     ...Object.fromEntries(CAPS.map(name=>[`${name}/skills/knowledge-theory/SKILL.md`,1]))
   };
   for(const [file,times] of Object.entries(places)) {
@@ -137,15 +156,14 @@ test('the names a working instance chooses are covered: capture skill, inject an
   for(const file of ['oats-okf/skills/okf-instance-knowledge/SKILL.md','oats-okf/injects/okf.md','oats-okf/skills/okf-propose/SKILL.md']) assert.equal(count(prose(CAPDIR+file),NAMES),1,file);
 });
 
-test('the harvester and the reviewer apply it to what is published, provenance names included',()=>{
-  const harvest=prose(CAPDIR+'oats-okf-harvest/skills/knowledge-harvest/SKILL.md');
-  for(const s of ['A claim that cannot be stated without the person is dropped, with that reason.','Read the same diff once more for people.',
-    'holds for everything you publish, not only the concepts: the commit message, the PR body and the provenance block.',
-    'Note file names, task refs and the source instance\'s name are published there as written.',
-    'drop the claims that rest on it and leave it out of the PR','If the source instance\'s name carries it, publish nothing and report.']) assert.ok(harvest.includes(s),s);
+test('the proposer and the reviewer apply it to what is published, provenance names included',()=>{
+  const propose=prose(CAPDIR+'oats-okf/skills/okf-propose/SKILL.md');
+  for(const s of ['Read the printed diff once, in full, as a reviewer would','against the personal-data sentence above (note file names, task refs and your instance name included)',
+    'runs the content screen over everything that would leave this host']) assert.ok(propose.includes(s),s);
   const review=prose(CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md');
   for(const s of ['the names in the provenance block (note file names, task refs, instance names)',
-    'Your review comes after the push: rewriting can remove branch-only content from the PR branch\'s reachable history, but cannot undo the initial exposure.']) assert.ok(review.includes(s),s);
+    'Your review comes after the push: rewriting can remove branch-only content from the PR branch\'s reachable history, but cannot undo the initial exposure.',
+    'Your main job is knowledge theory:','verify each claim against the source it cites','second reader','You gate every merge']) assert.ok(review.includes(s),s);
 });
 
 // oats.okf 5.7.0 (awebai/oats-okf#118): a supersession of a human-accepted

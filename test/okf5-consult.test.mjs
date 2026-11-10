@@ -186,7 +186,7 @@ test('spawn primes only owns/reads bases, once each; consultation can still expl
   assert.equal(trace.calls().filter(a=>a.includes('clone')).length,1);
   assert.equal(trace.calls().some(a=>a.includes(bindings.bases.unused.repository)),false);
   assert.equal(fs.existsSync(join(f.stateDir,'cache','unused.git')),false);
-  assert.deepEqual(run(f,['status','--json']).out.result,{harvest:'on',reason:'default'});
+  assert.deepEqual(run(f,['status','--json']).out.result,{harvest:'on',reason:'default',publish:'on'});
   const explicit=run(f,['cat','--base','unused','/expert/index.md','--json']);
   assert.equal(explicit.out.error.code,'E_BASE_UNAVAILABLE');
   // The root declaration is still checked, even though unknown aliases cannot prime.

@@ -1,7 +1,8 @@
 # Publication safety gate
 
 Run `node <okf-authoring skill dir>/scripts/okf-publication.mjs --help` for the
-exact flags. This dependency-free helper is shared by harvest and maintenance.
+exact flags. This dependency-free helper is shared by the proposer (`oats okf
+propose`, in oats.okf) and the maintainer (oats.okf-maintenance).
 It is separate from `okf-validate.mjs`: that validator's interface and exit
 codes are unchanged, and it checks structure, not content.
 
@@ -154,14 +155,22 @@ node <skill-dir>/scripts/okf-publication.mjs screen-tree \
 selected tree, including navigation/metadata, for accepted-corpus measurement.
 Neither writes remote state. `--root` defaults to `.`. A missing root refuses.
 
+`screen-text`, `screen`, `screen-tree`, `commit` and `create` accept an
+optional `--terms-file` (oats.okf 6.0: the host setting `screen-terms-file`,
+which `oats okf propose` passes): one term per line, matched
+case-insensitively in every screened text, file name and ref, reported as rule
+`host-term` with its location only. Terms only add refusals; an unreadable
+or malformed file is `E_CONTENT_INPUT`, never "no terms".
+
 ## Create
 
-The harvest skill supplies the exact create recipe. Its local-only `commit`
+`oats okf propose --apply` runs the exact create sequence. Its local-only `commit`
 step snapshots screened commit text, fixes author and committer explicitly
 (overriding more-specific Git settings after clearing inherited selectors),
 checks the staged tree, and updates only the current new branch with a local
 old-head compare-and-swap. No raw commit summary is printed. `create` preserves its
-fresh `okf-harvest/<date>-<UUID>` key, empty expected-old lease and new-ref
+fresh `okf-proposal/<date>-<UUID>` key (a 5.x `okf-harvest/` key with a
+version 2 block is still accepted through 6.x), empty expected-old lease and new-ref
 confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
 A base that moved before the push is recovered inside `create`, at most three
