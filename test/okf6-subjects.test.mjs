@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX, VALIDATE } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
@@ -11,6 +11,7 @@ import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcep
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
+import { acceptedReader } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 import { prepareSubjectProposal, checkWriteSurface, proposalFindings, proposalVerdicts, verdictSection, legacyMap } from '../oats-package/capabilities/oats-okf/lib/write-surface.mjs';
@@ -781,6 +782,16 @@ test('the standalone validator refuses an unsafe tree on a bridged base before o
   const plain=join(tmp(t,'okf6-plain-link-'),'base');writePlainBase(plain);
   fs.symlinkSync(join(plain,'expert'),join(plain,'linked'));
   assert.equal(validate(plain).out.layout,'plain');assert.deepEqual(validate(plain).out.errors,[],'5.8 skips a linked directory on a plain base');
+});
+
+test('propose reads accepted bytes whole and fails closed: an absent path is null, an unreadable blob is E_GIT, never "absent"',t=>{
+  const dir=tmp(t,'okf6-accepted-'),env={...process.env,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1'};
+  const g=(...a)=>execFileSync('git',['-c','user.name=F','-c','user.email=f@example.invalid','-C',dir,...a],{env,encoding:'utf8'}).trim();
+  g('init','-q');write(join(dir,'index.md'),'# Root\n');write(join(dir,'n/a.md'),'A\n');g('add','-A');g('commit','-qm','x');
+  const head=g('rev-parse','HEAD'),read=acceptedReader(dir,head);
+  assert.equal(read('n/a.md'),'A\n');assert.equal(read('missing.md'),null);
+  const oid=g('rev-parse','HEAD:index.md');fs.rmSync(join(dir,'.git/objects',oid.slice(0,2),oid.slice(2)));
+  assert.throws(()=>acceptedReader(dir,head)('index.md'),e=>e.code==='E_GIT');
 });
 
 test('`oats okf verdicts --check`: identity refuses a rejected id without reconsiders (E_VERDICT, the reason); the exact title hash lists candidates',t=>{

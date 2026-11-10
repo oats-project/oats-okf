@@ -17,7 +17,7 @@ import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
 import { git as rawGit, gitEnv, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
-import { isBridgedMeta } from './okf-reindex.mjs';
+import { isBridgedMeta, writeInBase } from './okf-reindex.mjs';
 import { prepareSubjectProposal, checkWriteSurface, generatedPath, proposalFindings, proposalVerdicts, verdictSection } from './write-surface.mjs';
 // The proposer's own copy of the shared publication helper (okf-authoring),
 // byte-identical to the maintainer's: the SAME screen and publication calls
@@ -453,6 +453,59 @@ function rawTree(clone, treeId, out) {
     else fs.writeFileSync(file, bytes, { mode: e.mode === '100755' ? 0o755 : 0o644 });
   }
 }
+/** A reader of the accepted commit's stored bytes by repository path: null
+ *  only for a path the accepted tree has no file at (its full listing, read
+ *  once); a blob that cannot be read, whatever its size, is refused (E_GIT),
+ *  never taken for an absent file. */
+export function acceptedReader(clone, accepted) {
+  let entries = null;
+  return path => {
+    if (!entries) {
+      entries = new Map();
+      const listing = git(clone, ['ls-tree', '-r', '-z', '--full-tree', '-l', accepted], { trim: false, maxBuffer: 64 * 1024 * 1024 });
+      for (const rec of listing.split('\0').filter(Boolean)) {
+        const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64}) +(-|\d+)\t(.+)$/s.exec(rec);
+        if (!m) fail('E_GIT', 'git ls-tree answered an unreadable entry for the accepted tree');
+        if (m[2] === 'blob') entries.set(m[5], { oid: m[3], size: Number(m[4]) });
+      }
+    }
+    const e = entries.get(path);
+    if (!e) return null;
+    return git(clone, ['cat-file', 'blob', e.oid], { trim: false, maxBuffer: e.size + 1024 });
+  };
+}
+/** The proposal's tree once the subject layout is prepared on its stored
+ *  bytes (not the checkout: no smudge or ident expansion reaches about: or a
+ *  generated index): `prepare(baseDir)` edits a raw copy of `treeId`, its
+ *  changed files enter a new tree byte for byte (no filters), and are copied
+ *  back into the clone for the proposer to see. → the new tree id. */
+function preparedTree(clone, owned, treeId, prepare) {
+  return withIndex(clone, (env, scratch) => {
+    const out = join(scratch, 'tree');
+    fs.mkdirSync(out);
+    rawTree(clone, treeId, out);
+    const base = owned.base.root === '.' ? out : join(out, owned.base.root);
+    const { about, regenerated } = prepare(base);
+    const touched = [...new Set([...about, ...regenerated])];
+    if (!touched.length) return treeId;
+    git(clone, ['read-tree', treeId], { env });
+    const records = [];
+    for (const p of touched) {
+      const file = join(base, ...p.split('/')), full = baseFile(owned.base, p);
+      if (fs.existsSync(file)) records.push(`100644 ${git(clone, ['hash-object', '-w', '--no-filters', '--', file], { env })}\t${full}`);
+      else records.push(`0 ${'0'.repeat(treeId.length)}\t${full}`);
+    }
+    git(clone, ['update-index', '-z', '--index-info'], { env, input: records.join('\0') + '\0' });
+    const prepared = git(clone, ['write-tree'], { env });
+    const cloneBase = owned.base.root === '.' ? clone : join(clone, owned.base.root);
+    for (const p of touched) {
+      const file = join(base, ...p.split('/'));
+      if (fs.existsSync(file)) writeInBase(cloneBase, p, fs.readFileSync(file));
+      else { const there = join(cloneBase, ...p.split('/')); if (fs.lstatSync(there, { throwIfNoEntry: false })?.isFile()) fs.rmSync(there); }
+    }
+    return prepared;
+  });
+}
 /** Validate the proposed tree's stored bytes; `inspect(baseDir)` first runs
  *  any other check that must see the same frozen bytes (the subject layout's
  *  write surface and verdict lanes), its refusal unwrapped. */
@@ -530,16 +583,15 @@ function prepare(source, dir, plan) {
       // okf 6.0, the subject layout (spec §3): a version-1 soul's new claims get
       // about: from legacy-nodes, every generated index is regenerated, then the
       // write surface, the proposal's own ids and the verdict lanes.
-      const root = owned.base.root === '.' ? clone : join(clone, owned.base.root);
       const rel = l => l.map(c => ({ path: baseRel(owned.base, c.path), status: c.status }));
-      prepareSubjectProposal({ root, decl: source.decl, ownedNodes: scope.ownedNodes, changes: rel(list) });
-      treeId = workingTree(clone, accepted); list = changes(clone, accepted, treeId);
+      treeId = preparedTree(clone, owned, treeId, base => prepareSubjectProposal({ root: base, decl: source.decl, ownedNodes: scope.ownedNodes, changes: rel(list) }));
+      list = changes(clone, accepted, treeId);
       checkFiles(owned, list);
       if (source.decl.version !== 2) checkScope(owned, scope, list.filter(c => !generatedPath(baseRel(owned.base, c.path))));
       // The write surface and the verdict lanes judge stored bytes on both
       // sides (the accepted blob, the proposed tree's blob), never a checkout:
       // a smudge or ident expansion in the clone changes neither.
-      const before = p => { try { return git(clone, ['cat-file', 'blob', `${accepted}:${baseFile(owned.base, p)}`], { trim: false }); } catch { return null; } };
+      const readAccepted = acceptedReader(clone, accepted), before = p => readAccepted(baseFile(owned.base, p));
       const changed = rel(list);
       inspect = proposed => {
         checkWriteSurface({ root: proposed, decl: source.decl, ownedNodes: scope.ownedNodes, changes: changed, before });

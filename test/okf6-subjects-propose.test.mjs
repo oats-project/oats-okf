@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isolatedGit } from './fixtures/isolated-git.mjs';
-import { writePlainBase, bridge, REJECTED } from './fixtures/bridged-base.mjs';
+import { writePlainBase, bridge, reindex, REJECTED } from './fixtures/bridged-base.mjs';
 // oats.okf 6.0, the subject layout in `oats okf propose` (spec
 // docs/design/2026-11-10-subject-layer-in-oats-okf.md §3): on a bridged base a
 // version-1 soul's claim gets about: from legacy-nodes, the generated indexes
@@ -44,7 +44,7 @@ const V2 = { version: 2, subjects: ['system/okf', 'workstream/knowledge'] };
 
 /** One Git base `kb` (the bridged fixture, or the plain one), the soul `source`
  *  with the given okf.json, and its live home `src`. */
-function fixture(t, { decl = V1, plain = false, ident = false } = {}) {
+function fixture(t, { decl = V1, plain = false, ident = false, identTitle = false, large = false } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf6-subjects-propose-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const d = join(dir, 'deployment'), home = join(d, 'agents', 'source', 'instances', 'src'), soul = join(d, 'agents', 'source', 'souls', 'abc');
@@ -52,6 +52,12 @@ function fixture(t, { decl = V1, plain = false, ident = false } = {}) {
   fs.mkdirSync(user, { recursive: true });
   writePlainBase(seed, { id: 'kb-1', owners: { expert: 'source', peer: 'other' } }); if (!plain) bridge(seed);
   if (ident) fs.appendFileSync(join(seed, 'peer/lesson.md'), '\n$Id$\n');
+  if (large) fs.appendFileSync(join(seed, 'peer/lesson.md'), `\n${'Long accepted body. '.repeat(900000)}\n`);
+  if (identTitle) {
+    const f = join(seed, 'claims/insights/consult-reads-one-blob.md');
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('title: Consult reads one committed index', 'title: Consult reads one committed index $Id$'));
+    reindex(seed);
+  }
   const env = { HOME: user, PATH: `${bin}:${join(dir, 'ghbin')}:${dirname(process.execPath)}:/usr/bin:/bin`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LANG: 'C' };
   const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8' }).trim();
   git(seed, 'init', '-q', '-b', 'main'); git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'accepted');
@@ -163,6 +169,29 @@ test('version 2: the write surface judges stored bytes: a status-only supersessi
   const stored = f.git(clone, 'cat-file', 'blob', f.git(clone, 'hash-object', '--path=peer/lesson.md', '-w', 'peer/lesson.md'));
   assert.equal(stored.replace('\nstatus: superseded', ''), f.git(clone, 'cat-file', 'blob', `${plan.bases[0].accepted}:peer/lesson.md`), 'the stored blob changes only the status');
   ok(f.run(['--check', '--slug', 'pin']));
+});
+
+test('version 2: about: and the generated indexes are prepared from stored bytes: an ident expanded in an unchanged claim\'s title never reaches an index', t => {
+  const f = fixture(t, { decl: V2, identTitle: true }), plan = ok(f.run(['--plan', '--slug', 'pin']));
+  const clone = edit(plan, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]'));
+  write(join(clone, '.git/info/attributes'), 'claims/insights/consult-reads-one-blob.md ident\n');
+  fs.rmSync(join(clone, 'claims/insights/consult-reads-one-blob.md'));
+  f.git(clone, 'checkout-index', '--force', '--', 'claims/insights/consult-reads-one-blob.md');
+  assert.match(fs.readFileSync(join(clone, 'claims/insights/consult-reads-one-blob.md'), 'utf8'), /title: Consult reads one committed index \$Id: [0-9a-f]+ \$/);
+  const checked = ok(f.run(['--check', '--slug', 'pin']));
+  assert.deepEqual(checked.bases[0].changed.sort(), ['A claims/decisions/pin.md', 'M subjects/system/okf/index.md'], JSON.stringify(checked.bases[0].changed));
+  const view = fs.readFileSync(join(clone, 'subjects/system/okf/index.md'), 'utf8');
+  assert.ok(view.includes('[Consult reads one committed index $Id$]') && !view.includes('$Id: '), view);
+});
+
+test('version 2: a status-only supersession of an accepted concept over 16 MiB passes the write surface (the accepted bytes are read whole); the content screen\'s own size limit then answers', t => {
+  const f = fixture(t, { decl: V2, large: true }), plan = ok(f.run(['--plan', '--slug', 'pin']));
+  const clone = edit(plan, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]\nsupersedes: [/peer/lesson.md]'));
+  const path = join(clone, 'peer/lesson.md');
+  assert.ok(fs.statSync(path).size > 16 * 1024 * 1024);
+  fs.writeFileSync(path, fs.readFileSync(path, 'utf8').replace('id: ins-000000000002', 'id: ins-000000000002\nstatus: superseded'));
+  // Not E_SCOPE: the write surface read the 17 MiB accepted blob and saw a status-only change.
+  refused(f.run(['--check', '--slug', 'pin']), 'E_CONTENT_INPUT');
 });
 
 test('version 2 against a plain base: plan refuses E_CONFIG with the remedy and keeps no clone', t => {
