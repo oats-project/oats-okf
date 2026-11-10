@@ -290,7 +290,8 @@ node okf-validate.mjs <base-dir> --strict  # validator v2
 ```
 
 Frontmatter prose copied into a generated index (titles, descriptions, type
-and kind headings) is rendered as plain text, brackets as parentheses: a
+and kind headings) is rendered as plain text, brackets as parentheses (and
+a link label's backslashes escaped): a
 link in a concept's description would otherwise resolve against the index,
 not the concept. `--type` and `--kind` filters are read the same way. A verdict record's
 line is `verdict; claim type; title hash; claim description`, with `\` and

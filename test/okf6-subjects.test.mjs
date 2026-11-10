@@ -640,6 +640,20 @@ test('links in frontmatter prose do not move into generated indexes: a relative 
   }
 });
 
+test('a title ending in backslashes stays a link label: generated labels escape \\ and parseView reads the title back',t=>{
+  const dir=bridged(t);
+  edit(join(dir,'expert/decision.md'),'title: Pin the owner at spawn','title: Match a final \\');
+  edit(join(dir,'subjects/system/okf.md'),'title: oats-okf','title: okf \\ x\\');
+  reindex(dir);assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  const text=fs.readFileSync(join(dir,'subjects/system/okf/index.md'),'utf8');
+  assert.ok(text.includes('* [Match a final \\\\](/expert/decision.md)'),text);
+  assert.ok(text.includes('Subject file: [okf \\\\ x\\\\](/subjects/system/okf.md)'),text);
+  const titles=parseView(text).sections.flatMap(x=>x.entries.map(e=>e.title));
+  assert.ok(titles.includes('Match a final \\'),JSON.stringify(titles));
+  // every label's closing bracket is unescaped: an even run of backslashes before it
+  for(const m of text.matchAll(/\[([^\]]*)\]\(/g)) assert.equal((/\\*$/.exec(m[1])[0].length)%2,0,m[0]);
+});
+
 test('a claim type spelled like the membership heading stays a claim; members are the subject files under it',t=>{
   const dir=bridged(t);
   edit(join(dir,'claims/insights/consult-reads-one-blob.md'),'type: Insight','type: In this workstream');

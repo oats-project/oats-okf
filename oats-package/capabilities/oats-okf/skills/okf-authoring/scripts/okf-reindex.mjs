@@ -226,12 +226,15 @@ const linkText = (s) => one(s).replace(/\[/g, "(").replace(/\]/g, ")");
 // the index, not its concept: rendered as plain text, brackets as parentheses,
 // so no reader (the 5.8 validator included) sees a link.
 export const plainText = linkText;
+// A link label also escapes its backslashes: a final `\` would escape the
+// closing bracket. parseEntry reads them back.
+const linkLabel = (s) => linkText(s).replace(/\\/g, "\\\\");
 function entry(title, path, description) {
   // Consult resolves a link by cutting `?` and `#` and decoding `%`, so a path
   // holding one would read a different file: such a path is never linked.
   if (/[\s()<>?#%\\]/.test(path)) throw Object.assign(new Error(`${path}: a path with spaces, parentheses, angle brackets, ?, #, % or \\ cannot be linked from a generated index (a reader would resolve it to another file)`), { code: "E_PATH" });
   const d = plainText(description);
-  return `* [${linkText(title)}](/${path})${d ? ` - ${d}` : ""}`;
+  return `* [${linkLabel(title)}](/${path})${d ? ` - ${d}` : ""}`;
 }
 const fallbackTitle = (p) => p.split("/").pop().replace(/\.md$/, "");
 const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -274,7 +277,7 @@ export function generate(concepts, rootIndex = "") {
     const s = subjects.get(ref), title = plainText(s.meta.title) || s.slug;
     const lines = [`# ${title}`, ""];
     if (plainText(s.meta.description)) lines.push(plainText(s.meta.description), "");
-    lines.push(GENERATED_NOTE, `Subject file: [${linkText(title)}](/${s.path})`, "");
+    lines.push(GENERATED_NOTE, `Subject file: [${linkLabel(title)}](/${s.path})`, "");
     if (s.kind === "workstream") {
       const members = membersOf.get(ref) ?? [];
       if (members.length) {
@@ -375,7 +378,7 @@ export function withSubjectsSection(text) {
 const ENTRY = /^\* \[([^\]]*)\]\(\/([^)\s]+)\)(?: - (.*))?$/;
 export function parseEntry(line) {
   const m = ENTRY.exec(line);
-  return m ? { title: m[1], path: m[2], description: m[3] ?? "" } : null;
+  return m ? { title: m[1].replace(/\\\\/g, "\\"), path: m[2], description: m[3] ?? "" } : null;
 }
 /** A generated subject view → { title, description, members, sections:
  *  [{ type, kind, typeKey, kindKey, entries }] } (kind null for entries
