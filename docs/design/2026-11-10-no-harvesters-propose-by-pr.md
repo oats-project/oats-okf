@@ -153,7 +153,23 @@ give proposing hosts branch-create or use the fork flow; optional `screen-terms-
 is the release lane's (this removes a soul and a capability: a major). The design document's §5 is the rationale;
 this spec is the build record.
 
-## 8. Not in this build
+## 8. Acceptance conditions (Juan's side, relayed 10 November; the merge waits on Juan's yes)
+
+1. The proposing instance's pre-push screen is **the same screen** the harvester's publication uses today
+   (`okf-content-screen.mjs` and the helper's `screen`, `screenRange`, `screen-text` over the exact outgoing
+   commit objects, paths, blobs and PR body), moved, not a weaker copy; the test suite proves `propose --check`
+   and `--apply` call it with the same inputs the harvester's §8 did, plus the optional host term list.
+2. Removing the soul refuses with an error that names the change: a spawn of `oats.okf/knowledge-harvester`
+   gets the kernel's unknown-soul refusal, and the release note and README name what to delete from a
+   deployment's configuration (`souls.launch` keys for the harvester, any `--provider` harvest keys, the
+   `harvest-review` trigger rename) and what replaces the harvest (`oats okf propose` from the instance home;
+   the operator form on a recovery), with the hand steps as exact commands.
+3. Every instance's knowledge instructions change in the same release: the inject, `okf-propose`,
+   `okf-instance-knowledge`, `knowledge-theory`'s runtime notes, the maintainer soul's AGENTS.md and
+   `knowledge-review`, the README. No text may still say a harvester decides what is promoted, or that an
+   agent waits for one. A test greps the shipped capabilities for "harvester" outside the migration section.
+
+## 9. Not in this build
 
 The subject ontology, the bridge, `okf.json` v2, verdict records, the `about:` edge, claim ids, the write-surface
 rule by path family (D4), the one-base rule (D13): all wait for Juan's side. The harvester's pre-push base-move
