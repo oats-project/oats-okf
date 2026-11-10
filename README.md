@@ -499,12 +499,19 @@ form; `proposer.instance` is then the caller's instance, or `null` from the
 deployment). The maintainer's parser (`oats.okf-maintenance`
 `lib/provenance.mjs`) reads the first `okf-proposal` or `okf-harvest` block
 strictly: the fence must match the version (3 in `okf-proposal`, 1 and 2 in
-`okf-harvest`), unknown keys are refused, `source.owner` is required,
+`okf-harvest`), unknown keys are refused, `source.owner` is required
+(except below),
 `evidence` holds at most 100 `notes/…/*.md` paths without `.` or `..`
 segments, with an optional 64-hex `sha256` only for a note that was read. It
 still reads **version 2** (a 5.x harvester's, with `harvester` instead of
 `incarnation` and `proposer`) and **version 1** (4.x run and input ids), so
 older PRs stay reviewable.
+
+A version-2 soul declaration (`okf.json` with `subjects`, no
+`owner`/`owns`/`reads`) writes an optional `source.subjects`
+(`["<kind>/<slug>", …]`, non-empty, distinct); only with `subjects` may
+`source.owner` be `null`, and then `ownedNodes` and `readNodes` are `[]`.
+`subjects` is a version 3 key only.
 
 ## The knowledge maintainer
 

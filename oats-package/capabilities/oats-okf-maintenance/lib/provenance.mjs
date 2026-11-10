@@ -9,11 +9,15 @@
 // own knowledge with `oats okf propose`; there is no harvester. It names the
 // source's incarnation and the proposer (live, or the operator's recovery
 // form), with the same evidence shape (sha256 only for a note that was read).
+// A version-2 soul (okf.json with subjects, no owner/owns/reads) adds an
+// optional source.subjects [<kind>/<slug>]; owner may then be null, and
+// ownedNodes/readNodes are [].
 const FENCE = /^```(okf-harvest|okf-proposal)[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/m;
 const FENCE_OF = { 1: 'okf-harvest', 2: 'okf-harvest', 3: 'okf-proposal' };
 const obj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v, max = 256) => typeof v === 'string' && v.length > 0 && v.length <= max && !/[\u0000-\u001f\u007f]/.test(v);
 const NODE = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+const SUBJECT = NODE; // <kind>/<slug>, the same grammar as base/node
 /** A base root as a repository-relative directory: no `..`, absolute, backslash or empty segment. */
 export const safeRoot = (r) => r === '.' || (typeof r === 'string' && !r.startsWith('/') && !r.includes('\\') && r.split('/').every((s) => s && s !== '.' && s !== '..'));
 
@@ -44,10 +48,16 @@ export function parseProvenance(body) {
   }
   if (need(obj(v.source), 'source must be an object')) {
     const s = v.source;
-    only(s, v.version === 1 ? ['soul', 'soulId', 'owner', 'instance', 'ownedNodes', 'readNodes', 'bases'] : v.version === 2 ? ['soul', 'owner', 'instance', 'ownedNodes', 'readNodes', 'bases'] : ['soul', 'owner', 'instance', 'incarnation', 'ownedNodes', 'readNodes', 'bases'], 'source');
+    only(s, v.version === 1 ? ['soul', 'soulId', 'owner', 'instance', 'ownedNodes', 'readNodes', 'bases'] : v.version === 2 ? ['soul', 'owner', 'instance', 'ownedNodes', 'readNodes', 'bases'] : ['soul', 'owner', 'instance', 'incarnation', 'subjects', 'ownedNodes', 'readNodes', 'bases'], 'source');
     // okf 4.0.1: the source's okf.json owner (what okf-base.json nodes record); optional for 4.0.0 PRs, required in v2.
     if (v.version === 1) need(s.owner === undefined || s.owner === null || str(s.owner, 128), 'source.owner must be a string or null');
-    else need(str(s.owner, 128), 'source.owner must be the source soul\'s okf.json owner');
+    else if (v.version === 2 || s.subjects === undefined) need(str(s.owner, 128), 'source.owner must be the source soul\'s okf.json owner');
+    else {
+      // v3 with subjects: a version-2 soul; owner optional, no owned or read nodes.
+      need(Array.isArray(s.subjects) && s.subjects.length > 0 && s.subjects.length <= 256 && s.subjects.every((x) => typeof x === 'string' && SUBJECT.test(x)) && new Set(s.subjects).size === s.subjects.length, 'source.subjects must be a non-empty list of distinct <kind>/<slug>');
+      need(s.owner === null || str(s.owner, 128), 'source.owner must be a string or null');
+      if (s.owner === null) need(Array.isArray(s.ownedNodes) && !s.ownedNodes.length && Array.isArray(s.readNodes) && !s.readNodes.length, 'source.ownedNodes and source.readNodes must be [] when source.owner is null');
+    }
     need(str(s.soul, 128), 'source.soul must be a name');
     if (v.version === 1) need(s.soulId === null || str(s.soulId, 512), 'source.soulId must be a string or null');
     need(str(s.instance, 128), 'source.instance must be a name');

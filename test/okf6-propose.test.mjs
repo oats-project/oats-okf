@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { backingNotes, SKELETON, propose, publication } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
+import { backingNotes, SKELETON, propose, publication, provenance as provenanceBlock } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
 import { execute as shippedExecute } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 import { isolatedGit } from './fixtures/isolated-git.mjs';
 // oats.okf 6.0 (docs/design/2026-11-10-no-harvesters-propose-by-pr.md): the
@@ -450,13 +450,101 @@ test('condition 1: --check and --apply feed the shipped helper exactly the harve
       assert.deepEqual({ ...rescreen, head: undefined }, { ...screen, head: undefined });
       assert.equal(f.git(clone, 'rev-parse', `${rescreen.head}^{tree}`), f.git(clone, 'rev-parse', `${screen.head}^{tree}`));
       assert.deepEqual(Object.keys(commit).sort(), [...Object.keys(expected.commit), ...Object.keys(extra)].sort());
-      assert.deepEqual(Object.keys(create).sort(), [...Object.keys(expected.create), ...Object.keys(extra)].sort());
+      // One addition to the harvester's create: the base's okf-base.json guards base-move recovery.
+      assert.deepEqual(Object.keys(create).sort(), [...Object.keys(expected.create), 'guard-file', ...Object.keys(extra)].sort());
       assert.deepEqual(commit, { repo: clone, base: accepted, head: accepted, branch: pr.branch, 'commit-file': commitFile, ...extra }, 'harvester: --base "$base" --head "$base"');
-      assert.deepEqual(create, { repo: clone, remote: f.origin, github: 'acme/kb', base: accepted, 'base-branch': 'main', head: pr.head, branch: pr.branch, 'body-file': bodyFile, ...extra },
+      assert.deepEqual(create, { repo: clone, remote: f.origin, github: 'acme/kb', base: accepted, 'base-branch': 'main', head: pr.head, branch: pr.branch, 'body-file': bodyFile, 'guard-file': 'okf-base.json', ...extra },
         'harvester: --remote <recorded clone locator> --github <owner>/<repo> --base-branch <acceptedBranch> --head "$head"');
       // What --check screened is what --apply published: the same tree and message bytes.
       assert.equal(f.git(clone, 'rev-parse', `${screen.head}^{tree}`), f.git(clone, 'rev-parse', `${pr.head}^{tree}`));
       assert.equal(f.git(clone, 'cat-file', '-p', screen.head).split('\n\n').slice(1).join('\n\n'), f.git(clone, 'cat-file', '-p', pr.head).split('\n\n').slice(1).join('\n\n'));
     });
   }
+});
+
+// Round-1 review findings (PR #131 at 042faff).
+test('a base move that changes okf-base.json is never replayed: E_BASE_MOVED before any push', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const writer = join(f.dir, 'writer'); f.git(f.dir, 'clone', '-q', f.origin, writer);
+  const meta = JSON.parse(fs.readFileSync(join(writer, 'okf-base.json'), 'utf8'));
+  meta.nodes.expert.owner = 'other';
+  json(join(writer, 'okf-base.json'), meta); f.git(writer, 'commit', '-qam', 'expert moves to other'); f.git(writer, 'push', '-q', 'origin', 'HEAD:main');
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_BASE_MOVED');
+  assert.deepEqual(e.result.failed.diagnostic, { phase: 'recover', attempts: 1, reason: 'guarded-file-changed' });
+  assert.deepEqual(remoteRefs(f), ['refs/heads/main'], 'nothing was pushed');
+});
+
+test('a clone that is a symlink, or whose .git is a gitfile, is refused before any Git write', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); const clone = edit(f, plan);
+  const elsewhere = join(f.dir, 'elsewhere'); fs.renameSync(clone, elsewhere); fs.symlinkSync(elsewhere, clone);
+  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /symlink or not a directory/);
+  assert.equal(f.git(elsewhere, 'symbolic-ref', 'HEAD'), 'refs/heads/main', 'the other checkout is untouched');
+  fs.rmSync(clone); fs.mkdirSync(clone);
+  for (const name of fs.readdirSync(elsewhere).filter(n => n !== '.git')) fs.renameSync(join(elsewhere, name), join(clone, name));
+  fs.writeFileSync(join(clone, '.git'), `gitdir: ${join(elsewhere, '.git')}\n`);
+  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /symlink or not a directory/);
+});
+
+test('an unreadable recorded soul never lets another dispatched soul through', t => {
+  const f = fixture(t);
+  const intruder = join(f.d, 'agents', 'intruder', 'souls', 'x');
+  write(join(intruder, 'soul.yaml'), 'schemaVersion: 2\nname: intruder\nknowledge: oats.okf\n');
+  json(join(intruder, 'okf.json'), { version: 1, owner: 'other', owns: ['kb/peer'], reads: [] });
+  fs.rmSync(join(f.soul, 'soul.yaml'));
+  refused(f.run(['--plan', '--slug', 'x'], { extra: { OATS_SOUL: intruder } }), 'E_SOURCE', /intruder\) is not the soul this home's record was spawned from \(source\)/);
+});
+
+test('the digest binds the generated commit text and PR body: a changed incarnation needs a new --check', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const before = ok(f.run(['--check', '--slug', 'x']));
+  const rec = JSON.parse(fs.readFileSync(join(f.home, 'instance.json'), 'utf8'));
+  json(join(f.home, 'instance.json'), { ...rec, createdAt: '2020-01-01T00:00:00.000Z' });
+  const after = ok(f.run(['--check', '--slug', 'x']));
+  assert.notEqual(after.prBody, before.prBody); assert.notEqual(after.digest, before.digest);
+  refused(f.run(['--apply', '--slug', 'x', '--digest', before.digest]), 'E_DIGEST');
+  assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
+});
+
+test('the outgoing diff is raw text: Git attributes and text conversion cannot hide it', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); const clone = edit(f, plan);
+  write(join(clone, '.git', 'info', 'attributes'), '*.md -diff\n*.md diff=hide\n');
+  f.git(clone, 'config', 'diff.hide.textconv', 'true');
+  const [b] = ok(f.run(['--check', '--slug', 'x'])).bases;
+  assert.match(b.diff, /\+Retry budget is per request, not per connection\./); assert.doesNotMatch(b.diff, /Binary files/);
+});
+
+test('a clone failure reports a fixed classification, never the tool\'s own bytes', t => {
+  const f = fixture(t);
+  // A corrupt accepted object: Git fails with its own stderr (paths, ids).
+  const objects = join(f.origin, 'objects');
+  for (const d of fs.readdirSync(objects).filter(n => /^[0-9a-f]{2}$/.test(n))) for (const o of fs.readdirSync(join(objects, d))) { fs.rmSync(join(objects, d, o)); fs.writeFileSync(join(objects, d, o), 'PRIVATE_PAYLOAD_NIGHTJAR'); }
+  const e = refused(f.run(['--plan', '--slug', 'x']), 'E_BASE_UNAVAILABLE');
+  assert.doesNotMatch(e.message, /PRIVATE_PAYLOAD|original Git failure|fatal|error:/i, e.message);
+  assert.deepEqual(fs.readdirSync(join(f.home, 'proposals')), [], 'the staging directory is removed');
+});
+
+// Provenance v3 carries a version-2 soul too (subjects, no owner/owns/reads):
+// one writer (propose) and one parser (the maintainer's), both shapes.
+test('provenance v3: the writer and the parser agree on the node shape and the subjects shape', () => {
+  const fence = v => `x\n\n\`\`\`okf-proposal\n${JSON.stringify(v, null, 2)}\n\`\`\`\n`;
+  const bases = [{ alias: 'kb', base: { id: 'kb-1', root: '.', pr: { repository: 'acme/kb' } } }];
+  const src = decl => ({ soul: 'source', decl, record: { instance: 'src', createdAt: CREATED }, tasksProvider: null, proposer: { form: 'live', instance: 'src', alias: null } });
+  const nodes = provenanceBlock(src({ owner: 'source', owns: ['kb/expert'], reads: ['kb/peer', 'kb/expert'] }), bases, []);
+  assert.deepEqual(nodes.source, { soul: 'source', owner: 'source', instance: 'src', incarnation: CREATED, ownedNodes: ['kb/expert'], readNodes: ['kb/peer'], bases: [{ alias: 'kb', id: 'kb-1', kind: 'git', root: '.', repository: 'acme/kb' }] });
+  assert.equal(Object.hasOwn(nodes.source, 'subjects'), false);
+  const subjects = provenanceBlock(src({ subjects: ['product/oats-okf', 'team/knowledge'] }), bases, []);
+  assert.deepEqual([subjects.source.owner, subjects.source.subjects, subjects.source.ownedNodes, subjects.source.readNodes], [null, ['product/oats-okf', 'team/knowledge'], [], []]);
+  for (const v of [nodes, subjects, { ...subjects, source: { ...subjects.source, owner: 'source' } }]) {
+    const parsed = parseProvenance(fence(v)); assert.equal(parsed.valid, true, parsed.problems.join('; ')); assert.deepEqual(parsed.value, v);
+  }
+  const bad = (source, problem) => { const r = parseProvenance(fence({ ...subjects, source: { ...subjects.source, ...source } })); assert.equal(r.valid, false); assert.ok(r.problems.some(p => p.includes(problem)), r.problems.join('; ')); };
+  bad({ subjects: undefined }, 'source.owner must be the source soul');
+  bad({ subjects: [] }, 'non-empty list of distinct');
+  bad({ subjects: ['Product/x'] }, 'non-empty list of distinct');
+  bad({ subjects: ['a/b', 'a/b'] }, 'non-empty list of distinct');
+  bad({ ownedNodes: ['kb/expert'] }, 'must be [] when source.owner is null');
+  // subjects stay a v3 key only.
+  const v2 = parseProvenance(`\`\`\`okf-harvest\n${JSON.stringify({ version: 2, source: { ...nodes.source, incarnation: undefined, subjects: ['a/b'] }, evidence: [], tasks: nodes.tasks, harvester: { instance: 'h', alias: null } })}\n\`\`\`\n`);
+  assert.equal(v2.valid, false); assert.ok(v2.problems.some(p => p.includes('unknown key "subjects"')));
 });

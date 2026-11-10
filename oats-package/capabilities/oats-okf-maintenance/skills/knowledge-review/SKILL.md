@@ -51,7 +51,9 @@ It reads the PR with `gh` and returns:
 - the **provenance** parsed from the PR body's fenced block, with its shape
   validated: the source soul (name, owner, instance, owned/read nodes,
   bases) and the task refs, plus
-  - version 3 (fence `okf-proposal`, oats.okf 6): the source's incarnation,
+  - version 3 (fence `okf-proposal`, oats.okf 6): the source's incarnation
+    (and, for a soul declared by subjects, `source.subjects` with `owner`
+    possibly `null` and no owned or read nodes),
     the **proposer** (`live`: the instance itself; `recovery`: an operator
     proposing from a retired instance's recovery copy) and the evidence
     notes it relied on, with a SHA-256 for each note it read;

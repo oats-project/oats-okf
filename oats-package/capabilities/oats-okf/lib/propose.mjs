@@ -105,6 +105,11 @@ export function resolveSource(home, env = process.env) {
   const names = new Set(texts.map(([, t]) => soulName(t)));
   if (names.size !== 1 || names.has(null)) fail('E_SOURCE', 'the soul given (--soul, or the instance\'s own) is not the soul this home\'s record was spawned from');
   const soul = [...names][0];
+  // Bound to the record's own identity too, so an unreadable recorded soul
+  // never lets another dispatched soul through: the record's agent is the
+  // soul's name (a package soul's agent is <package>--<soul>).
+  const agent = typeof record.agent === 'string' ? record.agent : null;
+  if (!agent || (agent !== soul && !agent.endsWith(`--${soul}`))) fail('E_SOURCE', `the soul given (${soul}) is not the soul this home's record was spawned from (${agent ?? 'no agent recorded'})`);
   if (policy.harvest === 'off' || texts.some(([, t]) => OPTED_OUT.test(t))) fail('E_OPTED_OUT', `the soul ${soul} opts out (knowledge: { harvest: off } or { publish: off }): its instances never publish knowledge`);
   const legacyKeysIgnored = policy.harvest === 'unknown' ? retiredAdmission(record, texts.find(([which]) => which === 'recorded')?.[1], soul) : [];
   const { decl, bindings } = consultSource(root);
@@ -286,6 +291,22 @@ function evidence(source, notes) {
 }
 
 // ------------------------------------------------------------ Git
+/** The planned clone, as plan made it: real directories from the proposal
+ *  directory down (no symlink component), a self-contained `.git` directory
+ *  (no gitfile, symlinked or shared gitdir), and Git agreeing on both. Checked
+ *  before any Git read or write, so no mutation is redirected elsewhere. */
+function ownClone(dir, clone, alias) {
+  const bad = why => fail('E_PROPOSAL_FORMAT', `the clone of ${alias} is not the one plan made (${why}); never move or link it: plan a new proposal`);
+  for (const p of [dir, join(dir, 'work'), clone, join(clone, '.git')]) {
+    let st; try { st = fs.lstatSync(p); } catch { bad(`${relative(dir, p) || 'the proposal directory'} is missing`); }
+    if (!st.isDirectory()) bad(`${relative(dir, p) || 'the proposal directory'} is a symlink or not a directory`);
+  }
+  if (present(join(clone, '.git', 'commondir'))) bad('its .git shares another repository');
+  const real = fs.realpathSync(clone);
+  let top, gitDir;
+  try { top = git(clone, ['rev-parse', '--show-toplevel']); gitDir = git(clone, ['rev-parse', '--absolute-git-dir']); } catch { bad('Git cannot read it'); }
+  if (fs.realpathSync(top) !== real || fs.realpathSync(gitDir) !== join(real, '.git')) bad('Git resolves it elsewhere');
+}
 const gitRemote = (cwd, args) => git(cwd, args, { timeout: gitTimeoutMs() });
 function withIndex(clone, fn) {
   const scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-propose-'));
@@ -349,12 +370,15 @@ function validateTree(clone, owned, treeId) {
 }
 
 // ------------------------------------------------------------ outgoing texts
-function provenance(source, bases, ev) {
+/** The v3 provenance block. A version-2 soul declaration (subjects, no
+ *  owner/owns/reads) writes source.subjects, owner null and no nodes. */
+export function provenance(source, bases, ev) {
+  const decl = source.decl, owns = decl.owns ?? [], subjects = Array.isArray(decl.subjects) ? { subjects: [...decl.subjects] } : {};
   return {
     version: 3,
     source: {
-      soul: source.soul, owner: source.decl.owner, instance: source.record.instance, incarnation: source.record.createdAt,
-      ownedNodes: source.decl.owns, readNodes: source.decl.reads.filter(r => !source.decl.owns.includes(r)),
+      soul: source.soul, owner: decl.owner ?? null, instance: source.record.instance, incarnation: source.record.createdAt, ...subjects,
+      ownedNodes: owns, readNodes: (decl.reads ?? []).filter(r => !owns.includes(r)),
       bases: bases.map(b => ({ alias: b.alias, id: b.base.id, kind: 'git', root: b.base.root, repository: b.base.pr.repository })),
     },
     evidence: ev,
@@ -395,7 +419,7 @@ function prepare(source, dir, plan) {
     const owned = bases.find(b => b.alias === entry.alias);
     if (!owned) fail('E_SOURCE', `the plan's base ${entry.alias} is no longer an owned Git base; plan a new proposal`);
     const clone = join(dir, 'work', entry.alias);
-    if (!present(join(clone, '.git'))) fail('E_PROPOSAL_FORMAT', `the clone of ${entry.alias} is missing; plan a new proposal`);
+    ownClone(dir, clone, entry.alias);
     const accepted = entry.accepted;
     const scope = surface(clone, accepted, owned, source.decl, source.bindings);
     const treeId = workingTree(clone, accepted);
@@ -409,11 +433,14 @@ function prepare(source, dir, plan) {
     // the full outgoing history, the commit text and the PR body.
     const probe = git(clone, [...IDENTITY, 'commit-tree', treeId, '-p', accepted], { input: message });
     runHelper('screen', { repo: clone, base: accepted, head: probe, 'text-file': [commitFile, bodyFile], ...(terms ? { 'terms-file': terms } : {}) });
-    const diff = git(clone, ['diff', '--no-color', '--no-renames', '--no-ext-diff', accepted, probe], { trim: false, maxBuffer: 64 * 1024 * 1024 });
+    const diff = git(clone, ['diff', '--no-color', '--no-renames', '--no-ext-diff', '--text', '--no-textconv', accepted, probe], { trim: false, maxBuffer: 64 * 1024 * 1024 });
     results.push({ alias: entry.alias, clone, accepted, tree: treeId, owned, changed: list.map(c => `${c.status} ${c.path}`), diff, commitFile, bodyFile });
   }
   if (!results.some(r => r.changed.length)) fail('E_USAGE', 'nothing to propose: no owned base changed. If nothing passed the promotion test, record that in log.md and remove the proposal directory');
-  const digest = hash({ version: 1, bases: results.map(r => ({ alias: r.alias, accepted: r.accepted, tree: r.tree })), proposal: sha256(proposal.bytes), evidence: ev });
+  // The digest binds every byte --apply publishes: the trees, the proposal,
+  // the evidence, and the generated commit text and PR body themselves.
+  const digest = hash({ version: 2, bases: results.map(r => ({ alias: r.alias, accepted: r.accepted, tree: r.tree })), proposal: sha256(proposal.bytes), evidence: ev,
+    commitText: sha256(Buffer.from(message)), prBody: sha256(Buffer.from(body)) });
   return { proposal, evidence: ev, warnings, body, message, results, digest, terms };
 }
 
@@ -443,9 +470,9 @@ export function plan(source, slug) {
     for (const owned of bases) {
       const clone = join(staging, 'work', owned.alias);
       fs.mkdirSync(dirname(clone), { recursive: true, mode: 0o700 });
-      preflightLocalRepository(owned.base, owned.alias);
+      preflightLocalRepository(owned.base, owned.alias, { detail: false });
       try { gitRemote(dirname(clone), ['clone', '--quiet', '--no-tags', '--single-branch', '--branch', owned.base.acceptedBranch, '--', owned.base.repository, clone]); }
-      catch (e) { unavailable(owned.base, owned.alias, 'clone', e); }
+      catch (e) { unavailable(owned.base, owned.alias, 'clone', e, { detail: false }); }
       const accepted = git(clone, ['rev-parse', '--verify', `refs/remotes/origin/${owned.base.acceptedBranch}^{commit}`]);
       const scope = surface(clone, accepted, owned, source.decl, source.bindings);
       rows.push({ alias: owned.alias, accepted, root: owned.base.root, nodes: scope.nodes, surface: [...scope.paths.map(p => `${baseFile(owned.base, p)}/`), baseFile(owned.base, 'index.md')], duplicates: duplicates(owned.base) });
@@ -472,7 +499,7 @@ export function apply(source, slug, expected) {
   if (typeof expected !== 'string' || !/^[0-9a-f]{64}$/.test(expected)) fail('E_USAGE', '--apply needs --digest <the 64-hex digest --check printed>');
   const dir = proposalDir(source, slug);
   const p = prepare(source, dir, readPlan(dir));
-  if (p.digest !== expected) fail('E_DIGEST', 'the clone, proposal.md or a named note changed since --check (or the digest is not the one it printed): run --check again and read its diff before --apply');
+  if (p.digest !== expected) fail('E_DIGEST', 'the clone, proposal.md, a named note or the generated commit text or PR body changed since --check (or the digest is not the one it printed): run --check again and read its diff before --apply');
   // The publish directory is the attempt marker: one attempt per proposal.
   const publish = join(dir, 'publish');
   try { fs.mkdirSync(publish, { mode: 0o700 }); }
@@ -491,7 +518,7 @@ export function apply(source, slug, expected) {
       const terms = p.terms ? { 'terms-file': p.terms } : {};
       const committed = runHelper('commit', { repo: r.clone, base: r.accepted, head: r.accepted, branch, 'commit-file': r.commitFile, ...terms });
       const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
-        'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': r.bodyFile, ...terms });
+        'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': r.bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
       atomic(report, JSON.stringify({ ok: true, ...row }, null, 2) + '\n');
       published.push(row);

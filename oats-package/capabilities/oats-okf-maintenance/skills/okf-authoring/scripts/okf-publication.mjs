@@ -411,6 +411,13 @@ function recoverBase(o, attempts) {
   object(o.repo, tipId, 'commit');
   // A rewritten accepted branch is not something to replay onto.
   if (git(o.repo, ['merge-base', '--is-ancestor', old.base, tipId], { optional: true }) === null) unrecovered(attempts, 'not-fast-forward');
+  // oats.okf 6.0: a guarded file (the base's okf-base.json: node ownership and
+  // paths) that changed on the accepted branch invalidates the scope the
+  // proposer checked; the delta is never replayed past it.
+  if (o['guard-file']) {
+    const blob = at => { const id = git(o.repo, ['rev-parse', '--verify', '--quiet', `${at}:${o['guard-file']}`], { optional: true }); return id === null ? null : text(id).trim(); };
+    if (blob(old.base) !== blob(tipId)) unrecovered(attempts, 'guarded-file-changed');
+  }
   const staged = oid(text(git(o.repo, ['rev-parse', `${old.head}^{tree}`])).trim());
   let treeId;
   try { treeId = reconcileTree({ ...o, base: tipId, head: old.head }, staged); }
@@ -462,6 +469,7 @@ export function execute(command, o) {
   }
   if (command === 'create') {
     github(o);
+    if (o['guard-file'] !== undefined && (typeof o['guard-file'] !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*)*$/.test(o['guard-file']))) fail('E_USAGE');
     // okf-proposal/ (6.0, v3 body) or okf-harvest/ (5.x, v2 body), through 6.x.
     const prefix = PREFIXES.find(name => o.branch?.startsWith(`${name}/`));
     if (!prefix) fail('E_BRANCH');
@@ -572,7 +580,7 @@ const FLAGS = {
   'screen-tree': ['repo', 'head', 'root', 'terms-file'],
   screen: ['repo', 'base', 'head', 'text-file', 'terms-file'],
   commit: ['repo', 'base', 'head', 'branch', 'commit-file', 'terms-file'],
-  create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file'],
+  create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file', 'guard-file'],
   rewrite: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
   'amend-legacy': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
   merge: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file'],
@@ -588,7 +596,7 @@ function parse(args) {
     if (key === 'text-file') (o[key] ??= []).push(value);
     else { if (Object.hasOwn(o, key)) fail('E_USAGE'); o[key] = value; }
   }
-  for (const key of allowed) if (!['root', 'text-file', 'terms-file'].includes(key) && !o[key]) fail('E_USAGE');
+  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file'].includes(key) && !o[key]) fail('E_USAGE');
   if (o.repo) o.repo = resolve(o.repo); return { command, o };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
