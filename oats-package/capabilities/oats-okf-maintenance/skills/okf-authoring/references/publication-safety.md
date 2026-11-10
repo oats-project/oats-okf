@@ -164,8 +164,16 @@ old-head compare-and-swap. No raw commit summary is printed. `create` preserves 
 fresh `okf-harvest/<date>-<UUID>` key, empty expected-old lease and new-ref
 confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
-A moving base refuses; an independent remote base can still move after that
-check, so this is not an atomic lock of the whole forge. The helper rechecks
+A base that moved before the push is recovered inside `create`, at most three
+times: it fetches the accepted branch (writing no local ref but the CAS
+below), requires a fast-forward, reconciles the PR's delta onto the new tip
+as `rewrite` does, commits it with the original message, moves the local
+branch by compare-and-swap and screens the new range again before pushing.
+The result names `base` (the tip the PR is parented on) and `recovered`.
+Exhausted retries, a conflict, a non-fast-forward tip, nothing left to
+publish or a failed fetch refuse `E_BASE_MOVED` with a fixed `recover`
+diagnostic. An independent remote base can still move after the last check,
+so this is not an atomic lock of the whole forge. The helper rechecks
 after label creation and reads back the new PR's identity/head before reporting
 success. GitHub create/close have no atomic head predicate: movement detected
 after a write is `E_PR_UNCERTAIN`, not success or a promise of zero effects.

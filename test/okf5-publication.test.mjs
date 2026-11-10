@@ -1715,12 +1715,18 @@ function notRecovered(r, attempts, reason) {
 
 test('create recovers one pre-push accepted-tip move onto the new tip', t => {
   const { f, head } = recoveryFixture(t);
-  const [tip] = writerCommits(f, [({ put }) => put('expert/independent.md', 'Independently accepted knowledge\n')]);
+  const [tip] = writerCommits(f, [({ put }) => {
+    put('expert/independent.md', 'Independently accepted knowledge\n');
+    // Accepted-only content the screen would refuse if it were in the outgoing
+    // range: success proves the range is newTip..head, not oldBase..head.
+    put('code/accepted-fixture.txt', `${SECRET}\n`);
+  }]);
   moveMain(f, tip);
   assert.notEqual(f.rawGit(f.repo, ['cat-file', '-e', tip]).status, 0, 'only the recovery fetch makes the new tip local');
   const out = success(f.run('create', head));
   assert.equal(out.recovered, 1); recoveredPr(f, out, head, tip);
   assert.equal(f.git(f.remote, 'show', `${out.head}:expert/independent.md`), 'Independently accepted knowledge');
+  assert.equal(f.git(f.remote, 'rev-parse', `${out.head}:code/accepted-fixture.txt`), f.git(f.remote, 'rev-parse', `${tip}:code/accepted-fixture.txt`));
 });
 
 test('the recovery fetch writes no local ref through configured fetch destinations', t => {
