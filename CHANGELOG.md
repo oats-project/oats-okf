@@ -133,7 +133,8 @@ the release lane's.
 - Add `proposal-review`; keep `harvest-review` beside it only while 5.x
   `okf-harvest` PRs may still open (step 4 below).
 - Protect every Git base's accepted branch; give proposing hosts
-  branch-create access or use the fork flow; optionally set
+  branch-create access on the knowledge repository (same-repository branches
+  only: a fork PR is refused by the maintainer's helper); optionally set
   `screen-terms-file`.
 - No change to bindings, `okf.json`, `okf-base.json` or any handled error
   code. Open `okf-harvest` PRs stay reviewable.

@@ -786,7 +786,10 @@ unknown operation.
   knowledge maintainer's account ([The knowledge maintainer](#the-knowledge-maintainer)).
   `oats okf bases` reports `protection`.
 - **Give proposing hosts branch-create access** on the knowledge repository
-  (their `gh`/Git account), or use the fork flow; never accepted-branch push.
+  (their `gh`/Git account); never accepted-branch push. 6.0 supports
+  same-repository proposal branches only: `oats okf propose` pushes to the
+  bound repository, and the maintainer's publication helper refuses a fork
+  (cross-repository) PR (`E_PR_STATE`), so a fork flow is not an alternative.
 - **Optional:** `screen-terms-file`, a host deny list for the content screen.
 - **No change** to bindings, `okf.json`, `okf-base.json`, the soul opt-out
   (now also spelled `publish: off`) or any handled error code. A soul

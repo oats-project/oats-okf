@@ -47,8 +47,9 @@ added with: read it with `oats trigger show <id> --json` and repeat its
 - **Proposers run anywhere**: working agents open their own proposal PRs
   (`oats okf propose`) from their own deployment; the review host need not
   be one of them. Each proposing host needs a `gh`/Git account that can
-  create branches on the KB repository (or use a fork flow), never one that
-  can push the accepted branch.
+  create branches on the KB repository, never one that can push the
+  accepted branch. Forks are not supported: proposals are same-repository
+  branches, and the publication helper refuses a fork PR (`E_PR_STATE`).
 
 ## 2. The self-approval limit
 
@@ -67,7 +68,7 @@ The maintainer is the only gate: the knowledge base changes only
 through PRs the knowledge maintainer merges. **Every Git base's accepted
 branch must refuse direct pushes and force-pushes and accept changes by pull
 request only, merged by the knowledge maintainer's account.** Proposing
-hosts then need only branch-create access (or a fork flow); none of them can
+hosts then need only branch-create access on the KB repository; none of them can
 change the accepted branch.
 
 On GitHub, add a **branch ruleset** on the KB repository (Settings → Rules →
