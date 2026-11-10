@@ -742,6 +742,32 @@ test('long runs of blank lines in the root index, around its Subjects section, k
   assert.ok(Date.now()-started<2000);
 });
 
+test('a long fence run before CR, U+2028 or U+2029 in the root index keeps regeneration and strict validation linear (``` and ~~~)',t=>{
+  for(const [ch,end] of [['`','\u2028'],['`','\u2029'],['`','\r'],['~','\u2028'],['~','\r']]) {
+    const dir=bridged(t),root=join(dir,'index.md');
+    fs.appendFileSync(root,`\n${ch.repeat(400000)}${end}x\n`);
+    for(const args of [[REINDEX,dir],[REINDEX,dir,'--check'],[VALIDATE,dir,'--strict','--json']]) {
+      const started=Date.now(),r=spawnSync(process.execPath,args,{encoding:'utf8',timeout:20000});
+      assert.equal(r.error,undefined,`${JSON.stringify(end)} ${args.slice(1).join(' ')}: ${r.error}`);
+      assert.ok(Date.now()-started<6000,`${JSON.stringify(end)} ${args.slice(1).join(' ')} took ${Date.now()-started} ms`);
+      assert.equal(r.status,0,`${JSON.stringify(end)} ${args.slice(1).join(' ')}: ${r.stdout.slice(0,300)}${r.stderr.slice(0,300)}`);
+    }
+  }
+});
+
+test('the standalone validator refuses a linked generated-view directory on a bridged base (never opens what it points at, a FIFO included); a plain base keeps 5.8\'s walk',t=>{
+  const dir=bridged(t),outside=join(dirname(dir),'outside-okf');
+  fs.renameSync(join(dir,'subjects/system/okf'),outside);
+  fs.rmSync(join(outside,'index.md'));assert.equal(spawnSync('mkfifo',[join(outside,'index.md')]).status,0);
+  fs.symlinkSync(outside,join(dir,'subjects/system/okf'));
+  const started=Date.now(),r=spawnSync(process.execPath,[VALIDATE,dir,'--strict','--json'],{encoding:'utf8',timeout:20000});
+  assert.equal(r.error,undefined,String(r.error));assert.ok(Date.now()-started<6000);
+  assert.equal(r.status,1);assert.ok(JSON.parse(r.stdout).errors.some(e=>/^subjects\/system\/okf: a symlink; generated indexes are read and written only/.test(e)),r.stdout);
+  const plain=join(tmp(t,'okf6-plain-link-'),'base');writePlainBase(plain);
+  fs.symlinkSync(join(plain,'expert'),join(plain,'linked'));
+  assert.equal(validate(plain).out.layout,'plain');assert.deepEqual(validate(plain).out.errors,[],'5.8 skips a linked directory on a plain base');
+});
+
 test('`oats okf verdicts --check`: identity refuses a rejected id without reconsiders (E_VERDICT, the reason); the exact title hash lists candidates',t=>{
   const f=deployment(t),claim=join(f.dir,'claim.md');
   write(claim,`---\ntype: Decision\ntitle: Something new\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n`);

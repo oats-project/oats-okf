@@ -19,7 +19,7 @@
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve, dirname, posix } from "node:path";
-import { parseFrontmatter, bridged, subjectOfPath, place, KINDS, VERDICTS, SUBJECT_REF, titleHash, staleViews, textKey } from "./okf-reindex.mjs";
+import { parseFrontmatter, bridged, subjectOfPath, place, KINDS, VERDICTS, SUBJECT_REF, titleHash, staleViews, textKey, assertSafeTree } from "./okf-reindex.mjs";
 
 const args = process.argv.slice(2);
 const strict = args.includes("--strict");
@@ -41,6 +41,11 @@ const files = [];
 const errors = [], warnings = [];
 let subjectLayout = false;
 try { subjectLayout = bridged(root); } catch (e) { if (!["E_PATH", "E_TOO_LARGE"].includes(e.code)) throw e; errors.push(e.message); }
+// A base with the subject layout is read only as plain directories and regular
+// single-link files (as the regenerator writes it): a linked directory or a
+// FIFO is refused, never followed or opened by the freshness check.
+let safeTree = true;
+if (subjectLayout) try { assertSafeTree(root); } catch (e) { if (e.code !== "E_PATH") throw e; errors.push(e.message); safeTree = false; }
 const rel = (p) => relative(root, p).split("\\").join("/");
 const isReserved = (p) => ["index.md", "log.md"].includes(posix.basename(rel(p)));
 
@@ -119,7 +124,7 @@ if (subjectLayout) {
     else if (ids.has(textKey(m.id))) errors.push(`${r}: id ${m.id} is also ${ids.get(textKey(m.id))}`);
     else ids.set(textKey(m.id), r);
   }
-  if (strict) {
+  if (strict && safeTree) {
     try {
       const metas = new Map([...concepts].filter(([, c]) => !c.reserved).map(([r, c]) => [r, c.meta]));
       for (const s of staleViews(root, metas)) warnings.push(`${s.path}: generated index is ${s.status}; run okf-reindex.mjs`);

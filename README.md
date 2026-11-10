@@ -303,7 +303,9 @@ the end.
 The regenerator refuses (`E_PATH`, exit 2), before reading or writing, a
 base that holds a symlink, a non-regular file or a file with more than one
 link, and writes each generated file through a fresh temporary file renamed
-over it, so a checked-out base cannot redirect a write outside itself. It
+over it, so a checked-out base cannot redirect a write outside itself (the
+validator refuses the same trees on a base with the subject layout, with an
+error, rather than follow them). It
 also refuses a file name holding a backslash, and never links a path that a
 reader would resolve to another file (spaces, parentheses, angle brackets,
 `?`, `#` or `%`): such a base does not validate with `--strict`. Every

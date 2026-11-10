@@ -349,17 +349,30 @@ export function outsideFences(lines) {
   const text = [], opens = [];
   let fence = null, openedAt = -1;
   lines.forEach((l, i) => {
+    const run = fenceRun(l);
     if (fence) {
-      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(l);
-      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = null;
+      // closed by the same character, at least as long, then only spaces/tabs
+      if (run && l[run.at] === fence.char && run.length >= fence.length && /^[ \t]*$/.test(l.slice(run.at + run.length))) fence = null;
       text.push(false); opens.push(false);
       return;
     }
-    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);
-    if (open && !(open[1][0] === "`" && open[2].includes("`"))) { fence = open[1]; openedAt = i; text.push(false); opens.push(true); return; }
+    // an info string after ``` holds no backtick
+    if (run && !(l[run.at] === "`" && l.includes("`", run.at + run.length))) { fence = { char: l[run.at], length: run.length }; openedAt = i; text.push(false); opens.push(true); return; }
     text.push(true); opens.push(false);
   });
   return { text, opens, unclosed: fence ? openedAt : -1 };
+}
+/** A line's leading fence run (up to three spaces, then three or more of one
+ *  of ` or ~), by cursor: → { at, length } or null. (A regex letting the run
+ *  compete with the rest of the line backtracks quadratically.) */
+function fenceRun(line) {
+  let at = 0;
+  while (at < 3 && line[at] === " ") at++;
+  const c = line[at];
+  if (c !== "`" && c !== "~") return null;
+  let end = at;
+  while (line[end] === c) end++;
+  return end - at >= 3 ? { at, length: end - at } : null;
 }
 export function withSubjectsSection(text) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
