@@ -843,6 +843,16 @@ for(const [name,mutate,rule] of SCOPE) test(`propose --check, version 2: E_SCOPE
   assert.throws(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before}),e=>e.code==='E_SCOPE' && rule.test(e.message),name);
 });
 
+test('propose --check, version 2: many long supersedes items keep the scope check linear (keyed by textKey), and a real target still matches',t=>{
+  const p=proposal(t),items=Array.from({length:2500},(_,i)=>`${'x'.repeat(17000)}${String(i).padStart(6,'0')}`);
+  write(join(p.root,'claims/decisions/new.md'),NEW_CLAIM.replace('description: Decided now.',`description: Decided now.\nabout: [system/okf]\nsupersedes: [${items.join(', ')}, /expert/decision.md]`));
+  edit(join(p.root,'expert/decision.md'),'id: dec-000000000001','id: dec-000000000001\nstatus: superseded');
+  prepareSubjectProposal({root:p.root,decl:V2,ownedNodes:{},changes:p.changes()});
+  const started=Date.now();
+  assert.doesNotThrow(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before}));
+  assert.ok(Date.now()-started<4000,`checkWriteSurface took ${Date.now()-started} ms`);
+});
+
 test('propose --check, version 2: status: superseded only on a concept one of the proposal\'s claims supersedes (by path or id)',t=>{
   const cases=[
     ['no superseding claim',null,true],

@@ -109,7 +109,8 @@ function superseded(root, changes) {
     const fm = parseFrontmatter(read(root, p) ?? '');
     if (!fm.parsed || fm.meta.status === 'superseded') continue;
     const list = Array.isArray(fm.meta.supersedes) ? fm.meta.supersedes : typeof fm.meta.supersedes === 'string' && fm.meta.supersedes ? [fm.meta.supersedes] : [];
-    for (const ref of list) out.add(String(ref).trim().replace(/^\/+/, ''));
+    // keyed by textKey: supersedes items are free text (many long ones would make a plain Set quadratic)
+    for (const ref of list) out.add(textKey(String(ref).trim().replace(/^\/+/, '')));
   }
   return out;
 }
@@ -145,7 +146,7 @@ export function checkWriteSurface({ root, decl, ownedNodes, changes, before }) {
     if (status === 'M' && place(p) === 'claim' && onlySupersedes(before(p), after)) {
       // Only a concept one of the proposal's own claims supersedes, by path or id.
       const id = parseFrontmatter(after).meta.id;
-      if (supersedes.has(p) || (typeof id === 'string' && id && supersedes.has(id))) continue;
+      if (supersedes.has(textKey(p)) || (typeof id === 'string' && id && supersedes.has(textKey(id)))) continue;
       problems.push(`${p}: status: superseded only on a concept a claim of this proposal supersedes (supersedes: [/${p}] or its id)`);
       continue;
     }
