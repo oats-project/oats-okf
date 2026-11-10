@@ -250,6 +250,16 @@ const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
  *  another's digest. */
 export const KEY_CHARS = 16000;
 export const textKey = (text) => text.length <= KEY_CHARS ? `=${text}` : `#${createHash("sha256").update(text).digest("hex")}`;
+/** Text without its leading and/or trailing newlines, by cursor: an
+ *  unanchored `/\n+$/` retries a long internal run of newlines from each of
+ *  them (quadratic on an untrusted root index). */
+export function trimNewlines(text, { start = true, end = true } = {}) {
+  let a = 0, b = text.length;
+  if (start) while (a < b && text[a] === "\n") a++;
+  if (end) while (b > a && text[b - 1] === "\n") b--;
+  return text.slice(a, b);
+}
+const lastLine = (lines) => trimNewlines(lines.join("\n"), { start: false }) + "\n";
 export function generate(concepts, rootIndex = "") {
   const subjects = new Map();
   for (const [p, meta] of concepts) {
@@ -302,7 +312,7 @@ export function generate(concepts, rootIndex = "") {
       if (kinds.has(textKey(""))) lines.push(...kinds.get(textKey("")).entries, "");
       for (const { kind, entries } of [...kinds.values()].filter((k) => k.kind).sort((a, b) => byText(a.kind, b.kind))) lines.push(`### ${kind}`, "", ...entries, "");
     }
-    out.set(viewFile(ref), lines.join("\n").replace(/\n+$/, "") + "\n");
+    out.set(viewFile(ref), lastLine(lines));
   }
   // subjects/index.md
   const idx = ["# Subjects", "", `${GENERATED_NOTE} What this base's knowledge is about, by kind. Each subject's claims are listed in its generated index, \`subjects/<kind>/<slug>/index.md\`.`, ""];
@@ -312,7 +322,7 @@ export function generate(concepts, rootIndex = "") {
     idx.push(`## ${KIND_HEADINGS[kind]}`, "", ...refs.map((r) => entry(one(subjects.get(r).meta.title) || subjects.get(r).slug, subjects.get(r).path, subjects.get(r).meta.description)), "");
   }
   if (!subjects.size) idx.push("No subjects yet.", "");
-  out.set("subjects/index.md", idx.join("\n").replace(/\n+$/, "") + "\n");
+  out.set("subjects/index.md", lastLine(idx));
   // verdicts/index.md
   const verdicts = [...concepts].filter(([p]) => place(p) === "verdicts").sort(([a], [b]) => byText(a, b));
   const vidx = ["# Verdicts", "", `${GENERATED_NOTE} The knowledge maintainer's record of the claims it rejected, superseded or closed as duplicates, one line each: verdict; claim type; title hash; claim description. \`oats okf verdicts --check <claim file>\` reads it.`, ""];
@@ -323,7 +333,7 @@ export function generate(concepts, rootIndex = "") {
     vidx.push(entry(one(meta?.["claim-title"]) || fallbackTitle(p), p, fields.join("; ")));
   }
   if (!verdicts.length) vidx.push("No verdicts yet.");
-  out.set("verdicts/index.md", vidx.join("\n").replace(/\n+$/, "") + "\n");
+  out.set("verdicts/index.md", lastLine(vidx));
   out.set("index.md", withSubjectsSection(rootIndex));
   return out;
 }
@@ -369,8 +379,8 @@ export function withSubjectsSection(text) {
     before = lines.slice(0, start).join("\n");
     after = lines.slice(end).join("\n");
   }
-  before = before.replace(/\n+$/, "");
-  after = after.replace(/^\n+/, "").replace(/\n+$/, "");
+  before = trimNewlines(before, { start: false });
+  after = trimNewlines(after);
   return `${before ? `${before}\n\n` : ""}${ROOT_SECTION}${after ? `\n${after}\n` : ""}`;
 }
 

@@ -728,6 +728,20 @@ test('a root index ending in an unclosed fence (``` or ~~~): the Subjects sectio
   assert.ok(kept.endsWith('```\ncode\n```\n'),kept);assert.equal(withSubjectsSection(kept),kept);
 });
 
+test('long runs of blank lines in the root index, around its Subjects section, keep regeneration and strict validation linear',t=>{
+  const dir=bridged(t),root=join(dir,'index.md'),blank='\n'.repeat(200000);
+  const text=fs.readFileSync(root,'utf8').replace('# Project knowledge\n',`# Project knowledge\n${blank}Text after blank lines.\n`).replace('## Subjects\n',`${blank}## Subjects\n`)+`${blank}## After\n${blank}Trailing text.\n${blank}`;
+  fs.writeFileSync(root,text);
+  for(const args of [[REINDEX,dir],[REINDEX,dir,'--check'],[VALIDATE,dir,'--strict','--json']]) {
+    const started=Date.now(),r=spawnSync(process.execPath,args,{encoding:'utf8',timeout:20000});
+    assert.equal(r.error,undefined,`${args.slice(1).join(' ')}: ${r.error}`);assert.ok(Date.now()-started<6000,`${args.slice(1).join(' ')} took ${Date.now()-started} ms`);
+    assert.equal(r.status,0,`${args.slice(1).join(' ')}: ${r.stdout.slice(0,300)}${r.stderr.slice(0,300)}`);
+  }
+  assert.ok(fs.readFileSync(root,'utf8').includes('Trailing text.'));
+  const started=Date.now();withSubjectsSection('# Root\n'+blank+'Text\n## Subjects\n\nx\n'+blank+'## After\n'+blank+'tail\n');
+  assert.ok(Date.now()-started<2000);
+});
+
 test('`oats okf verdicts --check`: identity refuses a rejected id without reconsiders (E_VERDICT, the reason); the exact title hash lists candidates',t=>{
   const f=deployment(t),claim=join(f.dir,'claim.md');
   write(claim,`---\ntype: Decision\ntitle: Something new\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n`);
