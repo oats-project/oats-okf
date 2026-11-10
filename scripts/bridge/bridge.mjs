@@ -116,14 +116,16 @@ const TYPES = {
 const BRIDGE_KEYS = ['about', 'kind', 'status', 'decided-by', 'id'];
 // Reviewed overrides of the type mapping, keyed by base-relative path and applied after it. Each entry is a
 // judgement the base's gate made on the bridge PR; every path must exist (a missing file fails the run).
-// Keys allowed: status, decided-by.
+// `type` is the reviewed source type, a precondition (a retyped file refuses the stale override); `set` holds the
+// metadata applied, keys status and decided-by only.
 const OVERRIDES = {
   // A Roadmap maps to status: proposed, but these two record decisions a human took (the base's gate on #342).
-  'nodes/oats-maintainer/stewardship/coordination-redesign-precedes-adaptive-onboarding.md': { status: 'decided', 'decided-by': 'human' },
-  'nodes/oats-maintainer/stewardship/direct-knowledge-proposals-retain-maintainer-review.md': { status: 'decided', 'decided-by': 'human' },
+  'nodes/oats-maintainer/stewardship/coordination-redesign-precedes-adaptive-onboarding.md': { type: 'Roadmap', set: { status: 'decided', 'decided-by': 'human' } },
+  'nodes/oats-maintainer/stewardship/direct-knowledge-proposals-retain-maintainer-review.md': { type: 'Roadmap', set: { status: 'decided', 'decided-by': 'human' } },
 };
 for (const [rel, o] of Object.entries(OVERRIDES)) {
-  assert(Object.keys(o).every(k => ['status', 'decided-by'].includes(k)), `override ${rel}: only status and decided-by may be overridden`);
+  assert(Object.keys(o).sort().join() === 'set,type' && typeof o.type === 'string', `override ${rel}: needs exactly a type precondition and a set`);
+  assert(Object.keys(o.set).every(k => ['status', 'decided-by'].includes(k)), `override ${rel}: only status and decided-by may be overridden`);
   assert(fs.existsSync(path.join(BASE, rel)), `override names a missing concept: ${rel} (the reviewed overrides table in bridge.mjs must be updated)`);
 }
 
@@ -219,7 +221,8 @@ for (const rel of conceptPaths) {
   const type = scalar(lines, 'type', rel);
   assert(TYPES[type], `${rel}: unmapped type ${type}`);
   const [claimType, kind, mappedStatus, prefix] = TYPES[type];
-  const override = OVERRIDES[rel] ?? {};
+  if (OVERRIDES[rel]) assert.equal(type, OVERRIDES[rel].type, `override ${rel} was reviewed for type ${OVERRIDES[rel].type}, the file is now ${type}: re-review the overrides table in bridge.mjs`);
+  const override = OVERRIDES[rel]?.set ?? {};
   const status = override.status ?? mappedStatus;
   const title = scalar(lines, 'title', rel), description = scalar(lines, 'description', rel);
   assert(title && description, `${rel}: title and description are required`);

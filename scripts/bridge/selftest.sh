@@ -70,6 +70,10 @@ grep -q '^\* \[A workspace has a default team' "$T/c/knowledge/subjects/workstre
 fresh "$BASE"; git -C "$T/c" rm -q knowledge/nodes/oats-maintainer/stewardship/direct-knowledge-proposals-retain-maintainer-review.md
 expect_fail "bridge: an override names a missing concept" node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX"
 grep -q 'override names a missing concept' "$T/out" && echo "ok: the missing override fails loudly" || { echo "FAIL: wrong refusal for a missing override"; exit 1; }
+fresh "$BASE"; O=knowledge/nodes/oats-maintainer/stewardship/direct-knowledge-proposals-retain-maintainer-review.md
+sed -i 's/^type: Roadmap$/type: Reference/' "$T/c/$O"; grep -q '^type: Reference$' "$T/c/$O"
+expect_fail "bridge: an override on a retyped concept" node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX"
+grep -q 'was reviewed for type Roadmap, the file is now Reference' "$T/out" && [ "$(git -C "$T/c" status --porcelain)" = " M $O" ] && echo "ok: a retyped override fails loudly and writes nothing" || { echo "FAIL: retyped override"; exit 1; }
 fresh "$BASE"; sed -i 's/^tags: \[/tags: [{x}, /' "$T/c/$D"
 expect_fail "bridge: a tag list the reader cannot parse" node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX"
 fresh "$BASE"; sed -i 's/^\(description: .*\)$/\1\nid: dec-000000000000/' "$T/c/$D"
