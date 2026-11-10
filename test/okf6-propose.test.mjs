@@ -51,7 +51,7 @@ console.error('unsupported fixture gh call'); process.exit(97);
 /** A deployment: one Git base `kb` (nodes expert owned by `source`, peer by
  *  `other`) in a local bare remote, the soul `source` owning kb/expert and
  *  reading kb/peer, and its live instance home `src` with a spawn policy. */
-function fixture(t, { policy = { version: 1, harvest: 'on', reason: 'default' }, soulYaml = 'schemaVersion: 2\nname: source\nknowledge: oats.okf\n', record = {}, settings = {} } = {}) {
+function fixture(t, { policy = { version: 1, harvest: 'on', reason: 'default' }, soulYaml = 'schemaVersion: 2\nname: source\nknowledge: oats.okf\n', record = {}, settings = {}, root = '.' } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf6-propose-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const d = join(dir, 'deployment'), home = join(d, 'agents', 'source', 'instances', 'src'), soul = join(d, 'agents', 'source', 'souls', 'abc');
@@ -60,13 +60,13 @@ function fixture(t, { policy = { version: 1, harvest: 'on', reason: 'default' },
   // The accepted base: provisioned in place by init, then committed and pushed.
   const seed = join(dir, 'seed'), bindingsFile = join(d, 'okf-bindings.json'), stateDir = join(dir, 'state');
   json(join(dir, 'nodes.json'), { expert: { path: 'expert', owner: 'source' }, peer: { path: 'peer', owner: 'other' } });
-  json(join(dir, 'seed-bindings.json'), { version: 1, stateDir: join(dir, 'seed-state'), bases: { kb: { id: 'kb-1', kind: 'directory', path: seed } } });
+  json(join(dir, 'seed-bindings.json'), { version: 1, stateDir: join(dir, 'seed-state'), bases: { kb: { id: 'kb-1', kind: 'directory', path: root === '.' ? seed : join(seed, root) } } });
   initBase(loadBindings(join(dir, 'seed-bindings.json')), 'kb', join(dir, 'nodes.json'), undefined, { confirm: true });
   const env = { HOME: user, PATH: `${bin}:${join(dir, 'ghbin')}:${dirname(process.execPath)}:/usr/bin:/bin`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LANG: 'C' };
   const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8' }).trim();
   git(seed, 'init', '-q', '-b', 'main'); git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'accepted');
   git(dir, 'clone', '-q', '--bare', seed, origin);
-  json(bindingsFile, { version: 1, stateDir, bases: { kb: { id: 'kb-1', kind: 'git', repository: origin, root: '.', acceptedBranch: 'main', pr: { repository: 'acme/kb' } } } });
+  json(bindingsFile, { version: 1, stateDir, bases: { kb: { id: 'kb-1', kind: 'git', repository: origin, root, acceptedBranch: 'main', pr: { repository: 'acme/kb' } } } });
   write(join(soul, 'soul.yaml'), soulYaml);
   json(join(soul, 'okf.json'), { version: 1, owner: 'source', owns: ['kb/expert'], reads: ['kb/peer'] });
   json(join(home, 'instance.json'), { agent: 'source', kind: 'persistent', instance: 'src', home, soulDir: soul, createdAt: CREATED,
@@ -101,8 +101,8 @@ const refused = (r, code, pattern) => {
 };
 const PROPOSAL = (notes = ['notes/retry.md']) => `# OKF proposal: retry budget is per request\n\n## What\nA decision in kb/expert: retries are budgeted per request.\n\n## Why\nA future instance would otherwise size budgets per connection.\n\n## Evidence\nObserved in the load test of the retry work.\n\n## Backing notes\n${notes.map(n => `- ${n}`).join('\n')}\n`;
 /** Write one concept into the clone, reachable from the node index, and fill proposal.md. */
-function edit(f, plan, { concept = 'Retry budget is per request, not per connection.\n', path = 'expert/retry-budget.md', proposal = PROPOSAL() } = {}) {
-  const clone = plan.bases[0].clone;
+function edit(f, plan, { concept = 'Retry budget is per request, not per connection.\n', path = 'expert/retry-budget.md', proposal = PROPOSAL(), root = '.' } = {}) {
+  const clone = root === '.' ? plan.bases[0].clone : join(plan.bases[0].clone, root);
   write(join(clone, path), `---\ntype: Decision\ntitle: Retry budget is per request\ndescription: Retries are budgeted per request.\n---\n\n${concept}`);
   if (path.startsWith('expert/')) fs.appendFileSync(join(clone, 'expert', 'index.md'), `\n* [Retry budget is per request](${path.slice('expert/'.length)}) - Retries are budgeted per request.\n`);
   fs.writeFileSync(join(plan.proposal, 'proposal.md'), proposal);
@@ -484,6 +484,44 @@ test('a clone that is a symlink, or whose .git is a gitfile, is refused before a
   for (const name of fs.readdirSync(elsewhere).filter(n => n !== '.git')) fs.renameSync(join(elsewhere, name), join(clone, name));
   fs.writeFileSync(join(clone, '.git'), `gitdir: ${join(elsewhere, '.git')}\n`);
   refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /symlink or not a directory/);
+});
+
+test('Git\'s writable state must stay inside the clone: symlinked refs or objects, or an alternate store, are refused', t => {
+  for (const [inside, check] of [['refs', 'apply'], ['objects', 'check'], ['refs/heads', 'check'], ['config', 'check']]) {
+    const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); const clone = edit(f, plan);
+    const { digest } = ok(f.run(['--check', '--slug', 'x']));
+    const outside = join(f.dir, `outside-${inside.replace('/', '-')}`);
+    fs.renameSync(join(clone, '.git', inside), outside); fs.symlinkSync(outside, join(clone, '.git', inside));
+    const before = fs.statSync(outside).isDirectory() ? fs.readdirSync(outside, { recursive: true }).sort() : null;
+    refused(f.run(check === 'apply' ? ['--apply', '--slug', 'x', '--digest', digest] : ['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', new RegExp(`\\.git/${inside} is a symlink`));
+    if (before) assert.deepEqual(fs.readdirSync(outside, { recursive: true }).sort(), before, `nothing written under the outside ${inside}`);
+    assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
+  }
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); const clone = edit(f, plan);
+  write(join(clone, '.git', 'objects', 'info', 'alternates'), `${join(f.origin, 'objects')}\n`);
+  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /shares another repository \(objects\/info\/alternates\)/);
+});
+
+test('a failing Git command on the clone reports E_GIT with the subcommand only, never Git\'s or a filter\'s output', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); const clone = edit(f, plan);
+  write(join(clone, '.git', 'info', 'attributes'), '*.md filter=leak\n');
+  f.git(clone, 'config', 'filter.leak.clean', "printf 'PRIVATE_PAYLOAD_NIGHTJAR' >&2; exit 1");
+  f.git(clone, 'config', 'filter.leak.required', 'true');
+  const e = refused(f.run(['--check', '--slug', 'x']), 'E_GIT', /^git add failed on a proposal clone \(exit \d+\); Git's own output is withheld/);
+  assert.doesNotMatch(JSON.stringify(e), /PRIVATE_PAYLOAD|fatal|error:|filter/);
+});
+
+test('a base root with a space publishes end to end, and its okf-base.json guards a base-move recovery', t => {
+  const root = 'knowledge base', f = fixture(t, { root }), plan = ok(f.run(['--plan', '--slug', 'x']));
+  assert.deepEqual(plan.bases[0].surface, [`${root}/expert/`, `${root}/index.md`]);
+  edit(f, plan, { root });
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  // An unrelated accepted change: recovered past, with the guard file unchanged.
+  const writer = join(f.dir, 'writer'); f.git(f.dir, 'clone', '-q', f.origin, writer);
+  fs.appendFileSync(join(writer, root, 'peer', 'index.md'), '\n'); f.git(writer, 'commit', '-qam', 'unrelated'); f.git(writer, 'push', '-q', 'origin', 'HEAD:main');
+  const [pr] = ok(f.run(['--apply', '--slug', 'x', '--digest', digest])).prs;
+  assert.equal(pr.recovered, 1);
+  assert.ok(f.git(f.dir, '--git-dir', f.origin, 'ls-tree', '-r', '--name-only', pr.head).split('\n').includes(`${root}/expert/retry-budget.md`));
 });
 
 test('an unreadable recorded soul never lets another dispatched soul through', t => {

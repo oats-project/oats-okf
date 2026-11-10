@@ -16,7 +16,7 @@ description: >-
 # Reviewing one knowledge PR
 
 You were spawned for ONE pull request on a knowledge-base repository, usually
-by the `proposal-review` trigger (`harvest-review` is its old name). You
+by the `proposal-review` trigger (or `harvest-review`, for a 5.x PR). You
 review it, settle it and retire. **You gate every merge**: the knowledge base
 changes only through a PR you merged. Since oats.okf 6.0 the working instance
 proposed it itself (`oats okf propose`, label `okf-proposal`). The proposer
@@ -52,8 +52,9 @@ It reads the PR with `gh` and returns:
   validated: the source soul (name, owner, instance, owned/read nodes,
   bases) and the task refs, plus
   - version 3 (fence `okf-proposal`, oats.okf 6): the source's incarnation
-    (and, for a soul declared by subjects, `source.subjects` with `owner`
-    possibly `null` and no owned or read nodes),
+    (and, from a later release's soul declared by subjects,
+    `source.subjects` with `owner` possibly `null` and no owned or read
+    nodes; review its claims against the PR's changed paths as usual),
     the **proposer** (`live`: the instance itself; `recovery`: an operator
     proposing from a retired instance's recovery copy) and the evidence
     notes it relied on, with a SHA-256 for each note it read;

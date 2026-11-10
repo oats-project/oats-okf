@@ -24,7 +24,7 @@ import { dirname, join, isAbsolute, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseProvenance } from '../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs';
 import { machine } from './fixtures/real-machine.mjs';
 
@@ -276,5 +276,32 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const skills = json(join(m.home, 'instance.json')).skills.map(s => s.name);
     for (const s of ['knowledge-review', 'knowledge-theory', 'okf-authoring', 'okf-trigger-setup']) assert.ok(skills.includes(s), `maintainer composes ${s}: ${skills}`);
     assert.equal(fs.existsSync(asked), false, 'no harness was asked to start a model');
+  });
+
+  await t.test('h) the kernel\'s own trigger matcher: proposal-review fires on an okf-proposal PR, harvest-review on an okf-harvest PR, each alone', async () => {
+    // The kernel ANDs on.labels (docs/schedules.md: all must be present), so each template carries one label.
+    const { instantiateTemplate, eventsFor } = await import(pathToFileURL(join(dirname(dirname(cli)), 'lib', 'triggers.mjs')).href);
+    const pr = labels => ({ number: 7, url: 'https://github.com/acme/kb/pull/7', headSha: 'a'.repeat(40), base: 'main', draft: false, labels, createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z' });
+    const fires = (template, labels) => eventsFor(instantiateTemplate(json(join(root, 'oats-package/triggers', `${template}.json`)), { repo: 'github.com/acme/kb' }), undefined, pr(labels)).map(e => e.event);
+    assert.deepEqual(fires('proposal-review', ['okf-proposal']), ['opened']);
+    assert.deepEqual(fires('harvest-review', ['okf-harvest']), ['opened']);
+    assert.deepEqual(fires('proposal-review', ['okf-harvest']), []);
+    assert.deepEqual(fires('harvest-review', ['okf-proposal']), []);
+    assert.deepEqual(fires('proposal-review', []), [], 'an unlabelled PR is not a proposal');
+  });
+
+  await t.test('i) migrating a local harvest-review trigger: show it, add proposal-review with its own values, keep or remove the old one', () => {
+    const show = id => { const out = ok(['trigger', 'show', id]); const row = out.result?.trigger; assert.ok(row?.on, JSON.stringify(out).slice(0, 600)); return row; };
+    // A 5.x installation with non-default values (the release note's hand steps must keep them).
+    ok(['trigger', 'add', '--from', 'oats.okf:harvest-review', '--set', 'repo=github.com/acme/kb', '--set', 'base=accepted', '--set', 'harness=pi', '--set', 'model=custom-model']);
+    const old = show('okf-harvest-review');
+    const values = { repo: old.on.repo, base: old.on.base, harness: old.spawn.harness, model: old.spawn.model };
+    assert.deepEqual(values, { repo: 'github.com/acme/kb', base: 'accepted', harness: 'pi', model: 'custom-model' }, JSON.stringify(old));
+    ok(['trigger', 'add', '--from', 'oats.okf:proposal-review', ...Object.entries(values).flatMap(([k, v]) => ['--set', `${k}=${v}`])]);
+    const added = show('okf-proposal-review');
+    assert.deepEqual([added.on.labels, added.on.repo, added.on.base, added.spawn.harness, added.spawn.model, added.spawn.soul], [['okf-proposal'], 'github.com/acme/kb', 'accepted', 'pi', 'custom-model', 'oats.okf/knowledge-maintainer']);
+    assert.deepEqual(show('okf-harvest-review').on.labels, ['okf-harvest'], 'the old trigger keeps serving 5.x okf-harvest PRs');
+    ok(['trigger', 'remove', 'okf-harvest-review']);
+    ok(['trigger', 'remove', 'okf-proposal-review']);
   });
 });

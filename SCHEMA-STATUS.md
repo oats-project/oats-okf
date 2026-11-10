@@ -27,9 +27,11 @@ A knowledge PR's provenance block has no JSON Schema; its parser
 match the version, and accepts:
 
 - **version 3** (6.0, fence `okf-proposal`): `source {soul, owner, instance,
-  incarnation, subjects?, ownedNodes, readNodes, bases}` (with `subjects`, a
-  version-2 soul's `<kind>/<slug>` list, `owner` may be `null` and the node
-  lists are then empty), the same `evidence` and
+  incarnation, subjects?, ownedNodes, readNodes, bases}` (`subjects` is
+  format only in 6.0: a `<kind>/<slug>` list for a soul declared by subjects,
+  a later release; with it `owner` may be `null` and the node lists are then
+  empty; 6.0 itself reads only a version 1 `okf.json` and never writes it),
+  the same `evidence` and
   `tasks`, and `proposer {form: live | recovery, instance (null only in the
   recovery form), alias}`;
 - **version 2** (5.0, fence `okf-harvest`): `source {soul, owner (required), instance,

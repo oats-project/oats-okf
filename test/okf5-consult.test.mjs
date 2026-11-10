@@ -66,19 +66,32 @@ test('git base: bases primes the host cache and reports the accepted commit',t=>
   assert.equal(row.protection,'unknown');assert.match(text.stdout,/protection: unknown/);
 });
 
-test('bases reports accepted-branch protection from one gh rules read: enforced, none or unknown, never a refusal',async()=>{
+test('bases reports accepted-branch protection from the rules and classic reads: enforced, none or unknown, never a refusal',async()=>{
   const {protection}=await import('../oats-package/capabilities/oats-okf/lib/consult.mjs');
   const base={kind:'git',repository:'https://github.com/acme/kb.git',acceptedBranch:'main',pr:{repository:'acme/kb'}};
-  const calls=[],answer=out=>({run:(args,timeout)=>{calls.push([args,timeout]);if(out instanceof Error) throw out;return JSON.stringify(out);}});
+  // GitHub's answers as observed (gh api prints the body on stdout and exits 1 on a 404).
+  const NOT_PROTECTED=Object.assign(new Error('gh: Branch not protected (HTTP 404)'),{stdout:'{"message":"Branch not protected","status":"404"}'});
+  const NO_ACCESS=Object.assign(new Error('gh: Not Found (HTTP 404)'),{stdout:'{"message":"Not Found","status":"404"}'});
+  const FORBIDDEN=Object.assign(new Error('gh: Must have admin rights to Repository. (HTTP 403)'),{stdout:'{"message":"Must have admin rights to Repository.","status":"403"}'});
+  const CLASSIC={url:'https://api.github.com/repos/acme/kb/branches/main/protection',required_pull_request_reviews:{required_approving_review_count:1}};
+  const calls=[],answer=(rules,classic=NOT_PROTECTED)=>({run:(args,timeout)=>{calls.push([args,timeout]);const out=args[1].endsWith('/protection')?classic:rules;if(out instanceof Error) throw out;return JSON.stringify(out);}});
   const prev=process.env.OATS_SETTINGS;process.env.OATS_SETTINGS=JSON.stringify({'git-timeout':7});
   try {
     assert.equal(protection(base,answer([{type:'pull_request',parameters:{}},{type:'deletion'}])),'enforced');
-    assert.deepEqual(calls[0],[['api','repos/acme/kb/rules/branches/main'],7000],'one read, bounded by the Git timeout');
+    assert.deepEqual(calls,[[['api','repos/acme/kb/rules/branches/main'],7000]],'a ruleset that enforces needs no second read');
     assert.equal(protection(base,answer([{type:'update'}])),'enforced','restricting who may push enforces it');
+    calls.length=0;
     assert.equal(protection(base,answer([{type:'deletion'},{type:'non_fast_forward'}])),'none');
-    assert.equal(protection(base,answer([])),'none');
-    assert.equal(protection(base,answer(new Error('gh: not found'))),'unknown','gh absent or failing');
+    assert.deepEqual(calls.map(c=>c[0][1]),['repos/acme/kb/rules/branches/main','repos/acme/kb/branches/main/protection'],'both reads, bounded by the Git timeout');
+    assert.equal(protection(base,answer([])),'none','both readable and empty');
+    // Classic branch protection, which the rules endpoint never shows.
+    assert.equal(protection(base,answer([],CLASSIC)),'enforced','classic protection is never none');
+    assert.equal(protection(base,answer(NO_ACCESS,CLASSIC)),'enforced');
+    // Unreadable: never none.
+    for(const classic of [NO_ACCESS,FORBIDDEN,new Error('gh: not found'),{message:'odd'}]) assert.equal(protection(base,answer([],classic)),'unknown',JSON.stringify(classic.stdout??classic));
+    assert.equal(protection(base,answer(NO_ACCESS)),'unknown','rules unreadable');
     assert.equal(protection(base,answer({message:'Not Found'})),'unknown');
+    assert.equal(protection(base,answer(new Error('gh: not found'),new Error('gh: not found'))),'unknown','gh absent or failing');
     for(const repository of ['git@github.com:acme/kb.git','ssh://git@github.com/acme/kb.git']) assert.equal(protection({...base,repository},answer([{type:'pull_request'}])),'enforced',repository);
     const before=calls.length;
     for(const repository of ['/srv/kb.git','https://gitlab.example/acme/kb.git']) assert.equal(protection({...base,repository},answer([{type:'pull_request'}])),'unknown',repository);

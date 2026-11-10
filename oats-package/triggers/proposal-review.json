@@ -12,7 +12,7 @@
     "on": {
       "source": "github.pull_request",
       "events": ["opened", "reopened", "ready_for_review"],
-      "labels": ["okf-proposal", "okf-harvest"],
+      "labels": ["okf-proposal"],
       "poll": "2m"
     },
     "spawn": {

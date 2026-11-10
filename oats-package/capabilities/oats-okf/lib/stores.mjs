@@ -570,7 +570,7 @@ export function gitPublish(base, stage, proposal, receipt, persist, {beforePubli
     receipt.status='pr-intent'; persist();
     const title=presentation?.title || `okf-harvest: ${proposal.run}`,body=presentation?.body || `Knowledge-only proposal from durable OKF run ${proposal.run}. Review provenance and promotion judgment.`;
     const label=presentation?.label;
-    // The label is what the harvest-review trigger watches: make sure the
+    // The label is what the review trigger watches: make sure the
     // repository has it (idempotent), then open the PR carrying it.
     if(label) try {exec('gh',['label','create',label,'--repo',base.pr.repository,'--force','--color','0E8A16','--description','OKF harvest PR (oats.okf)'],{cwd,env:gitEnv()});} catch { /* may exist already or be unmanageable; pr create reports a real problem */ }
     try { exec('gh',['pr','create','--repo',base.pr.repository,'--head',branch,'--base',base.acceptedBranch,'--title',title,'--body',body,...(label?['--label',label]:[])],{cwd,env:gitEnv()}); }
