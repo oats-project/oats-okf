@@ -415,7 +415,8 @@ regenerating: the maintainer regenerates before merge in any case.
 ### The verdict check
 
 `oats okf verdicts --check <claim file>` reads a local claim file and the
-base's `verdicts/index.md`, in two lanes:
+base's committed `verdicts/index.md` (a base without one refuses
+`E_NOT_FOUND`: a missing record is not "no verdicts"), in two lanes:
 
 1. **Identity.** When the claim names a known id (its `id`, or the id its
    `reconsiders:` names) that id's verdict is read. A `rejected` id proposed

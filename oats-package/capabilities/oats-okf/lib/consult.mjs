@@ -737,7 +737,9 @@ const CLAIM_FILE_BYTES = 1024 * 1024;
  *  the index, one per identity hit). */
 export function verdictReport(ctx, meta) {
   const path = 'verdicts/index.md', e = entry(ctx, path);
-  const indexText = e && e.type === 'file' ? read(ctx, path, e) : '';
+  // The generated record is required: a missing one is not "no verdicts".
+  if (!e || e.type !== 'file') fail('E_NOT_FOUND', `${ctx.alias}${shown(path)}: the base has no generated verdict index at ${short(ctx.receipt)}; the base's maintainer runs okf-reindex.mjs`);
+  const indexText = read(ctx, path, e);
   return verdictLanes(meta, indexText, id => { const p = `verdicts/${id}.md`, ve = entry(ctx, p); return ve && ve.type === 'file' ? read(ctx, p, ve) : null; });
 }
 export function verdicts(source, flags, positionals) {

@@ -533,6 +533,31 @@ test('on a plain version-1 base every subject verb answers E_USAGE: base project
   }
 });
 
+test('`oats okf verdicts --check` refuses when the committed verdict index is missing (not "no verdicts"); a present index with no verdicts still answers',t=>{
+  const f=deployment(t),claim=join(f.dir,'claim.md');
+  write(claim,`---\ntype: Decision\ntitle: Something new\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n`);
+  fs.rmSync(join(f.repo,'verdicts/index.md'));f.git('add','-A');f.git('commit','-q','-m','no verdict index');
+  const missing=run(f,['verdicts','--check',claim,'--fresh','--json']);
+  assert.equal(missing.status,1);assert.equal(missing.out.error.code,'E_NOT_FOUND');assert.match(missing.out.error.message,/no generated verdict index .*okf-reindex\.mjs/);
+  fs.rmSync(join(f.repo,`verdicts/${REJECTED.id}.md`));reindex(f.repo);f.git('add','-A');f.git('commit','-q','-m','no verdicts');
+  const none=run(f,['verdicts','--check',claim,'--fresh','--json']);
+  assert.equal(none.status,0,none.text.slice(0,300));assert.equal(none.out.result.identity,null);assert.equal(none.out.result.refusal,null);
+});
+
+test('a committed subject index with very many sections is read in linear time (parseView; the claims CLI)',t=>{
+  const f=deployment(t),view=join(f.repo,'subjects/system/okf/index.md');
+  const text=fs.readFileSync(view,'utf8'),parts=[text];
+  for(let i=0;i<100000;i++) parts.push(`## Type-${i}\n\n* [Claim ${i}](/claims/c${i}.md) - Description ${i}\n`);
+  fs.writeFileSync(view,parts.join('\n'));f.git('add','-A');f.git('commit','-q','-m','many sections');
+  let started=Date.now();const parsed=parseView(fs.readFileSync(view,'utf8'));
+  assert.ok(Date.now()-started<2000,`parseView took ${Date.now()-started} ms`);assert.ok(parsed.sections.length>100000);
+  // filtered so the answer stays small; the whole index is still parsed
+  for(const args of [['claims','--about','system/okf','--type','Type-99999','--fresh','--json']]) {
+    started=Date.now();const r=run(f,args);
+    assert.equal(r.status,0,r.text.slice(0,300));assert.ok(Date.now()-started<15000,`${args[0]} took ${Date.now()-started} ms`);
+  }
+});
+
 test('`oats okf verdicts --check`: identity refuses a rejected id without reconsiders (E_VERDICT, the reason); the exact title hash lists candidates',t=>{
   const f=deployment(t),claim=join(f.dir,'claim.md');
   write(claim,`---\ntype: Decision\ntitle: Something new\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n`);

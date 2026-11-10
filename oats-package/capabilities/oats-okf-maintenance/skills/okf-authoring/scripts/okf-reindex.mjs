@@ -249,13 +249,20 @@ export function generate(concepts, rootIndex = "") {
   }
   const order = (ref) => Object.keys(KINDS).indexOf(ref.split("/")[0]);
   const sortedRefs = [...subjects.keys()].sort((a, b) => order(a) - order(b) || byText(a, b));
+  // Each workstream's members, in sortedRefs order, from one pass over the
+  // subjects (the validator runs this on bases it does not trust).
+  const membersOf = new Map();
+  for (const r of sortedRefs) {
+    const list = subjects.get(r).meta["in-workstreams"];
+    if (Array.isArray(list)) for (const w of new Set(list)) if (w !== r) { if (!membersOf.has(w)) membersOf.set(w, []); membersOf.get(w).push(r); }
+  }
   for (const ref of sortedRefs) {
     const s = subjects.get(ref), title = one(s.meta.title) || s.slug;
     const lines = [`# ${title}`, ""];
     if (one(s.meta.description)) lines.push(one(s.meta.description), "");
     lines.push(GENERATED_NOTE, `Subject file: [${linkText(title)}](/${s.path})`, "");
     if (s.kind === "workstream") {
-      const members = sortedRefs.filter((r) => r !== ref && Array.isArray(subjects.get(r).meta["in-workstreams"]) && subjects.get(r).meta["in-workstreams"].includes(ref));
+      const members = membersOf.get(ref) ?? [];
       if (members.length) {
         lines.push(`## ${MEMBERS}`, "");
         for (const r of members) lines.push(entry(one(subjects.get(r).meta.title) || subjects.get(r).slug, subjects.get(r).path, subjects.get(r).meta.description));
@@ -331,6 +338,7 @@ export function parseEntry(line) {
 export function parseView(text) {
   const lines = String(text).split(/\r?\n/), out = { title: "", description: "", members: [], sections: [] };
   let type = null, kind = null, inMembers = false, sawNote = false;
+  const byKey = new Map();
   for (const line of lines) {
     if (!out.title && line.startsWith("# ")) { out.title = line.slice(2).trim(); continue; }
     if (line.startsWith(GENERATED_NOTE)) { sawNote = true; continue; }
@@ -342,8 +350,11 @@ export function parseView(text) {
     if (!e) continue;
     if (inMembers) out.members.push(e);
     else if (type) {
-      let section = out.sections.find((s) => s.type === type && s.kind === kind);
-      if (!section) out.sections.push(section = { type, kind, entries: [] });
+      // One lookup per entry (a committed index is untrusted: no scan of the
+      // sections seen so far); out.sections keeps first-seen order.
+      const key = JSON.stringify([type, kind]);
+      let section = byKey.get(key);
+      if (!section) { out.sections.push(section = { type, kind, entries: [] }); byKey.set(key, section); }
       section.entries.push(e);
     }
   }
