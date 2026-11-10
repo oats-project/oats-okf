@@ -516,8 +516,10 @@ deployment). The maintainer's parser (`oats.okf-maintenance`
 strictly: the fence must match the version (3 in `okf-proposal`, 1 and 2 in
 `okf-harvest`), unknown keys are refused, `source.owner` is required
 (except below),
-`evidence` holds at most 100 `notes/…/*.md` paths without `.` or `..`
-segments, with an optional 64-hex `sha256` only for a note that was read. It
+`evidence` holds at most 100 `notes/…/*.md` paths (5.8's note rules: any
+filename, a space or parentheses included; no empty, `.`, `..` or hidden
+segment, no backslash or control character), with an optional 64-hex
+`sha256` only for a note that was read. It
 still reads **version 2** (a 5.x harvester's, with `harvester` instead of
 `incarnation` and `proposer`) and **version 1** (4.x run and input ids), so
 older PRs stay reviewable.
@@ -565,8 +567,11 @@ force-pushes and accept changes by pull request only, merged by the knowledge
 maintainer's account. On GitHub, a branch ruleset on the accepted branch
 (restrict updates to a bypass role or team holding the maintainer's account,
 "for pull requests only"; require a pull request; block force pushes and
-deletion), or the classic equivalent; a deployment that protects the branch
-by other means meets it too. The `okf-trigger-setup` skill has the steps.
+deletion), or the classic equivalent with "Do not allow bypassing the above
+settings" (otherwise GitHub exempts administrators); a deployment that
+protects the branch by other means meets it too. The `okf-trigger-setup`
+skill has the steps. `protection: enforced` does not read bypass lists or
+the admin-bypass setting.
 `oats okf bases` reports `protection: enforced | none | unknown` per Git
 base, from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
 (rulesets) and `gh api repos/<owner>/<repo>/branches/<branch>/protection`
@@ -817,9 +822,17 @@ The hand steps, from the deployment directory:
    - **A workspace automation file** (in a member repository) is
      re-instantiated from the package template at the pinned commit, so the
      old file keeps working for `okf-harvest` PRs. Copy it under the new
-     template, keeping its `set:`, `runsOn` and `owner`:
-     `sed 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml`,
-     then commit and merge it; later `git rm oats-triggers/okf-harvest-review.yaml`.
+     template and a new id (`oats trigger add --workspace` writes an explicit
+     `id:` line; two files with one id are `E_AUTOMATION_DUPLICATE`), keeping
+     its `set:`, `runsOn` and `owner`:
+     `sed -e 's/oats.okf:harvest-review/oats.okf:proposal-review/' -e 's/^id: okf-harvest-review$/id: okf-proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml`,
+     then commit and merge it. On the review host, if `oats-local.yaml` lists
+     named `automations: trust:` entries (not `"*"`), add the new one beside
+     the old: `- <member>/okf-proposal-review`. A new id is untrusted until
+     then and never runs. Run `oats automations refresh` and check that
+     `oats trigger show <member>/okf-proposal-review --json` answers
+     `result.trigger.runsHere: true` (not `reason: "untrusted"`). Later, `git rm oats-triggers/okf-harvest-review.yaml`
+     and drop its trust line.
    - **A local trigger** (`oats trigger add`) stores the definition it was
      given and is never re-instantiated: read its values first,
      `oats trigger show okf-harvest-review --json` (`result.trigger.on.repo`,

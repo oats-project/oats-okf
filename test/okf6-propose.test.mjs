@@ -249,9 +249,9 @@ test('check: a malformed proposal or note line is E_PROPOSAL_FORMAT; a missing n
   for (const [proposal, pattern] of [
     [PROPOSAL().replace('## Why\nA future instance would otherwise size budgets per connection.\n', '## Why\n<!-- nothing -->\n'), /`## Why` section is empty/],
     [PROPOSAL().replace('## Evidence', '## Evidence\nx\n## Evidence'), /exactly one `## Evidence`/],
-    [PROPOSAL(['notes/a b.md']), /not a plain notes\/<path>\.md/],
+    [PROPOSAL(['notes/.a.md']), /is not a notes\/<path>\.md/],
     [PROPOSAL().replace('Observed in', 'Observed (notes/a b.md) in'), /unrecognized backing-note reference/],
-    [PROPOSAL(['notes/../STATE.md']), /not a plain notes/],
+    [PROPOSAL(['notes/../STATE.md']), /is not a notes/],
     [PROPOSAL() + '\n```okf-proposal\n{}\n```\n', /must not carry a provenance block/],
   ]) {
     fs.writeFileSync(join(plan.proposal, 'proposal.md'), proposal);
@@ -616,4 +616,30 @@ test('plan clones without hard links, and a hard-linked file under .git is refus
   refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_FORMAT', /\.git\/logs\/HEAD is hard-linked elsewhere/);
   assert.equal(fs.readFileSync(outside, 'utf8'), before, 'nothing appended outside the clone');
   assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
+});
+
+// The 5.8 note-locator and note-path rules, end to end (oats.okf 5.8's
+// quoted-capture cases): a quoted filename with a space or parentheses is
+// read, hashed and published, and the maintainer's parser accepts it.
+for (const filename of ['notes/decision.md (v2).md', 'notes/decision.md(v2).md']) test(`a quoted backing note keeps its whole filename end to end: ${filename}`, t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])), intended = 'Literal quoted filename: the intended evidence.\n';
+  write(join(f.home, filename), intended); write(join(f.home, 'notes/decision.md'), 'a different note\n');
+  edit(f, plan, { proposal: PROPOSAL([]).replace('## Backing notes\n', `## Backing notes\n- \`${filename}\`\n`) });
+  const checked = ok(f.run(['--check', '--slug', 'x']));
+  assert.deepEqual(checked.evidence, [{ note: filename, sha256: sha(intended) }]);
+  const block = parseProvenance(checked.prBody);
+  assert.equal(block.valid, true, block.problems.join('; ')); assert.deepEqual(block.value.evidence, [{ note: filename, sha256: sha(intended) }]);
+  const [pr] = ok(f.run(['--apply', '--slug', 'x', '--digest', checked.digest])).prs;
+  assert.ok(pr.url);
+});
+
+test('note paths: no hidden, parent, empty, backslash or control-character segment, in propose and in the parser', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x']));
+  for (const note of ['notes/.hidden.md', 'notes/a\\b.md', 'notes//a.md', 'notes/a\tb.md']) {
+    edit(f, plan, { proposal: PROPOSAL([]).replace('## Backing notes\n', `## Backing notes\n- \`${note}\`\n`) });
+    refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT');
+  }
+  const fence = evidence => `x\n\n\`\`\`okf-proposal\n${JSON.stringify({ version: 3, source: { soul: 's', owner: 'o', instance: 'i', incarnation: CREATED, ownedNodes: [], readNodes: [], bases: [] }, evidence, tasks: { provider: null, refs: [] }, proposer: { form: 'live', instance: 'i', alias: null } })}\n\`\`\`\n`;
+  assert.equal(parseProvenance(fence([{ note: 'notes/decision.md (v2).md' }])).valid, true);
+  for (const note of ['notes/.hidden.md', 'notes/a\\b.md', 'notes/a\u0001.md', 'notes/../x.md']) assert.equal(parseProvenance(fence([{ note }])).valid, false, note);
 });

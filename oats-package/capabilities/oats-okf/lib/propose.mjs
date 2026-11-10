@@ -254,8 +254,10 @@ export function backingNotes(task) {
   return [...notes];
 }
 // The provenance block's note grammar (oats.okf-maintenance parses it strictly).
-const NOTE = /^notes\/[A-Za-z0-9._/-]+\.md$/;
-const safeNote = note => NOTE.test(note) && note.split('/').every(p => p && p !== '.' && p !== '..' && !p.startsWith('.'));
+// oats.okf 5.8's safeNote, unchanged: any filename under notes/ ending .md (a
+// space or parentheses included), no backslash or control character, no
+// empty, parent or hidden segment, at most 512 characters.
+const safeNote = note => note.length <= 512 && /^notes\/.+\.md$/.test(note) && !/[\\\x00-\x1f\x7f]/.test(note) && note.split('/').every(p => p && p !== '.' && p !== '..' && !p.startsWith('.'));
 
 /** proposal.md → { claim, bytes, body, notes } or E_PROPOSAL_FORMAT. */
 function readProposal(dir) {
@@ -279,7 +281,7 @@ function readProposal(dir) {
   }
   const notes = backingNotes(shown);
   if (notes.length > MAX_NOTES) fail('E_PROPOSAL_FORMAT', `proposal.md names more than ${MAX_NOTES} backing notes`);
-  for (const note of notes) if (!safeNote(note)) fail('E_PROPOSAL_FORMAT', `backing note ${JSON.stringify(note).slice(0, 120)} is not a plain notes/<path>.md (letters, digits, . _ - / only; no hidden or parent segment)`);
+  for (const note of notes) if (!safeNote(note)) fail('E_PROPOSAL_FORMAT', `backing note ${JSON.stringify(note).slice(0, 120)} is not a notes/<path>.md (no backslash or control character, no empty, hidden or parent segment)`);
   return { claim, bytes, body: shown.replace(/\n{3,}/g, '\n\n').trim() + '\n', notes };
 }
 
