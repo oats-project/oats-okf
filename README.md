@@ -295,7 +295,10 @@ link, and writes each generated file through a fresh temporary file renamed
 over it, so a checked-out base cannot redirect a write outside itself. It
 also refuses a file name holding a backslash, and never links a path that a
 reader would resolve to another file (spaces, parentheses, angle brackets,
-`?`, `#` or `%`): such a base does not validate with `--strict`.
+`?`, `#` or `%`): such a base does not validate with `--strict`. Every
+reader (validator, regenerator, `propose` and the subject verbs) classifies a
+base the same way: an `okf-base.json` that is a link, not a regular
+single-link file, or larger than 16 MiB is refused, never read as plain.
 
 On a bridged base the validator also errors on: a malformed flow list (a
 value starting with `[` that is not a flat list, or has no `]` at all; a

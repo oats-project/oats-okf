@@ -40,7 +40,7 @@ const files = [];
 
 const errors = [], warnings = [];
 let subjectLayout = false;
-try { subjectLayout = bridged(root); } catch (e) { if (e.code !== "E_PATH") throw e; errors.push(e.message); }
+try { subjectLayout = bridged(root); } catch (e) { if (!["E_PATH", "E_TOO_LARGE"].includes(e.code)) throw e; errors.push(e.message); }
 const rel = (p) => relative(root, p).split("\\").join("/");
 const isReserved = (p) => ["index.md", "log.md"].includes(posix.basename(rel(p)));
 
@@ -105,7 +105,7 @@ if (subjectLayout) {
         if (!VERDICTS.includes(m.verdict)) errors.push(`${r}: verdict must be one of ${VERDICTS.join(", ")}`);
         for (const key of ["claim-type", "claim-title"]) if (!m[key] || typeof m[key] !== "string") errors.push(`${r}: missing '${key}'`);
         if (m["title-hash"] !== titleHash(m["claim-type"], m["claim-title"])) errors.push(`${r}: title-hash must be ${titleHash(m["claim-type"], m["claim-title"])} (sha256 of <claim-type>|<normalized claim-title>, 16 hex)`);
-        if (["duplicate", "superseded"].includes(m.verdict) && !m.canonical) errors.push(`${r}: a ${m.verdict} verdict names the canonical claim id`);
+        if (["duplicate", "superseded"].includes(m.verdict) && (typeof m.canonical !== "string" || !m.canonical)) errors.push(`${r}: a ${m.verdict} verdict names the canonical claim id (one scalar id)`);
       }
       continue;
     }

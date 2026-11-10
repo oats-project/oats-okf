@@ -59,6 +59,8 @@ const ERRORS=[
   ['a claim under claims/ without id',d=>edit(join(d,'claims/insights/consult-reads-one-blob.md'),'id: ins-000000000003\n',''),/consult-reads-one-blob\.md: missing 'id'/],
   ['a malformed flow list',d=>edit(join(d,'peer/lesson.md'),'about: ["workstream/knowledge"]','about: [workstream/knowledge, [nested]]'),/peer\/lesson\.md: malformed flow list in 'about'/],
   ['a duplicate id',d=>edit(join(d,'peer/lesson.md'),'id: ins-000000000002','id: dec-000000000001'),/id dec-000000000001 is also/],
+  ['a duplicate verdict whose canonical is not one scalar id',d=>edit(join(d,`verdicts/${REJECTED.id}.md`),'verdict: rejected','verdict: duplicate\ncanonical: []'),/a duplicate verdict names the canonical claim id \(one scalar id\)/],
+  ['a superseded verdict whose canonical is a list',d=>edit(join(d,`verdicts/${REJECTED.id}.md`),'verdict: rejected','verdict: superseded\ncanonical: [dec-000000000001]'),/a superseded verdict names the canonical claim id \(one scalar id\)/],
   ['a verdict whose title-hash is not derived',d=>edit(join(d,`verdicts/${REJECTED.id}.md`),`title-hash: ${titleHash(REJECTED.type,REJECTED.title)}`,'title-hash: 0000000000000000'),/title-hash must be/],
 ];
 for(const [name,mutate,error] of ERRORS) test(`validator v2 refuses ${name} (an error, with and without --strict)`,t=>{
@@ -244,6 +246,18 @@ test('okf-base.json is classified the same by every reader: padding cannot hide 
   fs.renameSync(join(linked,'okf-base.json'),outside);fs.symlinkSync(outside,join(linked,'okf-base.json'));
   const v=validate(linked);
   assert.equal(v.status,1);assert.ok(v.out.errors.includes('okf-base.json: a symlink; the base metadata must be a regular single-link file'),JSON.stringify(v.out.errors));
+});
+
+test('okf-base.json above the shared metadata limit is refused by the validator, the regenerator and consult alike, never read as plain',t=>{
+  const f=deployment(t);
+  fs.appendFileSync(join(f.repo,'okf-base.json'),' '.repeat(17*1024*1024));
+  const v=validate(f.repo);
+  assert.equal(v.status,1);assert.ok(v.out.errors.some(e=>/^okf-base\.json is larger than 16777216 bytes/.test(e)),JSON.stringify(v.out.errors).slice(0,300));
+  const r=spawnSync(process.execPath,[REINDEX,f.repo,'--check'],{encoding:'utf8'});
+  assert.equal(r.status,2);assert.match(r.stderr,/E_TOO_LARGE/);
+  f.git('add','-A');f.git('commit','-q','-m','padded');
+  const s=run(f,['subjects','--base','project','--fresh','--json']);
+  assert.equal(s.out.error.code,'E_TOO_LARGE',s.text.slice(0,500));
 });
 
 test('the shipped copies of the validator and the regenerator are byte-identical',()=>{

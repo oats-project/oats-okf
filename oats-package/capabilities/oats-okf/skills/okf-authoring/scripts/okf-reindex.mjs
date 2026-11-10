@@ -145,8 +145,14 @@ export function isBridgedMeta(m) {
 /** Whether the base at root declares the subject layout: false when it has
  *  no okf-base.json or one that is not valid JSON (every consumer refuses that
  *  base on its own). okf-base.json is read only as a regular single-link file,
- *  never through a link or from a FIFO; anything else is refused (E_PATH), so
- *  no reader can see a layout another reader does not. */
+ *  never through a link or from a FIFO, and never above METADATA_LIMIT;
+ *  anything else is refused (E_PATH, E_TOO_LARGE), so no reader can see a
+ *  layout another reader does not. */
+/** The one size limit every reader applies to okf-base.json (the validator,
+ *  the regenerator, propose and consult): above it the metadata is refused,
+ *  never read as a plain base by one reader and a bridged one by another. */
+export const METADATA_LIMIT = 16 * 1024 * 1024;
+export const metadataTooLarge = () => Object.assign(new Error(`okf-base.json is larger than ${METADATA_LIMIT} bytes; base metadata is a short JSON document`), { code: "E_TOO_LARGE" });
 export function bridged(root) {
   const file = join(root, "okf-base.json");
   const unsafe = (why) => { throw Object.assign(new Error(`okf-base.json: ${why}; the base metadata must be a regular single-link file`), { code: "E_PATH" }); };
@@ -154,11 +160,13 @@ export function bridged(root) {
   try { st = lstatSync(file); } catch (e) { if (e.code === "ENOENT") return false; throw e; }
   if (!st.isFile()) unsafe(st.isSymbolicLink() ? "a symlink" : "not a regular file");
   if (st.nlink !== 1) unsafe("a file with more than one link");
+  if (st.size > METADATA_LIMIT) throw metadataTooLarge();
   const fd = openSync(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
   let text;
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile() || opened.ino !== st.ino || opened.dev !== st.dev) unsafe("replaced while it was opened");
+    if (opened.size > METADATA_LIMIT) throw metadataTooLarge();
     text = readFileSync(fd, "utf8");
   } finally { closeSync(fd); }
   try { return isBridgedMeta(JSON.parse(text)); } catch { return false; }

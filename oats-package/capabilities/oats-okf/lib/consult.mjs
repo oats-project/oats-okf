@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash, exec } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes, resolveSubjects } from './config.mjs';
 import { git, gitEnv, validateBase, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
-import { isBridgedMeta, parseFrontmatter, parseView, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
+import { isBridgedMeta, METADATA_LIMIT, metadataTooLarge, parseFrontmatter, parseView, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
 import { verdictLanes } from './verdicts.mjs';
 
 const HIT_LIMIT = 50, SNIPPET = 200, FRONTMATTER_BYTES = 8 * 1024, TEXT_BYTES = 64 * 1024 * 1024;
@@ -624,10 +624,14 @@ function subjectArg(ref) {
   if (typeof ref !== 'string' || !SUBJECT_REF.test(ref)) fail('E_USAGE', `expected a subject <system|workstream|project>/<slug>, got ${JSON.stringify(ref ?? null)}`);
   return ref;
 }
+/** The layout as the validator classifies it: no okf-base.json or invalid
+ *  JSON is plain; metadata above the shared limit is refused, never plain. */
 export function hasSubjectLayout(ctx) {
   const e = entry(ctx, 'okf-base.json');
   if (!e || e.type !== 'file') return false;
-  try { return isBridgedMeta(JSON.parse(read(ctx, 'okf-base.json', e))); } catch { return false; }
+  const text = read(ctx, 'okf-base.json', e, { limit: METADATA_LIMIT + 1 });
+  if (Buffer.byteLength(text) > METADATA_LIMIT) throw metadataTooLarge();
+  try { return isBridgedMeta(JSON.parse(text)); } catch { return false; }
 }
 /** fn(ctx) on the base a subject verb reads: --base, the only bound base, or
  *  the only bound base with the subject layout. */
