@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // The bridge conversion for a version-1 OKF base (spec: docs/design/2026-11-10-bridge-pr-oats-knowledge.md §1).
 //
-//   node scripts/bridge/bridge.mjs <checkout> [--check] [--date YYYY-MM-DD] [--pr REF] [--report FILE]
+//   node scripts/bridge/bridge.mjs <checkout> --reindex <okf-reindex.mjs> [--check] [--date YYYY-MM-DD] [--pr REF] [--report FILE]
 //
 // <checkout> is a clone of the knowledge repository; the base is its `knowledge/` directory.
-// In place, no moves: it adds the three reserved nodes to okf-base.json, writes the subject files and the
-// generated views, inserts `about:`, `kind:` (and `status:` for Roadmap) and `id:` after each concept's
-// `description:` line, appends a "Subjects" section to the root index.md and one line to the root log.md.
-// It changes no other line and no concept body (asserted per file). It is deterministic (no clock, no
-// locale) and idempotent: a second run writes nothing. `--check` writes nothing and exits 1 if a run
-// would change any file. No dependencies.
+// In place, no moves: it adds the three reserved nodes to okf-base.json, writes the subject files,
+// claims/index.md and the reserved nodes' logs, inserts `about:`, `kind:` (and `status:` for Roadmap) and
+// `id:` after each concept's `description:` line, and adds one line to the root log.md; then the layer's
+// regenerator (oats.okf 6.0 okf-reindex.mjs, --reindex) writes the generated views. It changes no other line
+// and no concept body (asserted per file). It is deterministic (no clock, no locale) and idempotent: a second
+// run writes nothing. `--check` writes nothing and exits 1 if a run would change any file or the regenerator
+// reports a stale view. No dependencies.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -26,7 +27,7 @@ const option = (name, fallback) => {
 };
 const positional = argv.filter((a, i) => !a.startsWith('--') && !['--date', '--pr', '--report', '--reindex'].includes(argv[i - 1]));
 if (positional.length !== 1) {
-  console.error('usage: bridge.mjs <checkout> [--check] [--date YYYY-MM-DD] [--pr REF] [--report FILE] [--reindex OKF_REINDEX]');
+  console.error('usage: bridge.mjs <checkout> [--check] [--date YYYY-MM-DD] [--pr REF] [--report FILE] --reindex OKF_REINDEX');
   process.exit(2);
 }
 const CHECK = flag('--check');
@@ -34,11 +35,10 @@ const DATE = option('--date', '2026-11-10');
 assert(/^\d{4}-\d{2}-\d{2}$/.test(DATE), '--date must be YYYY-MM-DD');
 const PR = option('--pr', 'the bridge PR (branch `okf-bridge/2026-11-10`)');
 const REPORT = option('--report', null);
-// --reindex: the layer's own regenerator (oats.okf 6.0 okf-reindex.mjs) writes the generated views (per-subject
-// indexes, subjects/index.md, verdicts/index.md, the root index's Subjects section) instead of this script.
+// --reindex (required): the layer's regenerator, oats.okf 6.0's okf-reindex.mjs. It alone writes and checks the
+// generated views (per-subject indexes, subjects/index.md, verdicts/index.md, the root index's Subjects section).
 const REINDEX = option('--reindex', null);
-if (REINDEX) assert(fs.existsSync(REINDEX), `--reindex: no file ${REINDEX}`);
-const own = !REINDEX; // this script writes the views itself only without --reindex
+assert(REINDEX && fs.existsSync(REINDEX), '--reindex <okf-reindex.mjs> is required (oats.okf 6.0, the subject layer)');
 const BASE = path.join(path.resolve(positional[0]), 'knowledge');
 assert(fs.existsSync(path.join(BASE, 'okf-base.json')), `no knowledge/okf-base.json under ${positional[0]}`);
 
@@ -97,7 +97,6 @@ const SUBJECTS = [
 ].map(([kind, slug, title, repo, inWorkstreams, legacyNodes, description]) =>
   ({ kind, slug, ref: `${kind}/${slug}`, title, repo, inWorkstreams, legacyNodes, description }));
 const SUBJECT_TYPE = { system: 'System', workstream: 'Workstream', project: 'Project' };
-const KIND_HEADING = { system: 'Systems', workstream: 'Workstreams', project: 'Projects' };
 
 // Primary subject per node (design §2.7), from the subjects' legacy-nodes.
 const PRIMARY = Object.fromEntries(SUBJECTS.flatMap(s => s.legacyNodes.map(n => [n, s.ref])));
@@ -114,7 +113,6 @@ const TYPES = {
   Limitation: ['Insight', 'constraint', null, 'ins'], Reference: ['Reference', null, null, 'ref'],
   Playbook: ['Playbook', null, null, 'pb'],
 };
-const CLAIM_TYPE_ORDER = ['Decision', 'Insight', 'Requirement', 'Risk', 'Question', 'Reference', 'Playbook'];
 const BRIDGE_KEYS = ['about', 'kind', 'status', 'id'];
 
 // ---------------------------------------------------------------------------------------------------------
@@ -123,7 +121,6 @@ const read = rel => fs.readFileSync(path.join(BASE, rel), 'utf8');
 const exists = rel => fs.existsSync(path.join(BASE, rel));
 const isReserved = rel => ['index.md', 'log.md'].includes(posix.basename(rel));
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-const byTitle = (a, b) => cmp(a.title.toLowerCase(), b.title.toLowerCase()) || cmp(a.title, b.title) || cmp(a.path, b.path);
 const list = items => `[${items.join(', ')}]`;
 
 function walk(dir) {
@@ -263,7 +260,6 @@ for (const c of concepts) for (const ref of c.about) assert(subjectRefs.has(ref)
 for (const s of SUBJECTS) for (const w of s.inWorkstreams) assert(subjectRefs.has(`workstream/${w}`), `${s.ref}: unknown workstream ${w}`);
 for (const s of SUBJECTS) for (const n of s.legacyNodes) assert(owned.includes(n), `${s.ref}: legacy node ${n} not in okf-base.json`);
 
-const viewPath = s => `subjects/${s.kind}/${s.slug}/index.md`;
 for (const s of SUBJECTS) {
   const fm = [`type: ${SUBJECT_TYPE[s.kind]}`, `title: ${s.title}`, `description: ${s.description}`];
   if (s.repo) fm.push(`repo: ${s.repo}`);
@@ -276,36 +272,12 @@ for (const s of SUBJECTS) {
   const body = `\n# ${s.title}\n${facts.length ? `\n${facts.join(' ')}\n` : ''}`;
   plan(`subjects/${s.kind}/${s.slug}.md`, `---\n${fm.join('\n')}\n---\n${body}`);
 
-  const mine = concepts.filter(c => c.about.includes(s.ref));
-  let view = `# ${s.title}\n\nGenerated from the \`about:\` frontmatter of the base's concepts; do not edit by hand. Subject: [${s.ref}](/subjects/${s.ref}.md).\n`;
-  if (!mine.length) view += '\nNo concepts are about this subject yet.\n';
-  for (const t of CLAIM_TYPE_ORDER) {
-    const rows = mine.filter(c => c.claimType === t).sort(byTitle);
-    if (rows.length) view += `\n## ${t}\n\n${rows.map(c => `* [${c.title}](/${c.path}) - ${c.description}`).join('\n')}\n`;
-  }
-  if (own) plan(viewPath(s), view);
 }
-let subjectsIndex = '# Subjects\n\nGenerated from the subject files; do not edit by hand.\n';
-for (const kind of ['system', 'workstream', 'project']) {
-  const rows = SUBJECTS.filter(s => s.kind === kind).sort((a, b) => cmp(a.slug, b.slug));
-  subjectsIndex += `\n## ${KIND_HEADING[kind]}\n\n${rows.map(s => `* [${s.title}](/subjects/${s.ref}.md) - ${s.description}`).join('\n')}\n`;
-}
-if (own) plan('subjects/index.md', subjectsIndex);
 plan('claims/index.md', '# Claims\n\nOne file per claim under `claims/<type-plural>/`, each with `id:` and `about:`. None yet.\n');
-if (own) plan('verdicts/index.md', '# Verdicts\n\nOne `verdicts/<id>.md` (`type: Verdict`) per rejected, superseded or duplicate claim. None yet.\n');
 const nodeLog = name => `# ${name} log\n\n## ${DATE}\n\n* **Creation**: Reserved node added by ${PR}.\n`;
 for (const name of RESERVED) plan(`${name}/log.md`, nodeLog(name));
 
-// 4. Root index: a "Subjects" section at the end (replaced on rerun).
-const SECTION = '\n## Subjects\n\n'
-  + '* [Subjects](subjects/index.md) - Systems, workstreams and projects, each with a generated view of the concepts about it.\n'
-  + '* [Claims](claims/index.md) - Claims by type, each about one or more subjects.\n'
-  + '* [Verdicts](verdicts/index.md) - Rejected, superseded and duplicate claims.\n';
-const rootIndex = read('index.md');
-const cut = rootIndex.indexOf('\n## Subjects\n');
-if (own) plan('index.md', (cut < 0 ? rootIndex : rootIndex.slice(0, cut)) + SECTION);
-
-// 5. Root log: one dated line naming this PR, newest first (replaced on rerun).
+// 4. Root log: one dated line naming this PR, newest first (replaced on rerun).
 const MARK = '* **Update**: Bridge to the subject layout';
 const nodesCount = Object.keys(baseJson.nodes).length;
 const logLine = `${MARK}, by ${PR}: the reserved nodes [claims](/claims/index.md), [subjects](/subjects/index.md) and [verdicts](/verdicts/index.md) under a placeholder owner, ${SUBJECTS.length} [subject files](/subjects/index.md) with generated views, and \`about:\`, \`kind:\` and \`id:\` frontmatter on all ${concepts.length} concepts. No file moved and no concept body changed. The base declares ${nodesCount} nodes.`;
@@ -334,17 +306,15 @@ const report = {
 if (REPORT) fs.writeFileSync(REPORT, JSON.stringify(report, null, 2) + '\n');
 if (CHECK) {
   if (writes.size) { console.error(`check: ${writes.size} file(s) would change:\n${[...writes.keys()].slice(0, 20).join('\n')}`); process.exit(1); }
-  if (REINDEX) {
-    try { execFileSync(process.execPath, [REINDEX, BASE, '--check'], { stdio: ['ignore', 'pipe', 'pipe'] }); }
-    catch (e) { console.error(`check: the regenerator reports stale views:\n${e.stdout}`); process.exit(1); }
-  }
-  console.log(`check: clean (${concepts.length} concepts, ${SUBJECTS.length} subjects${REINDEX ? ', views current by okf-reindex' : ''})`);
+  try { execFileSync(process.execPath, [REINDEX, BASE, '--check'], { stdio: ['ignore', 'pipe', 'pipe'] }); }
+  catch (e) { console.error(`check: the regenerator reports stale views:\n${e.stdout}`); process.exit(1); }
+  console.log(`check: clean (${concepts.length} concepts, ${SUBJECTS.length} subjects, views current by okf-reindex)`);
 } else {
   for (const [rel, text] of writes) {
     fs.mkdirSync(path.dirname(path.join(BASE, rel)), { recursive: true });
     fs.writeFileSync(path.join(BASE, rel), text);
   }
-  if (REINDEX) execFileSync(process.execPath, [REINDEX, BASE], { stdio: ['ignore', 'ignore', 'inherit'] });
+  execFileSync(process.execPath, [REINDEX, BASE], { stdio: ['ignore', 'ignore', 'inherit'] });
   const { secondary: _s, changes: _c, ...summary } = report;
   console.log(JSON.stringify({ ...summary, written: writes.size }, null, 2));
 }
