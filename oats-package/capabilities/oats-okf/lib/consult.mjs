@@ -421,18 +421,31 @@ function onePath(positionals, label) {
 
 // ---------------------------------------------------------------- protection
 // oats.okf 6.0: every Git base's accepted branch should take changes by PR
-// only, merged by the knowledge maintainer. One read-only, best-effort GitHub
-// read per base reports it; it never refuses anything. Branch rulesets are
-// what this endpoint returns: classic branch protection is not visible to it.
+// only, merged by the knowledge maintainer. Two read-only, best-effort GitHub
+// reads per base report it; they never refuse anything. The branch rules
+// endpoint shows rulesets only, so classic branch protection is read too:
+// GitHub answers 404 "Branch not protected" when the caller may read it and
+// there is none, and 404 "Not Found" (or 403) when the caller may not.
+// enforced: a ruleset requires a PR or restricts pushes, or classic protection
+// exists; none: both reads succeeded and neither protects; unknown otherwise.
 const GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
 export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout }) } = {}) {
   if (base.kind !== 'git' || !GITHUB_REMOTE.test(base.repository)) return 'unknown';
-  let rules;
-  try { rules = JSON.parse(run(['api', `repos/${base.pr.repository}/rules/branches/${base.acceptedBranch}`], gitTimeoutMs())); }
-  catch { return 'unknown'; }
-  if (!Array.isArray(rules)) return 'unknown';
+  const repo = `repos/${base.pr.repository}`, branch = base.acceptedBranch;
+  let rules = null;
+  try { const v = JSON.parse(run(['api', `${repo}/rules/branches/${branch}`], gitTimeoutMs())); if (Array.isArray(v)) rules = v; } catch { /* unreadable */ }
   // A rule that forbids updates outside a PR, or restricts who may push.
-  return rules.some(r => r && ['pull_request', 'update'].includes(r.type)) ? 'enforced' : 'none';
+  if (rules?.some(r => r && ['pull_request', 'update'].includes(r.type))) return 'enforced';
+  let classic = 'unreadable';
+  try {
+    const v = JSON.parse(run(['api', `${repo}/branches/${branch}/protection`], gitTimeoutMs()));
+    if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.url === 'string') classic = 'present';
+  } catch (e) {
+    let body = null; try { body = JSON.parse(String(e?.stdout ?? '')); } catch { /* not GitHub's answer */ }
+    if (body?.message === 'Branch not protected') classic = 'absent';
+  }
+  if (classic === 'present') return 'enforced';
+  return rules && classic === 'absent' ? 'none' : 'unknown';
 }
 
 // ---------------------------------------------------------------- commands

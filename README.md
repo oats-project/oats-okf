@@ -346,7 +346,9 @@ Then, from its instance home, in five steps:
    over everything that would leave the host (the tree delta, file names,
    the commit text, the PR body) and prints the **complete outgoing diff**,
    the commit text, the PR body with its provenance block and a **digest**
-   of the clone's proposed tree, `proposal.md` and the note hashes. The
+   of the clone's proposed tree, `proposal.md`, the note hashes and the
+   generated commit text and PR body themselves (payload version 2), so
+   `--apply` publishes exactly the bytes `--check` printed. The
    `okf-propose` skill requires the agent to read that diff once as a
    reviewer would, against `knowledge-theory`'s reject list and the
    personal-data sentence, before the next step. Nothing remote changes.
@@ -355,10 +357,17 @@ Then, from its instance home, in five steps:
    package's fixed author text), pushes create-only to a fresh
    `okf-proposal/<UTC date>-<uuid>` branch through the publication helper's
    `create` (which replays the proposal onto an accepted branch that moved
-   before the push, up to three times), labels it `okf-proposal`, opens the
+   before the push, up to three times, unless the base's `okf-base.json`
+   changed: `propose` passes it as the helper's `--guard-file`, and a changed
+   one refuses `E_BASE_MOVED`, reason `guarded-file-changed`, before any
+   push), labels it `okf-proposal`, opens the
    PR with a version 3 provenance block, and prints each PR's URL, head,
    branch, the accepted commit it is parented on (`base`) and `recovered`.
-   One PR per changed owned base; one attempt per proposal.
+   One PR per changed owned base; **one attempt per proposal**: the
+   `publish/` directory marks it, and a second `--apply` refuses
+   `E_PROPOSAL_EXISTS` (plan a new proposal instead). `tasks.refs` in the
+   provenance is always `[]`: the proposal's own `## Evidence` carries any
+   task refs.
 5. **Record and go back to work.** The agent writes the PR URLs in log.md.
    It never shepherds the PR: the `proposal-review` trigger spawns the
    maintainer; where no trigger is installed the agent may spawn one
@@ -370,7 +379,11 @@ deployment: `oats okf propose --home <retirement recovery directory> --soul
 <soul> --plan | --check | --apply ...`, the same three steps. `--home` names
 the recovery directory holding `recovery.json`; the record, the policy and
 the notes are read from its copied home, and the proposal directory is made
-there. The provenance names the form (`proposer.form: "recovery"`). A live
+**in that copied home** (`<recovery>/home/proposals/…`, or under
+`after-hooks/home` when the recovery says so), never in the caller's home.
+The provenance names the form (`proposer.form: "recovery"`) and the caller:
+`proposer.instance` is the instance the operator runs it from, or `null`
+when run from the deployment with no instance. A live
 home works the same way with `--home <instance home>`.
 
 A recovery copy without the spawn-recorded policy (a retired 4.x or 5.0/5.1
@@ -388,16 +401,17 @@ the spawn or the workspace set is ignored and named in `--plan`'s
 
 | Code | When |
 |---|---|
-| `E_USAGE` | not exactly one of `--plan`, `--check`, `--apply`; a bad `--slug`; `--apply` without `--digest`; nothing changed in any clone |
+| `E_USAGE` | not exactly one of `--plan`, `--check`, `--apply`; a bad `--slug`; `--apply` without `--digest`; nothing changed in any clone ("nothing to propose") |
+| `E_CONFIG` | an owned base not bound, an unreadable or mismatched accepted `okf-base.json`, `screen-terms-file` not a normalized absolute path; at spawn, `publish` set by the host or a spawn flag, a soul `publish` value other than `off`, or a soul `knowledge.propose` key |
 | `E_SOURCE` | no usable record: not an instance home or recovery, a record naming another home, a service home, an incomplete recovery, a soul that is not the record's, or a live home without a spawn-recorded duty (a 5.0/5.1 home: respawn it; `oats instance upgrade` keeps the duty unknown); in the recovery form, a retired seat without one whose soul or record cannot be decided (below) |
 | `E_OPTED_OUT` | the spawn-recorded policy is `off`, or the soul's own text says `harvest: off` or `publish: off` |
 | `E_PROPOSAL_EXISTS` | `--plan`: a proposal directory of that slug exists; `--apply`: the proposal was already applied or attempted (never retried) |
 | `E_SCOPE` | a changed path outside the write surface (named): `okf-base.json`, the root `log.md`, a hidden, non-Markdown or executable file, anything outside the base root |
 | `E_OWNER` | `okf.json` and the accepted `okf-base.json` disagree on an owned node (as `resolveNodes`), or a changed path inside a node the soul does not own |
-| `E_VALIDATION` | the proposed tree is not a valid OKF base |
-| `E_DIGEST` | the clone, `proposal.md` or a named note changed since `--check` |
+| `E_VALIDATION` | the proposed tree is not a valid OKF base (`okf-validate --strict`) |
+| `E_DIGEST` | the clone, `proposal.md`, a named note or the generated commit text or PR body changed since `--check` (a changed record changes the PR body) |
 | `E_CONTENT_REFUSED` / `E_CONTENT_INPUT` | the content screen's codes (findings name locations and rules only; `host-term` is the host's own list) |
-| `E_PROPOSAL_FORMAT` | `proposal.md` malformed (title, a missing or empty section, a provenance block of its own) or a backing-note line unreadable under the 5.8 note-locator rules |
+| `E_PROPOSAL_FORMAT` | `proposal.md` malformed (title, a missing or empty section, a provenance block of its own) or a backing-note line unreadable under the 5.8 note-locator rules; or the clone is not the one plan made (a symlink in its path, a `.git` that is a file, symlink or shared repository) |
 | `E_NOTE` | a warning in `--check`, not a refusal: a named note missing or unreadable is listed without a hash, never hashed silently |
 | `E_UNSUPPORTED` | every owned base is a directory base ("convert it to a Git base or edit it in a reviewed change"); a directory base among Git bases is skipped with that reason |
 | `E_BASE_MOVED`, `E_PUSH_UNCERTAIN`, `E_GH`, `E_PR_UNCERTAIN` | the publication helper's codes, unchanged: the clone, the commit text, the PR body and a safe result stay in the proposal directory; the agent reports and does not retry, and never assumes no remote branch or PR exists |
@@ -550,11 +564,15 @@ maintainer's account. On GitHub, a branch ruleset on the accepted branch
 deletion), or the classic equivalent; a deployment that protects the branch
 by other means meets it too. The `okf-trigger-setup` skill has the steps.
 `oats okf bases` reports `protection: enforced | none | unknown` per Git
-base, read with one `gh api repos/<owner>/<repo>/rules/branches/<branch>`:
-`enforced` when an active rule requires a PR or restricts updates, `unknown`
-when `gh` is absent, the read fails or the base is not on GitHub. It is
-read-only, best-effort and bounded by `git-timeout`, never a refusal. Classic
-branch protection is not visible to that read and reports `none`.
+base, from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
+(rulesets) and `gh api repos/<owner>/<repo>/branches/<branch>/protection`
+(classic branch protection, which the first never shows). `enforced` when an
+active ruleset requires a PR or restricts updates, or when classic protection
+exists; `none` only when both reads succeed and neither protects (GitHub
+answers the classic read with 404 `Branch not protected`); `unknown` when
+either read cannot be made (`gh` absent, 404 `Not Found` or 403 for a caller
+without admin read, a failure) or the base is not on GitHub. It is read-only,
+best-effort and bounded by `git-timeout`, never a refusal.
 
 The maintainer is spawned per PR by the **`proposal-review` trigger
 template** (`oats.okf:proposal-review`, definition id `okf-proposal-review`):
@@ -720,6 +738,10 @@ unknown operation.
   unknown). `oats okf harvest` answers `E_REMOVED` naming `oats okf propose`;
   `oats okf-harvest complete|harvest-status` and
   `oats okf-maintenance notify-harvester` answer `E_REMOVED`.
+  A stub command answers only where it is composed: a home that does not
+  compose `oats.okf-harvest` (every working home) gets the kernel's own
+  `E_UNKNOWN_COMMAND` for `oats okf-harvest …`; the stub soul's spawn refusal
+  and `oats okf harvest` are what reach every caller.
 - **Harvesters already running** keep their 5.x modules and finish, or a
   person retires them; a retained one is retired and its claims re-proposed
   by the source with `oats okf propose`, or by the operator form on its

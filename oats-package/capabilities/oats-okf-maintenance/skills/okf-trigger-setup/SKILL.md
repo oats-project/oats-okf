@@ -84,13 +84,15 @@ deployment that protects the branch by other means. Then check:
 oats okf bases --soul <a soul that reads the base>    # protection: enforced | none | unknown, per Git base
 ```
 
-`oats okf bases` reads the branch's active rulesets with one `gh api
-repos/<owner>/<repo>/rules/branches/<branch>`: `enforced` when a rule
-requires a PR or restricts updates, `none` when no such ruleset applies,
-`unknown` when `gh` is absent, the read fails or the base is not on GitHub.
-It is read-only and never refuses anything. Classic branch protection is not
-visible to that read, so a classically protected base reports `none`: say
-which one you set up when you report it.
+`oats okf bases` reads the branch's active rulesets (`gh api
+repos/<owner>/<repo>/rules/branches/<branch>`) and its classic protection
+(`gh api repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when
+a ruleset requires a PR or restricts updates, or classic protection exists;
+`none` only when both reads succeed and neither protects; `unknown` when
+either read fails (`gh` absent, or an account without admin read on the
+repository: GitHub answers 404 `Not Found` or 403) or the base is not on
+GitHub. It is read-only and never refuses anything. Run it with an account
+that may read the repository's settings, or read `unknown` as "check by hand".
 
 ## 3. Messaging
 

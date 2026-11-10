@@ -23,20 +23,27 @@ the release lane's.
   (`E_SCOPE`, `E_OWNER`), reads `proposal.md` (`E_PROPOSAL_FORMAT`, the 5.8
   note-locator rules), hashes the named notes (a missing one is dropped with
   an `E_NOTE` warning), runs the content screen over the full outgoing
-  content and prints the complete outgoing diff, the commit text, the PR body
-  and a digest. `--apply` refuses `E_DIGEST` if anything changed, commits,
+  content and prints the complete outgoing diff (raw text: `--text
+  --no-textconv`), the commit text, the PR body and a digest that binds the
+  tree, `proposal.md`, the note hashes and the generated commit text and PR
+  body (payload version 2). `--apply` refuses `E_DIGEST` if anything changed, commits,
   pushes create-only to `okf-proposal/<UTC date>-<uuid>` through the
-  publication helper's `create` (which recovers a pre-push base move, #130),
+  publication helper's `create` (which recovers a pre-push base move, #130,
+  unless the base's `okf-base.json` changed: `--guard-file`, below),
   labels `okf-proposal` and opens one PR per changed base with a version 3
-  provenance block. One attempt per proposal; a publication error retains
-  the clone and artefacts and is never retried. Refusals: `E_USAGE`,
-  `E_SOURCE`, `E_OPTED_OUT`, `E_PROPOSAL_EXISTS`, `E_SCOPE`, `E_OWNER`,
-  `E_VALIDATION`, `E_DIGEST`, `E_CONTENT_REFUSED`/`E_CONTENT_INPUT`,
+  provenance block (`tasks.refs` always `[]`). One attempt per proposal: a
+  second `--apply` refuses `E_PROPOSAL_EXISTS`; a publication error retains
+  the clone and artefacts and is never retried. Refusals: `E_USAGE`
+  (including "nothing to propose"), `E_CONFIG`, `E_SOURCE`, `E_OPTED_OUT`,
+  `E_PROPOSAL_EXISTS`, `E_SCOPE`, `E_OWNER` (also a path inside another
+  soul's node), `E_VALIDATION`, `E_DIGEST`, `E_CONTENT_REFUSED`/`E_CONTENT_INPUT`,
   `E_PROPOSAL_FORMAT`, `E_UNSUPPORTED` (directory bases), and the helper's
   `E_BASE_MOVED`, `E_PUSH_UNCERTAIN`, `E_GH`, `E_PR_UNCERTAIN` unchanged.
 - **The operator form:** `oats okf propose --home <instance home | retirement
   recovery directory> --soul <soul> ...` from the deployment, for a source
-  that retired without proposing; the provenance names the form.
+  that retired without proposing. The proposal directory is made in the
+  recovery's copied home; the provenance names the form, and
+  `proposer.instance` is the caller's instance or `null` from the deployment.
 - **Provenance version 3** (fence `okf-proposal`): the source's incarnation
   and the proposer (`live` or `recovery`), no harvester. The maintainer's
   parser reads it beside versions 1 and 2 (fence `okf-harvest`), strictly;
@@ -44,15 +51,22 @@ the release lane's.
   and the proposer.
 - **The publication helper** accepts an `okf-proposal/` branch with a v3 body
   under the `okf-proposal` label beside `okf-harvest/` with v2 (both through
-  6.x); `rewrite`, `merge` and `close` accept a v3 PR.
+  6.x); `rewrite`, `merge` and `close` accept a v3 PR. `create` takes an
+  optional `--guard-file <repository path>`: its base-move recovery refuses
+  `E_BASE_MOVED` (reason `guarded-file-changed`) instead of replaying the
+  delta when that file differs on the moved accepted tip.
 - **Setting `screen-terms-file`** (optional host setting): one term per line;
   the content screen refuses any outgoing content containing a term,
   case-insensitively, as rule `host-term`, location only. It only adds
   refusals.
 - **`oats okf bases` reports `protection: enforced | none | unknown`** per
-  Git base, from one `gh api repos/<owner>/<repo>/rules/branches/<branch>`:
-  read-only, best-effort, bounded by `git-timeout`, never a refusal. Branch
-  rulesets only: classic branch protection reports `none`.
+  Git base, from the rulesets read (`gh api
+  repos/<owner>/<repo>/rules/branches/<branch>`) and the classic read (`gh api
+  repos/<owner>/<repo>/branches/<branch>/protection`): classic protection
+  reads `enforced`, never `none`; `none` only when both reads succeed and
+  neither protects; `unknown` when either cannot be read (a caller without
+  admin read gets 404 `Not Found` or 403). Read-only, best-effort, bounded by
+  `git-timeout`, never a refusal.
 - **Trigger template `proposal-review`** (id `okf-proposal-review`, labels
   `okf-proposal` and `okf-harvest`). `harvest-review` stays as a
   byte-identical alias through 6.x.
@@ -87,6 +101,10 @@ the release lane's.
   `oats okf-harvest complete|harvest-status` and
   `oats okf-maintenance notify-harvester` answer `E_REMOVED` ("there is no
   harvester; the proposer reads the PR" for the last).
+  A stub command answers only where it is composed: a home that does not
+  compose `oats.okf-harvest` (every working home) gets the kernel's own
+  `E_UNKNOWN_COMMAND` for `oats okf-harvest …`; the stub soul's spawn refusal
+  and `oats okf harvest` are what reach every caller.
 
 #### Upgrading to 6.0
 
