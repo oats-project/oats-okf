@@ -497,12 +497,19 @@ function prepare(source, dir, plan) {
     if (!list.length) { results.push({ alias: entry.alias, clone, accepted, tree: treeId, changed: [] }); continue; }
     checkScope(owned, scope, list);
     validateTree(clone, owned, treeId);
+    // outgoing/ keeps a readable copy; the screen reads this invocation's own
+    // private copy, so a concurrent --check cannot swap the bytes it screens.
     const commitFile = join(outgoing, `${entry.alias}-commit.txt`), bodyFile = join(outgoing, `${entry.alias}-pr.md`);
     atomic(commitFile, message); atomic(bodyFile, body);
     // A throwaway commit of exactly what would be pushed: the helper screens
     // the full outgoing history, the commit text and the PR body.
     const probe = git(clone, [...IDENTITY, 'commit-tree', treeId, '-p', accepted], { input: message });
-    runHelper('screen', { repo: clone, base: accepted, head: probe, 'text-file': [commitFile, bodyFile], ...(terms ? { 'terms-file': terms } : {}) });
+    const scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-propose-texts-'));
+    try {
+      const own = [join(scratch, `${entry.alias}-commit.txt`), join(scratch, `${entry.alias}-pr.md`)];
+      fs.writeFileSync(own[0], message, { mode: 0o600 }); fs.writeFileSync(own[1], body, { mode: 0o600 });
+      runHelper('screen', { repo: clone, base: accepted, head: probe, 'text-file': own, ...(terms ? { 'terms-file': terms } : {}) });
+    } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
     const diff = git(clone, ['diff', '--no-color', '--no-renames', '--no-ext-diff', '--text', '--no-textconv', accepted, probe], { trim: false, maxBuffer: 64 * 1024 * 1024 });
     results.push({ alias: entry.alias, clone, accepted, tree: treeId, owned, changed: list.map(c => `${c.status} ${c.path}`), diff, commitFile, bodyFile });
   }
@@ -579,6 +586,10 @@ export function apply(source, slug, expected) {
   for (const r of p.results.filter(x => x.changed.length)) {
     const branch = `okf-proposal/${stamp}-${randomUUID()}`;
     const report = join(publish, `${r.alias}-result.json`);
+    // The digest bound these exact texts in memory: snapshot them into this
+    // attempt's own directory (a concurrent --check rewrites outgoing/).
+    const commitFile = join(publish, `${r.alias}-commit.txt`), bodyFile = join(publish, `${r.alias}-pr.md`);
+    atomic(commitFile, p.message); atomic(bodyFile, p.body);
     try {
       git(r.clone, ['update-ref', `refs/heads/${branch}`, r.accepted, '']);
       git(r.clone, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
@@ -586,9 +597,9 @@ export function apply(source, slug, expected) {
       git(r.clone, ['add', '-A', '--', '.']);
       if (git(r.clone, ['write-tree']) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the clone changed after the digest was checked; nothing was pushed`);
       const terms = p.terms ? { 'terms-file': p.terms } : {};
-      const committed = runHelper('commit', { repo: r.clone, base: r.accepted, head: r.accepted, branch, 'commit-file': r.commitFile, ...terms });
+      const committed = runHelper('commit', { repo: r.clone, base: r.accepted, head: r.accepted, branch, 'commit-file': commitFile, ...terms });
       const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
-        'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': r.bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
+        'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
       atomic(report, JSON.stringify({ ok: true, ...row }, null, 2) + '\n');
       published.push(row);

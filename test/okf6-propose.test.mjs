@@ -415,7 +415,9 @@ async function inProcess(f, fn) {
   for (const k of Object.keys(process.env)) if (/^GIT_(?!CONFIG_)/.test(k)) delete process.env[k];
   process.chdir(f.home);
   const calls = [], real = publication.execute;
-  publication.execute = (command, o) => { calls.push([command, structuredClone(o)]); return real(command, o); };
+  // Record each call's options and the bytes of its text inputs at call time.
+  const bytes = o => Object.fromEntries(['text-file', 'commit-file', 'body-file'].filter(k => o[k]).map(k => [k, [o[k]].flat().map(file => fs.readFileSync(file, 'utf8'))]));
+  publication.execute = (command, o) => { calls.push([command, structuredClone(o), bytes(o)]); return real(command, o); };
   try { return await fn(calls); }
   finally { publication.execute = real; process.chdir(cwd); for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); }
 }
@@ -435,23 +437,26 @@ test('condition 1: --check and --apply feed the shipped helper exactly the harve
       const checked = propose(f.home, { check: true, slug: 'same' }).result;
       const extra = withTerms ? { 'terms-file': terms } : {};
       // --check: the helper's `screen` over the exact outgoing range and both outgoing texts.
-      assert.equal(calls.length, 1); const [cmd, screen] = calls[0];
+      assert.equal(calls.length, 1); const [cmd, screen, screened] = calls[0];
       assert.equal(cmd, 'screen');
       assert.deepEqual(Object.keys(screen).sort(), ['base', 'head', 'repo', 'text-file', ...Object.keys(extra)].sort());
       assert.equal(screen.repo, clone); assert.equal(screen.base, accepted); assert.equal(screen['terms-file'], extra['terms-file']);
-      const [commitFile, bodyFile] = screen['text-file'];
-      assert.equal(fs.readFileSync(commitFile, 'utf8'), checked.commitText); assert.equal(fs.readFileSync(bodyFile, 'utf8'), checked.prBody);
+      assert.deepEqual(screened['text-file'], [checked.commitText, checked.prBody], 'the screen read exactly the texts --check printed');
       calls.length = 0;
       const [pr] = propose(f.home, { apply: true, slug: 'same', digest: checked.digest }).result.prs;
       // --apply: the same screen again (it re-verifies before any write), then exactly the
       // harvester's commit and create, with its flags bound to the same values.
       assert.deepEqual(calls.map(([c]) => c), ['screen', 'commit', 'create']);
-      const [[, rescreen], [, commit], [, create]] = calls;
-      assert.deepEqual({ ...rescreen, head: undefined }, { ...screen, head: undefined });
+      const [[, rescreen, rescreened], [, commit, committedText], [, create, createdText]] = calls;
+      assert.deepEqual({ ...rescreen, head: undefined, 'text-file': undefined }, { ...screen, head: undefined, 'text-file': undefined });
+      assert.deepEqual(rescreened, screened);
       assert.equal(f.git(clone, 'rev-parse', `${rescreen.head}^{tree}`), f.git(clone, 'rev-parse', `${screen.head}^{tree}`));
       assert.deepEqual(Object.keys(commit).sort(), [...Object.keys(expected.commit), ...Object.keys(extra)].sort());
       // One addition to the harvester's create: the base's okf-base.json guards base-move recovery.
       assert.deepEqual(Object.keys(create).sort(), [...Object.keys(expected.create), 'guard-file', ...Object.keys(extra)].sort());
+      // The texts --apply publishes are this attempt's own snapshot (publish/), the bytes --check printed.
+      const commitFile = join(plan.proposal, 'publish', 'kb-commit.txt'), bodyFile = join(plan.proposal, 'publish', 'kb-pr.md');
+      assert.deepEqual([committedText['commit-file'], createdText['body-file']], [[checked.commitText], [checked.prBody]]);
       assert.deepEqual(commit, { repo: clone, base: accepted, head: accepted, branch: pr.branch, 'commit-file': commitFile, ...extra }, 'harvester: --base "$base" --head "$base"');
       assert.deepEqual(create, { repo: clone, remote: f.origin, github: 'acme/kb', base: accepted, 'base-branch': 'main', head: pr.head, branch: pr.branch, 'body-file': bodyFile, 'guard-file': 'okf-base.json', ...extra },
         'harvester: --remote <recorded clone locator> --github <owner>/<repo> --base-branch <acceptedBranch> --head "$head"');
@@ -669,4 +674,42 @@ test('identifiers the bindings accept work end to end: a 96-character alias and 
   assert.equal(block.valid, true, block.problems.join('; '));
   assert.deepEqual([block.value.source.ownedNodes, block.value.source.bases[0].alias], [[`${alias}/Expert`], alias]);
   assert.ok(ok(f.run(['--apply', '--slug', 'x', '--digest', checked.digest])).prs[0].url);
+});
+
+// Round-7 review findings (PR #131 at cf51148).
+test('a concurrent --check between apply\'s digest check and its publication cannot change the published texts', async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'x' }).result; edit(f, plan);
+    const checked = propose(f.home, { check: true, slug: 'x' }).result;
+    // Interleave a second, ordinary --check (with new wording) just before apply's commit.
+    const real = publication.execute; let interleaved = false;
+    publication.execute = (command, o) => {
+      if (command === 'commit' && !interleaved) {
+        interleaved = true;
+        fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL().replace('retry budget is per request', 'retry budget, reworded'));
+        publication.execute = real; propose(f.home, { check: true, slug: 'x' }); publication.execute = wrapped;
+      }
+      return real(command, o);
+    };
+    const wrapped = publication.execute;
+    try {
+      const [pr] = propose(f.home, { apply: true, slug: 'x', digest: checked.digest }).result.prs;
+      assert.equal(interleaved, true);
+      const msg = f.git(f.dir, '--git-dir', f.origin, 'cat-file', '-p', pr.head).split('\n\n').slice(1).join('\n\n');
+      assert.equal(msg.trim(), checked.commitText.trim(), 'the published commit text is the checked one');
+      assert.equal(f.prs().at(-1).body, checked.prBody, 'the published PR body is the checked one');
+    } finally { publication.execute = real; }
+  });
+});
+
+test('a soul\'s publish: off never excuses a host or spawn harvest key (only harvest\'s own soul-origin off does)', async () => {
+  const { legacySettings } = await import('../oats-package/capabilities/oats-okf/lib/legacy-settings.mjs');
+  const env = (settings, origins) => ({ OATS_SETTINGS: JSON.stringify(settings), OATS_SETTINGS_ORIGINS: JSON.stringify(Object.fromEntries(Object.entries(origins).map(([k, kind]) => [`/${k}`, { kind, at: 'x' }]))) });
+  for (const kind of ['host', 'spawn']) {
+    const found = legacySettings(env({ publish: 'off', harvest: 'on' }, { publish: 'soul', harvest: kind }));
+    assert.deepEqual(found.map(x => [x.key, x.kind]), [['harvest', kind]]);
+  }
+  assert.deepEqual(legacySettings(env({ harvest: 'off' }, { harvest: 'soul' })), [], 'the soul\'s own harvest: off is the opt-out');
+  assert.deepEqual(legacySettings(env({ harvest: 'off' }, { harvest: 'host' })).map(x => x.key), ['harvest'], 'a host off masks nothing and refuses');
 });

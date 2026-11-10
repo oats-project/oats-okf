@@ -38,7 +38,9 @@ export function legacySettings(env = process.env) {
   let settings; try { settings = JSON.parse(env.OATS_SETTINGS || '{}'); } catch { return []; }
   if (!settings || typeof settings !== 'object') return [];
   const origins = parseOrigins(env.OATS_SETTINGS_ORIGINS);
-  return LEGACY_KEYS.filter((key) => Object.hasOwn(settings, key) && !defaulted(origins, key) && !(key === 'harvest' && soulOptOut(env))).map((key) => {
+  return LEGACY_KEYS.filter((key) => Object.hasOwn(settings, key) && !defaulted(origins, key) && !(key === 'harvest' && settings.harvest === 'off' && origins['/harvest']?.kind === 'soul')).map((key) => {
+    // Only the harvest key's OWN soul-origin off is the opt-out; a soul's
+    // publish: off never excuses a host or spawn harvest key.
     const layer = origins[`/${key}`], kind = typeof layer?.kind === 'string' ? layer.kind : null, at = typeof layer?.at === 'string' ? layer.at : null;
     const origin = kind ? `from ${kind}${at ? ` (${at})` : ''}` : 'from an unknown origin';
     let setting = key, remedy;
