@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX, VALIDATE } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
+import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
@@ -337,9 +337,8 @@ test('spawn: a version-2 soul resolving across two cached Git bases fetches neit
   assert.deepEqual(stamps(),before,'a declaration that resolves against the cached commits refreshes nothing');
 });
 
-test('a malformed flow list cannot stall validation (linear parser), on a plain base as on a bridged one',t=>{
-  const line='tags: ["foo #bar",'+' '.repeat(200000)+'""x]';
-  for(const plain of [true,false]) {
+test('a malformed flow list cannot stall validation (linear parser and scalar fallback), on a plain base as on a bridged one',t=>{
+  for(const line of ['tags: ["foo #bar",'+' '.repeat(200000)+'""x]','tags: [a,'+' '.repeat(200000)+'""x]','tags: ['+' '.repeat(200000)]) for(const plain of [true,false]) {
     const dir=join(tmp(t,'okf6-slow-'),'base');writePlainBase(dir);if(!plain) bridge(dir);
     edit(join(dir,'peer/lesson.md'),'description: A fake',`${line}\ndescription: A fake`);
     const started=Date.now(),r=spawnSync(process.execPath,[VALIDATE,dir,'--strict','--json'],{encoding:'utf8',timeout:20000});
@@ -347,6 +346,25 @@ test('a malformed flow list cannot stall validation (linear parser), on a plain 
     assert.ok(Date.now()-started<10000,`${plain?'plain':'bridged'} took ${Date.now()-started} ms`);
     const out=JSON.parse(r.stdout);
     if(plain) assert.deepEqual(out.errors,[]); else assert.ok(out.errors.includes("peer/lesson.md: malformed flow list in 'tags' (flat [a, \"b\"] items only)"));
+  }
+});
+
+test('the linear scalar reader gives exactly 5.8\'s value (its comment regex), CR and Unicode line terminators included',()=>{
+  const old=v=>v.replace(/\s+#.*$/,'').replace(/^["']|["']$/g,'').trim();
+  for(const v of ['plain # c','a#b','"q" # c','x  #  y # z','#lead',' #lead','v # c\r','v # c\rmore','v\r # c','  ','a\t# t','[WIP] t # c','"a # b"','x # c\u2028y','x\u00a0# nb','',"'s' #"]) assert.equal(scalarValue(v),old(v),JSON.stringify(v));
+  const started=Date.now();scalarValue('x'+' '.repeat(200000)+'y');assert.ok(Date.now()-started<1000);
+});
+
+test('a file name holding a backslash is refused before any read: no frontmatter from outside the base reaches a generated index',t=>{
+  for(const via of ['cli','propose']) {
+    const dir=bridged(t),outside=join(dirname(dir),'private.md');
+    fs.writeFileSync(outside,'---\ntype: Decision\ntitle: PRIVATE OUTSIDE\ndescription: PRIVATE OUTSIDE\nabout: [system/okf]\nid: dec-private\n---\n');
+    write(join(dir,'claims','x\\..\\..\\private.md'),'---\ntype: Decision\ntitle: Harmless\ndescription: Harmless.\nabout: [system/okf]\nid: dec-harmless\n---\n');
+    const view=fs.readFileSync(join(dir,'subjects/system/okf/index.md'),'utf8');
+    if(via==='cli') { const r=spawnSync(process.execPath,[REINDEX,dir],{encoding:'utf8'});assert.equal(r.status,2,r.stdout+r.stderr);assert.match(r.stderr,/E_PATH: .*a name with a backslash/); }
+    else assert.throws(()=>prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/x\\..\\..\\private.md',status:'A'}]}),e=>e.code==='E_PATH');
+    assert.equal(fs.readFileSync(join(dir,'subjects/system/okf/index.md'),'utf8'),view);
+    assert.doesNotMatch(fs.readdirSync(dir,{recursive:true}).filter(n=>n.endsWith('.md')).map(n=>fs.readFileSync(join(dir,n),'utf8')).join(''),/PRIVATE OUTSIDE/);
   }
 });
 

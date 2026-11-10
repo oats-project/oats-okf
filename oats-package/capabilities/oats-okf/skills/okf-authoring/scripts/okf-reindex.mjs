@@ -22,7 +22,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative, resolve, dirname } from "node:path";
+import { join, relative, resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SENTINEL = "00000000-0000-0000-0000-000000000000";
@@ -76,6 +76,23 @@ function listValue(value) {
   }
   return value.trim();
 }
+/** A scalar exactly as 5.8 read it, `value.replace(/\s+#.*$/, "")` then the
+ *  outer quotes and trim, in one linear pass: that regex backtracks
+ *  quadratically over a long whitespace run with no `#` after it. Its match
+ *  is the whitespace run before the first `#` that follows whitespace and has
+ *  no line terminator after it (`.` stops at \r, \u2028 and \u2029). */
+export function scalarValue(value) {
+  let cut = value.length;
+  let last = -1;
+  for (let i = value.length - 1; i >= 0; i--) if (/[\n\r\u2028\u2029]/.test(value[i])) { last = i; break; }
+  for (let j = Math.max(last + 1, 1); j < value.length; j++) {
+    if (value[j] !== "#" || !/\s/.test(value[j - 1])) continue;
+    let i = j - 1;
+    while (i > 0 && /\s/.test(value[i - 1])) i--;
+    cut = i; break;
+  }
+  return value.slice(0, cut).replace(/^["']|["']$/g, "").trim();
+}
 /** Where the bracket opened at 0 closes (outside double quotes), or -1 when
  *  it never does: `[a, [b] junk` is unclosed, `[WIP] title` closes at 4. */
 function closesAt(value) {
@@ -111,7 +128,7 @@ export function parseFrontmatter(text) {
       else if (closed < 0) list = null;
     }
     if (list === null) listErrors.push(kv[1]);
-    meta[kv[1]] = Array.isArray(list) ? list : kv[2].replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "").trim();
+    meta[kv[1]] = Array.isArray(list) ? list : scalarValue(kv[2]);
   }
   return { present: true, parsed: true, meta, listErrors, body: text.slice(m[0].length) };
 }
@@ -339,7 +356,9 @@ export function markdownFiles(root) {
       if (e.name.startsWith(".")) continue;
       const p = join(d, e.name);
       if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith(".md")) files.push(relative(root, p).split("\\").join("/"));
+      // Only the native separator becomes `/`; a `\\` in a name is refused by
+      // assertSafeTree and never turned into a path segment.
+      else if (e.name.endsWith(".md")) files.push(relative(root, p).split(sep).join("/"));
     }
   })(root);
   return files.sort(byText);
@@ -350,7 +369,9 @@ export function readConcepts(root) {
   const concepts = new Map();
   for (const p of markdownFiles(root)) {
     if (isReservedFile(p)) continue;
-    const fm = parseFrontmatter(readFileSync(join(root, p), "utf8"));
+    const file = resolve(root, p);
+    if (!file.startsWith(root.endsWith(sep) ? root : root + sep)) throw Object.assign(new Error(`${p}: outside the base`), { code: "E_PATH" });
+    const fm = parseFrontmatter(readFileSync(file, "utf8"));
     concepts.set(p, fm.parsed ? fm.meta : {});
   }
   return concepts;
@@ -375,6 +396,7 @@ export function assertSafeTree(root) {
     for (const e of readdirSync(d)) {
       if (e.startsWith(".")) continue;
       const p = join(d, e), s = lstatSync(p);
+      if (e.includes("\\")) bad(p, "a name with a backslash (not a base path)");
       if (s.isSymbolicLink()) bad(p, "a symlink");
       else if (s.isDirectory()) walk(p);
       else if (!s.isFile()) bad(p, "not a regular file");
