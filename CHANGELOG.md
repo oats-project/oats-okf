@@ -45,6 +45,19 @@ harvester admits a source it refused before.
   opt-out. Covers awebai/oats-okf#99's retired seats and the homes
   awebai/oats-okf#100 retires with `oats retire --force`; 4.x live-home
   machinery stays removed.
+- **A pre-push `E_BASE_MOVED` in `create` is recovered by replaying the
+  proposal onto the new accepted tip, up to three times; the result reports
+  `base` and `recovered`.** (awebai/oats-okf#129.) The recovery fetches the
+  accepted branch, requires a fast-forward, replays the delta with the same
+  three-way reconcile `rewrite` uses, re-screens the new range and pushes
+  create-only as before. Exhausted retries, a conflict, a rewritten accepted
+  branch, nothing left to publish or a failed fetch still refuse
+  `E_BASE_MOVED`, now with a fixed `diagnostic`
+  (`{ phase: 'recover', attempts, reason }`). A move after the push keeps
+  `E_PR_UNCERTAIN`. The harvest skill reports `base` as the accepted commit
+  the PR is parented on. No flag, setting or error code changes; deployments
+  need no action. A harvester retained on 5.8.0 keeps its modules: retire it
+  and relaunch its proposal on the new version.
 
 ### Diagnostics
 
