@@ -105,8 +105,9 @@ proposer's copy, with the maintenance copy identical (the manifests test checks 
   `E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run
   `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from
   the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any
-  --provider oats.okf harvest=... spawn flag; rename the trigger template oats.okf:harvest-review to
-  oats.okf:proposal-review. See the 6.0 release note.` The stub's skills, scripts and `complete`/`harvest-status`
+  --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review beside
+  oats.okf:harvest-review, and remove the old one once no 5.x harvester can open an okf-harvest PR. See the 6.0
+  release note.` The stub's skills, scripts and `complete`/`harvest-status`
   commands are gone (`E_REMOVED` as today for the commands). The stub is removed in 7.0, when the name becomes
   unknown. `oats-package/oats-package.json` keeps both entries and says what the stub is.
 - `knowledge: { harvest: off }` in a soul keeps its meaning (this soul's instances never publish knowledge) and
@@ -177,7 +178,7 @@ this spec is the build record.
    `oats.okf/knowledge-harvester` is refused by the stub soul's required spawn hook with the `E_REMOVED` text of
    §4 (a bare unknown-soul error is not enough), and the release note and README name what to delete from a
    deployment's configuration (`souls.launch` keys for the harvester, any `--provider` harvest keys, the
-   `harvest-review` trigger rename) and what replaces the harvest (`oats okf propose` from the instance home;
+   `proposal-review` trigger added beside `harvest-review`) and what replaces the harvest (`oats okf propose` from the instance home;
    the operator form on a recovery), with the hand steps as exact commands.
 3. Every instance's knowledge instructions change in the same release: the inject, `okf-propose`,
    `okf-instance-knowledge`, `knowledge-theory`'s runtime notes, the maintainer soul's AGENTS.md and
