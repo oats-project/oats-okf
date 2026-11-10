@@ -11,6 +11,7 @@ import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcep
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
+import { prepareSubjectProposal, checkWriteSurface, proposalFindings, proposalVerdicts, verdictSection, legacyMap } from '../oats-package/capabilities/oats-okf/lib/write-surface.mjs';
 // oats.okf 6.0, the subject layout (spec docs/design/2026-11-10-subject-layer-in-oats-okf.md):
 // a bridged version-1 base, validator v2, the regenerator, okf.json version 2,
 // the spawn brief, the subject verbs and the verdict lanes. The 5.8 fact: the
@@ -344,4 +345,96 @@ test('readiness (binding check) resolves a version-2 soul\'s subjects; unresolve
 test('the portable binding keeps owner/stores/reads/owns and refuses a subjects payload with E_CONFIG naming the limit',()=>{
   assert.throws(()=>normalizeKnowledgeDeclaration({contract:'oats.okf.locations',version:1,payload:{subjects:['system/okf']}}),
     e=>e.code==='E_CONFIG' && /carries okf\.json version 1 owner\/owns\/reads only; a version-2 subjects declaration is read from the soul's okf\.json through the bindings-file setting/.test(e.message));
+});
+
+// ------------------------------------------------------------- the write surface (propose --check)
+/** A bridged base, a snapshot of its accepted texts, and a proposal's changes. */
+function proposal(t) {
+  const root=bridged(t),accepted=new Map();
+  const walk=d=>{for(const e of fs.readdirSync(join(root,d),{withFileTypes:true})) {const p=d?`${d}/${e.name}`:e.name;if(e.isDirectory()) walk(p); else accepted.set(p,fs.readFileSync(join(root,p),'utf8'));}};
+  walk('');
+  const changes=()=>{const now=new Map();const w=d=>{for(const e of fs.readdirSync(join(root,d),{withFileTypes:true})) {const p=d?`${d}/${e.name}`:e.name;if(e.isDirectory()) w(p); else now.set(p,fs.readFileSync(join(root,p),'utf8'));}};w('');
+    return [...new Set([...accepted.keys(),...now.keys()])].sort().flatMap(p=>!accepted.has(p)?[{path:p,status:'A'}]:!now.has(p)?[{path:p,status:'D'}]:accepted.get(p)!==now.get(p)?[{path:p,status:'M'}]:[]);};
+  return {root,changes,before:p=>accepted.get(p) ?? null};
+}
+const V1={version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']},V2=validateDeclaration({version:2,subjects:['system/okf']});
+const OWNED={expert:'expert'};
+const NEW_CLAIM='---\ntype: Decision\ntitle: A new decision\ndescription: Decided now.\n---\n\n# A new decision\n';
+
+test('propose --check, version 1 on a bridged base: a new claim gets about: from legacy-nodes, the indexes are regenerated, and the base validates',t=>{
+  const p=proposal(t);
+  write(join(p.root,'expert/new.md'),NEW_CLAIM);
+  edit(join(p.root,'expert/index.md'),'\n* [Pin','\n* [A new decision](new.md) - Decided now.\n* [Pin');
+  const prepared=prepareSubjectProposal({root:p.root,decl:V1,ownedNodes:OWNED,changes:p.changes()});
+  assert.deepEqual(prepared,{about:['expert/new.md'],regenerated:['subjects/system/okf/index.md']});
+  assert.match(fs.readFileSync(join(p.root,'expert/new.md'),'utf8'),/^description: Decided now\.\nabout: \[system\/okf\]\n---/m);
+  assert.doesNotThrow(()=>checkWriteSurface({root:p.root,decl:V1,ownedNodes:OWNED,changes:p.changes(),before:p.before}));
+  const v=validate(p.root);
+  assert.deepEqual(v.out.errors,[]);
+  assert.deepEqual(v.out.warnings,["expert/new.md: missing 'id' (stamped by the maintainer at acceptance)"]);
+  assert.deepEqual(proposalFindings(v.out.warnings,p.changes()),[],'a proposed claim waits for the maintainer\'s id');
+  assert.deepEqual(proposalFindings(["peer/lesson.md: missing 'id' (stamped by the maintainer at acceptance)"],p.changes()),["peer/lesson.md: missing 'id' (stamped by the maintainer at acceptance)"],'only for its own files');
+});
+
+test('propose --check, version 1: E_SUBJECT when no subject names the owned node; E_SCOPE outside the owned nodes',t=>{
+  const p=proposal(t);
+  edit(join(p.root,'subjects/system/okf.md'),'legacy-nodes: [expert]','legacy-nodes: []');
+  assert.equal(legacyMap(p.root).has('expert'),false);
+  write(join(p.root,'expert/new.md'),NEW_CLAIM);
+  assert.throws(()=>prepareSubjectProposal({root:p.root,decl:V1,ownedNodes:OWNED,changes:p.changes()}),e=>e.code==='E_SUBJECT' && /expert\/new\.md: no subject on this base names node expert in its legacy-nodes/.test(e.message));
+  const q=proposal(t);
+  write(join(q.root,'peer/new.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: [workstream/knowledge]'));
+  prepareSubjectProposal({root:q.root,decl:V1,ownedNodes:OWNED,changes:q.changes()});
+  assert.throws(()=>checkWriteSurface({root:q.root,decl:V1,ownedNodes:OWNED,changes:q.changes(),before:q.before}),e=>e.code==='E_SCOPE' && e.message==='peer/new.md: a version-1 soul writes only its owned nodes (expert/) and the root index.md');
+});
+
+test('propose --check, version 2: claims/**, new system and project subjects and status: superseded pass; the regenerated indexes are part of it',t=>{
+  const p=proposal(t);
+  write(join(p.root,'claims/decisions/new.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: [system/okf, system/new-thing, workstream/knowledge]\nsupersedes: [/expert/decision.md]'));
+  write(join(p.root,'subjects/system/new-thing.md'),'---\ntype: System\ntitle: New thing\ndescription: A new system.\nin-workstreams: [workstream/knowledge]\n---\n\n# New thing\n');
+  write(join(p.root,'subjects/project/trial.md'),'---\ntype: Project\ntitle: Trial\ndescription: A trial.\nstatus: open\n---\n');
+  edit(join(p.root,'expert/decision.md'),'id: dec-000000000001','id: dec-000000000001\nstatus: superseded');
+  const prepared=prepareSubjectProposal({root:p.root,decl:V2,ownedNodes:{},changes:p.changes()});
+  assert.deepEqual(prepared.about,[]);
+  assert.deepEqual(prepared.regenerated.sort(),['subjects/index.md','subjects/project/trial/index.md','subjects/system/new-thing/index.md','subjects/system/okf/index.md','subjects/workstream/knowledge/index.md']);
+  assert.doesNotThrow(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before}));
+  const v=validate(p.root);
+  assert.deepEqual(proposalFindings(v.out.errors,p.changes()),[],'the claims/ concept without id is the maintainer\'s to stamp');
+  assert.deepEqual(proposalFindings(v.out.warnings,p.changes()),[]);
+});
+
+const SCOPE=[
+  ['verdicts/',r=>write(join(r,'verdicts/dec-000000000009.md'),'---\ntype: Verdict\n---\n'),/verdicts\/dec-000000000009\.md: only the knowledge maintainer writes verdicts\//],
+  ['subjects/workstream/',r=>edit(join(r,'subjects/workstream/knowledge.md'),'description: How','description: Why'),/subjects\/workstream\/knowledge\.md: workstreams change only on a person's cited acceptance/],
+  ['an existing system subject',r=>edit(join(r,'subjects/system/okf.md'),'status: active','status: retired'),/subjects\/system\/okf\.md: a proposal adds system and project subjects; it never changes an existing one/],
+  ['an old-node file',r=>edit(join(r,'peer/lesson.md'),'Model the refusals.','Model the outputs.'),/peer\/lesson\.md: outside the write surface/],
+  ['okf-base.json',r=>{const f=join(r,'okf-base.json'),m=JSON.parse(fs.readFileSync(f,'utf8'));m.nodes.extra={path:'extra',owner:'x'};fs.writeFileSync(f,JSON.stringify(m));},/okf-base\.json: a proposal never changes okf-base\.json/],
+  ['the root index.md by hand',r=>edit(join(r,'index.md'),'The peer node.','The peer\'s node.'),/index\.md: a version-2 proposal changes the root index\.md only through the regenerator's Subjects section/],
+  ['a deletion',r=>fs.rmSync(join(r,'claims/insights/consult-reads-one-blob.md')),/consult-reads-one-blob\.md: a proposal deletes nothing/],
+];
+for(const [name,mutate,rule] of SCOPE) test(`propose --check, version 2: E_SCOPE for ${name}`,t=>{
+  const p=proposal(t);mutate(p.root);
+  prepareSubjectProposal({root:p.root,decl:V2,ownedNodes:{},changes:p.changes()});
+  assert.throws(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before}),e=>e.code==='E_SCOPE' && rule.test(e.message),name);
+});
+
+test('propose --check: the regenerator is required; a hand-edited generated index is refused',t=>{
+  const p=proposal(t);
+  write(join(p.root,'claims/decisions/new.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: [system/okf]'));
+  // Not regenerated: the subject's index is stale.
+  assert.throws(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before}),e=>e.code==='E_SCOPE' && /subjects\/system\/okf\/index\.md: a generated index differs from okf-reindex\.mjs's output; regenerate, never edit it/.test(e.message));
+  prepareSubjectProposal({root:p.root,decl:V2,ownedNodes:{},changes:p.changes()});
+  edit(join(p.root,'subjects/system/okf/index.md'),'# oats-okf','# oats-okf, edited');
+  assert.throws(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before:p.before}),e=>e.code==='E_SCOPE' && /subjects\/system\/okf\/index\.md: a generated index differs/.test(e.message));
+});
+
+test('propose --check: verdict lanes over the proposal\'s claims, from the clone (E_VERDICT; candidates for the PR body)',t=>{
+  const p=proposal(t);
+  write(join(p.root,'claims/decisions/again.md'),`---\ntype: Decision\ntitle: Something\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n`);
+  assert.throws(()=>proposalVerdicts(p.root,p.changes()),e=>e.code==='E_VERDICT' && e.message.startsWith(`claims/decisions/again.md: claim id ${REJECTED.id} was rejected on 2026-11-10`));
+  write(join(p.root,'claims/decisions/again.md'),`---\ntype: Decision\ntitle: ${REJECTED.title.toUpperCase()}\ndescription: x\nabout: [system/okf]\n---\n`);
+  const reports=proposalVerdicts(p.root,p.changes());
+  assert.deepEqual(reports.map(r=>[r.path,r.candidates.map(c=>c.id)]),[['claims/decisions/again.md',[REJECTED.id]]]);
+  assert.match(verdictSection(reports),/^## Verdict candidates\n\n- `claims\/decisions\/again\.md`: title-hash candidate `dec-0000000000aa` \(rejected, Decision\) "Keep a harvester per proposal"/);
+  assert.equal(verdictSection([]),'');
 });
