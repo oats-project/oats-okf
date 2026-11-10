@@ -678,14 +678,16 @@ export function verdictReport(ctx, meta) {
   return verdictLanes(meta, indexText, id => { const p = `verdicts/${id}.md`, ve = entry(ctx, p); return ve && ve.type === 'file' ? read(ctx, p, ve) : null; });
 }
 export function verdicts(source, flags, positionals) {
-  if (positionals.length || typeof flags.check !== 'string') fail('E_USAGE', 'verdicts --check <claim file>');
+  // `--check FILE`: a value flag, or (where --check is a boolean switch, as for propose) the switch and one argument.
+  const file = typeof flags.check === 'string' && !positionals.length ? flags.check : flags.check === true && positionals.length === 1 ? positionals[0] : null;
+  if (!file) fail('E_USAGE', 'verdicts --check <claim file>');
   let text;
-  try { const stat = fs.statSync(flags.check); if (!stat.isFile() || stat.size > CLAIM_FILE_BYTES) throw Object.assign(new Error('not a regular file under 1 MiB'), { code: 'E_SIZE' }); text = fs.readFileSync(flags.check, 'utf8'); }
-  catch (e) { fail('E_USAGE', `cannot read claim file ${flags.check}: ${e.code || e.message}`); }
+  try { const stat = fs.statSync(file); if (!stat.isFile() || stat.size > CLAIM_FILE_BYTES) throw Object.assign(new Error('not a regular file under 1 MiB'), { code: 'E_SIZE' }); text = fs.readFileSync(file, 'utf8'); }
+  catch (e) { fail('E_USAGE', `cannot read claim file ${file}: ${e.code || e.message}`); }
   const fm = parseFrontmatter(text);
-  if (!fm.parsed) fail('E_USAGE', `${flags.check}: no parseable frontmatter`);
+  if (!fm.parsed) fail('E_USAGE', `${file}: no parseable frontmatter`);
   return withLayout(source, flags, ctx => {
-    const report = { claim: flags.check, base: ctx.alias, ...verdictReport(ctx, fm.meta), receipt: ctx.receipt };
+    const report = { claim: file, base: ctx.alias, ...verdictReport(ctx, fm.meta), receipt: ctx.receipt };
     if (report.refusal) throw Object.assign(new Error(report.refusal), { code: 'E_VERDICT', result: report });
     const lines = [
       report.identity ? `identity: ${report.identity.id} ${report.identity.verdict}${report.identity.reconsidered ? ' (reconsidered by this claim)' : ''}${report.identity.reason ? ` — ${report.identity.reason}` : ''}` : `identity: ${report.id ? `${report.id} has no verdict` : 'the claim names no id'}`,
