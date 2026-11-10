@@ -64,6 +64,9 @@ test('git base: bases primes the host cache and reports the accepted commit',t=>
   assert.ok(text.stdout.includes(`project@${head.slice(0,12)}`),text.stdout);
   // oats.okf 6.0: a base that is not on GitHub reports unknown protection, with no gh call.
   assert.equal(row.protection,'unknown');assert.match(text.stdout,/protection: unknown/);
+  // The field's question and its three answers travel with it (text and JSON).
+  const meaning='protection answers "can anyone but a reviewer land a change on the accepted branch?": enforced = a readable ruleset or classic rule requires a pull request or restricts who may push; none = both reads succeeded and neither does (classic protection with status checks only included: it gates nothing); unknown = neither read shows such a rule and at least one read failed, or the base is not on GitHub. It does not check approval counts, bypass lists or who the maintainer is';
+  assert.ok(text.stdout.includes(meaning),text.stdout);assert.equal(r.out.result.protectionMeaning,meaning);
 });
 
 test('bases reports accepted-branch protection from the rules and classic reads: enforced, none or unknown, never a refusal',async()=>{

@@ -780,15 +780,24 @@ protects the branch by other means meets it too. The `okf-trigger-setup`
 skill has the steps. `protection: enforced` does not read bypass lists or
 the admin-bypass setting.
 `oats okf bases` reports `protection: enforced | none | unknown` per Git
-base, from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
+base. The field answers one question: **can anyone but a reviewer land a
+change on the accepted branch?** `enforced` = a readable ruleset or classic
+rule requires a pull request or restricts who may push; `none` = both reads
+succeeded and neither does (classic protection with status checks only
+included, because it gates nothing); `unknown` = neither read shows such a
+rule and at least one read failed, or the base is not on GitHub. It does not
+check approval counts, bypass lists or who the maintainer is. The command prints that
+definition with its answer (and `protectionMeaning` in `--json`). It comes
+from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
 (rulesets) and `gh api repos/<owner>/<repo>/branches/<branch>/protection`
 (classic branch protection, which the first never shows). `enforced` when an
 active ruleset, or classic protection, requires a PR or restricts who may
-push; `none` only when both reads succeed and neither does (GitHub answers the
-classic read with 404 `Branch not protected`; classic protection with status
-checks only gates no direct push and reads `none` too); `unknown` when
-either read cannot be made (`gh` absent, 404 `Not Found` or 403 for a caller
-without admin read, a failure) or the base is not on GitHub. It is read-only,
+push (one such rule decides it, even if the other read failed); `none` only
+when both reads succeed and neither does (GitHub answers the classic read with
+404 `Branch not protected`; classic protection with status checks only gates
+no direct push and reads `none` too); `unknown` when no read shows such a rule
+and either read cannot be made (`gh` absent, 404 `Not Found` or 403 for a
+caller without admin read, a failure), or the base is not on GitHub. It is read-only,
 best-effort and bounded by `git-timeout`, never a refusal.
 
 The maintainer is spawned per PR by the **`proposal-review` trigger
@@ -935,9 +944,9 @@ runs, completes or drains anything.
 | `oats okf migrate --source-home` | nothing: there is no source registration |
 | `--source FILE` on any command | run from the instance home, or from the deployment with `--soul` |
 | `OATS_SOURCE_RECEIPT_FILE` or `OATS_INVOCATION_CONTEXT_FILE` in the environment | nothing: captured receipts and invocation contexts are gone |
-| `oats okf-harvest complete`, `harvest-status` | gone with the capability in 6.0 (the kernel answers an unknown command); `oats okf propose` opens the PR |
+| `oats okf-harvest complete`, `harvest-status` | `E_REMOVED` from the 6.x stub capability where a home composes it; any other home gets the kernel's `E_UNKNOWN_COMMAND` (see [Upgrading to 6.0](#upgrading-to-60)); `oats okf propose` opens the PR |
 | settings `harvest`, `harvest-runtime`, `harvest-model` | remove them (see [Settings](#settings)) |
-| the `harvester-max-age` setting of `oats.okf-harvest` | none (the capability itself is removed in 6.0) |
+| the `harvester-max-age` setting of `oats.okf-harvest` | none (6.0 reduces the capability to a refusing stub until 7.0; it has no settings) |
 | the retire hook, and the spawn hook's `sourceReceipt` input | none |
 | binding `payloadVersion` 1 and its `execution` | `payloadVersion` 2 |
 
@@ -983,7 +992,10 @@ unknown operation.
   knowledge maintainer's account ([The knowledge maintainer](#the-knowledge-maintainer)).
   `oats okf bases` reports `protection`.
 - **Give proposing hosts branch-create access** on the knowledge repository
-  (their `gh`/Git account), or use the fork flow; never accepted-branch push.
+  (their `gh`/Git account); never accepted-branch push. 6.0 supports
+  same-repository proposal branches only: `oats okf propose` pushes to the
+  bound repository, and the maintainer's publication helper refuses a fork
+  (cross-repository) PR (`E_PR_STATE`), so a fork flow is not an alternative.
 - **Optional:** `screen-terms-file`, a host deny list for the content screen.
 - **The subject layout** (see [The subject layout](#the-subject-layout-bridged-bases)):
   nothing a deployment must change. A base is read by subject only once it
@@ -1000,7 +1012,7 @@ A spawn of `oats.okf/knowledge-harvester` is refused by the stub soul's
 required spawn hook, before any home is kept:
 
 ```text
-oats-okf-harvest E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; rename the trigger template oats.okf:harvest-review to oats.okf:proposal-review. See the 6.0 release note.
+oats-okf-harvest E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review beside oats.okf:harvest-review, and remove the old one once no 5.x harvester can open an okf-harvest PR. See the 6.0 release note.
 ```
 
 The hand steps, from the deployment directory:
@@ -1030,8 +1042,8 @@ The hand steps, from the deployment directory:
    `proposal-review` the 6.0 `okf-proposal` PRs, `harvest-review` the 5.x
    `okf-harvest` PRs only (as in 5.8). Without `proposal-review` no new
    proposal is reviewed automatically. Keep `harvest-review` while a 5.x
-   harvester may still open an `okf-harvest` PR, then remove it; that
-   completes the rename the removal error asks for.
+   harvester may still open an `okf-harvest` PR, then remove it (the removal
+   error says the same).
    - **A workspace automation file** (in a member repository) is
      re-instantiated from the package template at the pinned commit, so the
      old file keeps working for `okf-harvest` PRs. Copy it under the new

@@ -435,6 +435,8 @@ function onePath(positionals, label) {
 // enforced: a ruleset, or classic protection, requires a PR or restricts
 // pushes; none: both reads succeeded and neither does (classic protection with
 // status checks only included); unknown otherwise.
+/** What `protection` answers, printed with every Git base by `oats okf bases`. */
+export const PROTECTION_MEANING = 'protection answers "can anyone but a reviewer land a change on the accepted branch?": enforced = a readable ruleset or classic rule requires a pull request or restricts who may push; none = both reads succeeded and neither does (classic protection with status checks only included: it gates nothing); unknown = neither read shows such a rule and at least one read failed, or the base is not on GitHub. It does not check approval counts, bypass lists or who the maintainer is';
 const GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
 export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout }) } = {}) {
   if (base.kind !== 'git' || !GITHUB_REMOTE.test(base.repository)) return 'unknown';
@@ -470,7 +472,8 @@ export function bases(source, flags) {
     receipts.push(ctx.receipt);
   });
   const text = rows.map(r => `${r.alias} (${r.kind}) ${r.kind === 'git' ? `${r.repository} ${r.acceptedBranch} root=${r.root} protection: ${r.protection}` : r.path}\n  accepted ${short(r.receipt)} fetched ${age(r.fetchedAt)}${r.stale ? ` STALE: ${r.reason}` : ''}; ${r.validated.ok ? `valid OKF base${r.layout === 'subjects' ? `, subject layout (${r.subjects} subjects)` : ''}` : `INVALID: ${r.validated.error.message}`}\n  owns: ${r.owns.join(', ') || '-'}; reads: ${r.reads.join(', ') || '-'}${r.nodes ? `; nodes: ${r.nodes.join(', ')}` : ''}`).join('\n');
-  return { result: { bases: rows }, text: `${text}\n${footer(receipts)}` };
+  const git = rows.some(r => r.kind === 'git');
+  return { result: { bases: rows, ...(git ? { protectionMeaning: PROTECTION_MEANING } : {}) }, text: `${text}\n${git ? `${PROTECTION_MEANING}\n` : ''}${footer(receipts)}` };
 }
 export function index(source, flags, positionals) {
   if (positionals.length > 1) fail('E_USAGE', 'index takes at most one node or subject');

@@ -47,8 +47,9 @@ added with: read it with `oats trigger show <id> --json` and repeat its
 - **Proposers run anywhere**: working agents open their own proposal PRs
   (`oats okf propose`) from their own deployment; the review host need not
   be one of them. Each proposing host needs a `gh`/Git account that can
-  create branches on the KB repository (or use a fork flow), never one that
-  can push the accepted branch.
+  create branches on the KB repository, never one that can push the
+  accepted branch. Forks are not supported: proposals are same-repository
+  branches, and the publication helper refuses a fork PR (`E_PR_STATE`).
 
 ## 2. The self-approval limit
 
@@ -67,7 +68,7 @@ The maintainer is the only gate: the knowledge base changes only
 through PRs the knowledge maintainer merges. **Every Git base's accepted
 branch must refuse direct pushes and force-pushes and accept changes by pull
 request only, merged by the knowledge maintainer's account.** Proposing
-hosts then need only branch-create access (or a fork flow); none of them can
+hosts then need only branch-create access on the KB repository; none of them can
 change the accepted branch.
 
 On GitHub, add a **branch ruleset** on the KB repository (Settings → Rules →
@@ -103,8 +104,9 @@ repos/<owner>/<repo>/rules/branches/<branch>`) and its classic protection
 a ruleset or classic protection requires a PR or restricts who may push;
 `none` only when both reads succeed and neither does (classic protection with
 status checks only gates no direct push; the report does not read bypass
-lists or the admin-bypass setting, so check those by hand); `unknown` when
-either read fails (`gh` absent, or an account without admin read on the
+lists, approval counts or the admin-bypass setting, so check those by hand);
+`unknown` when neither read shows such a rule and either read fails (`gh`
+absent, or an account without admin read on the
 repository: GitHub answers 404 `Not Found` or 403) or the base is not on
 GitHub. It is read-only and never refuses anything. Run it with an account
 that may read the repository's settings, or read `unknown` as "check by hand".
