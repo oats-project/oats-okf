@@ -1,13 +1,15 @@
 #!/bin/sh
 # Negative and edge-case tests of the bridge scripts against a real clone of the base.
 #
-#   scripts/bridge/selftest.sh <oats-okf checkout> <oats-knowledge clone> <base ref> [<bridged ref>]
+#   scripts/bridge/selftest.sh <oats-okf checkout> <oats-knowledge clone> <base ref> [<bridged ref>] [<okf-reindex.mjs>]
 #
 # <base ref> is the unbridged main the PR was generated from; <bridged ref> defaults to the clone's HEAD.
 # Every case runs in a throwaway clone; the given clone is not touched. Exits nonzero on the first case
 # whose outcome is wrong.
 set -eu
 OKF=$(cd "$1" && pwd); KB=$(cd "$2" && pwd); BASE=$3; BRIDGED=${4:-$(git -C "$KB" rev-parse HEAD)}
+REINDEX=
+if [ -n "${5:-}" ]; then REINDEX="--reindex $(cd "$(dirname "$5")" && pwd)/$(basename "$5")"; fi
 S="$OKF/scripts/bridge"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 PR='PR [#342](https://github.com/oats-project/oats-knowledge/pull/342)'
 fresh() { rm -rf "$T/c"; git clone -q "$KB" "$T/c"; git -C "$T/c" checkout -q --detach "$1"; }
@@ -20,7 +22,7 @@ D=knowledge/nodes/integrations-expert/decisions/a-workspace-has-a-default-team-t
 # The bridged ref passes all three proofs.
 fresh "$BRIDGED"
 expect_ok "verify on the bridged ref" node "$S/verify.mjs" "$T/c" "$BASE"
-expect_ok "bridge --check on the bridged ref" node "$S/bridge.mjs" "$T/c" --pr "$PR" --check
+expect_ok "bridge --check on the bridged ref" node "$S/bridge.mjs" "$T/c" --pr "$PR" $REINDEX --check
 expect_ok "rehearsal on the bridged ref" "$S/rehearse-580.sh" "$OKF" "$T/c" "$BASE" HEAD
 
 # verify.mjs refuses out-of-scope edits.
