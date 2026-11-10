@@ -469,7 +469,11 @@ export function execute(command, o) {
   }
   if (command === 'create') {
     github(o);
-    if (o['guard-file'] !== undefined && (typeof o['guard-file'] !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*)*$/.test(o['guard-file']))) fail('E_USAGE');
+    // A canonical repository-relative path, as a base root is bound (any
+    // legal segment, a space included); never absolute, parent, .git or NUL.
+    const g = o['guard-file'];
+    if (g !== undefined && (typeof g !== 'string' || !g || g.startsWith('/') || g.includes('\\') || g.includes('\0')
+      || g.split('/').some(x => !x || x === '.' || x === '..' || x.toLowerCase() === '.git'))) fail('E_USAGE');
     // okf-proposal/ (6.0, v3 body) or okf-harvest/ (5.x, v2 body), through 6.x.
     const prefix = PREFIXES.find(name => o.branch?.startsWith(`${name}/`));
     if (!prefix) fail('E_BRANCH');

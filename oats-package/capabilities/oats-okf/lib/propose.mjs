@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail } from './io.mjs';
 import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
-import { git, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
+import { git as rawGit, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
 // The proposer's own copy of the shared publication helper (okf-authoring),
@@ -291,23 +291,44 @@ function evidence(source, notes) {
 }
 
 // ------------------------------------------------------------ Git
+/** Every Git call on a proposal clone. Git's own output (stderr from a
+ *  filter, a hook-like helper, a path) never crosses into an error: a failure
+ *  is E_GIT naming only the subcommand. Typed refusals pass through. */
+function git(cwd, args, opts) {
+  try { return rawGit(cwd, args, opts); }
+  catch (e) {
+    if (/^E_[A-Z_]+$/.test(e?.code || '') && e.code !== 'E_COMMAND') throw e;
+    const sub = args.filter((a, i) => !a.startsWith('-') && args[i - 1] !== '-c')[0];
+    fail('E_GIT', `git ${/^[a-z-]{1,32}$/.test(sub ?? '') ? sub : '(command)'} failed on a proposal clone${Number.isInteger(e?.status) ? ` (exit ${e.status})` : ''}; Git's own output is withheld, as it may carry private content: inspect the clone by hand (git status) or plan a new proposal; nothing was pushed`);
+  }
+}
 /** The planned clone, as plan made it: real directories from the proposal
  *  directory down (no symlink component), a self-contained `.git` directory
  *  (no gitfile, symlinked or shared gitdir), and Git agreeing on both. Checked
  *  before any Git read or write, so no mutation is redirected elsewhere. */
 function ownClone(dir, clone, alias) {
   const bad = why => fail('E_PROPOSAL_FORMAT', `the clone of ${alias} is not the one plan made (${why}); never move or link it: plan a new proposal`);
-  for (const p of [dir, join(dir, 'work'), clone, join(clone, '.git')]) {
+  for (const p of [dirname(dir), dir, join(dir, 'work'), clone, join(clone, '.git')]) {
     let st; try { st = fs.lstatSync(p); } catch { bad(`${relative(dir, p) || 'the proposal directory'} is missing`); }
     if (!st.isDirectory()) bad(`${relative(dir, p) || 'the proposal directory'} is a symlink or not a directory`);
   }
-  if (present(join(clone, '.git', 'commondir'))) bad('its .git shares another repository');
+  // Git's writable state stays inside the clone: no symlink anywhere under
+  // .git (refs, objects, config, info…), no shared or alternate object store.
+  const walk = d => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.isSymbolicLink()) bad(`.git/${relative(join(clone, '.git'), join(d, e.name))} is a symlink`);
+      if (e.isDirectory()) walk(join(d, e.name));
+    }
+  };
+  walk(join(clone, '.git'));
+  for (const f of ['commondir', 'objects/info/alternates', 'objects/info/http-alternates']) if (present(join(clone, '.git', f))) bad(`its .git shares another repository (${f})`);
   const real = fs.realpathSync(clone);
   let top, gitDir;
   try { top = git(clone, ['rev-parse', '--show-toplevel']); gitDir = git(clone, ['rev-parse', '--absolute-git-dir']); } catch { bad('Git cannot read it'); }
   if (fs.realpathSync(top) !== real || fs.realpathSync(gitDir) !== join(real, '.git')) bad('Git resolves it elsewhere');
 }
-const gitRemote = (cwd, args) => git(cwd, args, { timeout: gitTimeoutMs() });
+// The clone itself: its failure is classified by unavailable() (no detail).
+const gitRemote = (cwd, args) => rawGit(cwd, args, { timeout: gitTimeoutMs() });
 function withIndex(clone, fn) {
   const scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-propose-'));
   try { return fn({ ...cleanEnv(), GIT_INDEX_FILE: join(scratch, 'index') }, scratch); }

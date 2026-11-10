@@ -411,7 +411,8 @@ the spawn or the workspace set is ignored and named in `--plan`'s
 | `E_VALIDATION` | the proposed tree is not a valid OKF base (`okf-validate --strict`) |
 | `E_DIGEST` | the clone, `proposal.md`, a named note or the generated commit text or PR body changed since `--check` (a changed record changes the PR body) |
 | `E_CONTENT_REFUSED` / `E_CONTENT_INPUT` | the content screen's codes (findings name locations and rules only; `host-term` is the host's own list) |
-| `E_PROPOSAL_FORMAT` | `proposal.md` malformed (title, a missing or empty section, a provenance block of its own) or a backing-note line unreadable under the 5.8 note-locator rules; or the clone is not the one plan made (a symlink in its path, a `.git` that is a file, symlink or shared repository) |
+| `E_PROPOSAL_FORMAT` | `proposal.md` malformed (title, a missing or empty section, a provenance block of its own) or a backing-note line unreadable under the 5.8 note-locator rules; or the clone is not the one plan made (a symlink in its path or anywhere under its `.git`, a `.git` that is a file, or a shared or alternate object store) |
+| `E_GIT` | a Git command on a proposal clone failed (a required filter, a corrupt clone): the message names the subcommand and exit status only; Git's own output is withheld, as it may carry private content |
 | `E_NOTE` | a warning in `--check`, not a refusal: a named note missing or unreadable is listed without a hash, never hashed silently |
 | `E_UNSUPPORTED` | every owned base is a directory base ("convert it to a Git base or edit it in a reviewed change"); a directory base among Git bases is skipped with that reason |
 | `E_BASE_MOVED`, `E_PUSH_UNCERTAIN`, `E_GH`, `E_PR_UNCERTAIN` | the publication helper's codes, unchanged: the clone, the commit text, the PR body and a safe result stay in the proposal directory; the agent reports and does not retry, and never assumes no remote branch or PR exists |

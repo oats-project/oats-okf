@@ -36,7 +36,8 @@ the release lane's.
   the clone and artefacts and is never retried. Refusals: `E_USAGE`
   (including "nothing to propose"), `E_CONFIG`, `E_SOURCE`, `E_OPTED_OUT`,
   `E_PROPOSAL_EXISTS`, `E_SCOPE`, `E_OWNER` (also a path inside another
-  soul's node), `E_VALIDATION`, `E_DIGEST`, `E_CONTENT_REFUSED`/`E_CONTENT_INPUT`,
+  soul's node), `E_VALIDATION`, `E_DIGEST`, `E_GIT` (a Git command on the
+  clone failed; its output withheld), `E_CONTENT_REFUSED`/`E_CONTENT_INPUT`,
   `E_PROPOSAL_FORMAT`, `E_UNSUPPORTED` (directory bases), and the helper's
   `E_BASE_MOVED`, `E_PUSH_UNCERTAIN`, `E_GH`, `E_PR_UNCERTAIN` unchanged.
 - **The operator form:** `oats okf propose --home <instance home | retirement
