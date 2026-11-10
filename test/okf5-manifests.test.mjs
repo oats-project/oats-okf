@@ -102,11 +102,12 @@ test('the harvester stub: no skills or instructions, a required spawn hook that 
   for(const doc of ['README.md','CHANGELOG.md']) {
     const text=prose(doc);
     assert.ok(text.includes(REMOVED_SPAWN),`${doc} quotes the refusal`);
-    // The trigger steps' kernel behaviour (a local trigger keeps its values; each template fires on its one
-    // label) is pinned against the released kernel in okf5-real-kernel h) and i); these are the texts.
+    // The trigger steps' kernel behaviour (each template fires on its one label; a local trigger keeps its
+    // values; a workspace file's copy gets its own id and needs its trust line) is pinned against the
+    // released kernel in okf5-real-kernel h), i) and j); these are the texts.
     for(const step of ['oats soul launch remove oats.okf/knowledge-harvester --plan',"oats soul launch remove '<exact key>'",'E_LAUNCH_PREFERENCE_UNKNOWN',
       'oats trigger show okf-harvest-review --json','oats trigger add --from oats.okf:proposal-review --set repo=<on.repo> --set base=<on.base> --set harness=<spawn.harness> --set model=<spawn.model>','oats trigger remove okf-harvest-review',
-      "sed 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml",'git rm oats-triggers/okf-harvest-review.yaml',
+      "sed -e 's/oats.okf:harvest-review/oats.okf:proposal-review/' -e 's/^id: okf-harvest-review$/id: okf-proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml",'`- <member>/okf-proposal-review`','oats automations refresh','git rm oats-triggers/okf-harvest-review.yaml',
       'oats okf propose --plan --slug <slug>','oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>']) assert.ok(text.includes(step),`${doc}: ${step}`);
   }
 });

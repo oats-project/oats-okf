@@ -49,7 +49,10 @@ the release lane's.
   and the proposer (`live` or `recovery`), no harvester. The maintainer's
   parser reads it beside versions 1 and 2 (fence `okf-harvest`), strictly;
   the fence must match the version. `review-context` lists the evidence notes
-  and the proposer.
+  and the proposer. Evidence note paths follow 5.8's note rules in the
+  proposer and the parser alike (any filename under `notes/` ending `.md`, a
+  space or parentheses included; no empty, `.`, `..` or hidden segment, no
+  backslash or control character); the parser previously refused a space.
 - **The publication helper** accepts an `okf-proposal/` branch with a v3 body
   under the `okf-proposal` label beside `okf-harvest/` with v2 (both through
   6.x); `rewrite`, `merge` and `close` accept a v3 PR. `create` takes an
@@ -63,9 +66,10 @@ the release lane's.
 - **`oats okf bases` reports `protection: enforced | none | unknown`** per
   Git base, from the rulesets read (`gh api
   repos/<owner>/<repo>/rules/branches/<branch>`) and the classic read (`gh api
-  repos/<owner>/<repo>/branches/<branch>/protection`): classic protection
-  reads `enforced`, never `none`; `none` only when both reads succeed and
-  neither protects; `unknown` when either cannot be read (a caller without
+  repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when a
+  ruleset or classic protection requires a PR review or restricts pushers;
+  `none` only when both reads succeed and neither does (status-check-only
+  classic protection included); `unknown` when either cannot be read (a caller without
   admin read gets 404 `Not Found` or 403). Read-only, best-effort, bounded by
   `git-timeout`, never a refusal.
 - **Trigger template `proposal-review`** (id `okf-proposal-review`, label
@@ -168,9 +172,17 @@ The hand steps, from the deployment directory:
    - **A workspace automation file** (in a member repository) is
      re-instantiated from the package template at the pinned commit, so the
      old file keeps working for `okf-harvest` PRs. Copy it under the new
-     template, keeping its `set:`, `runsOn` and `owner`:
-     `sed 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml`,
-     then commit and merge it; later `git rm oats-triggers/okf-harvest-review.yaml`.
+     template and a new id (`oats trigger add --workspace` writes an explicit
+     `id:` line; two files with one id are `E_AUTOMATION_DUPLICATE`), keeping
+     its `set:`, `runsOn` and `owner`:
+     `sed -e 's/oats.okf:harvest-review/oats.okf:proposal-review/' -e 's/^id: okf-harvest-review$/id: okf-proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml`,
+     then commit and merge it. On the review host, if `oats-local.yaml` lists
+     named `automations: trust:` entries (not `"*"`), add the new one beside
+     the old: `- <member>/okf-proposal-review`. A new id is untrusted until
+     then and never runs. Run `oats automations refresh` and check that
+     `oats trigger show <member>/okf-proposal-review --json` answers
+     `result.trigger.runsHere: true` (not `reason: "untrusted"`). Later, `git rm oats-triggers/okf-harvest-review.yaml`
+     and drop its trust line.
    - **A local trigger** (`oats trigger add`) stores the definition it was
      given and is never re-instantiated: read its values first,
      `oats trigger show okf-harvest-review --json` (`result.trigger.on.repo`,

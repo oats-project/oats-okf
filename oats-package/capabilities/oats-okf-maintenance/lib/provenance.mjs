@@ -21,7 +21,10 @@ const SUBJECT = NODE; // <kind>/<slug>, the same grammar as base/node
 /** A base root as a repository-relative directory: no `..`, absolute, backslash or empty segment. */
 export const safeRoot = (r) => r === '.' || (typeof r === 'string' && !r.startsWith('/') && !r.includes('\\') && r.split('/').every((s) => s && s !== '.' && s !== '..'));
 
-const note = (n) => typeof n === 'string' && n.length <= 512 && /^notes\/[A-Za-z0-9._\/-]+\.md$/.test(n) && n.split('/').every((seg) => seg && seg !== '.' && seg !== '..');
+// The proposer's note grammar (oats.okf 5.8's safeNote): any filename under
+// notes/ ending .md, spaces and parentheses included; no backslash or control
+// character, no empty, parent or hidden segment. It is data, never a path read here.
+const note = (n) => typeof n === 'string' && n.length <= 512 && /^notes\/.+\.md$/.test(n) && !/[\\\x00-\x1f\x7f]/.test(n) && n.split('/').every((seg) => seg && seg !== '.' && seg !== '..' && !seg.startsWith('.'));
 /** → { valid, problems[], value|null } for the FIRST okf-harvest or okf-proposal block in `body`. */
 export function parseProvenance(body) {
   const problems = [];

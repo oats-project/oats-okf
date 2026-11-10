@@ -85,8 +85,13 @@ test('bases reports accepted-branch protection from the rules and classic reads:
     assert.deepEqual(calls.map(c=>c[0][1]),['repos/acme/kb/rules/branches/main','repos/acme/kb/branches/main/protection'],'both reads, bounded by the Git timeout');
     assert.equal(protection(base,answer([])),'none','both readable and empty');
     // Classic branch protection, which the rules endpoint never shows.
-    assert.equal(protection(base,answer([],CLASSIC)),'enforced','classic protection is never none');
+    assert.equal(protection(base,answer([],CLASSIC)),'enforced','a classic required PR review enforces it');
+    assert.equal(protection(base,answer([],{url:CLASSIC.url,required_pull_request_reviews:null,restrictions:{users:[],teams:[{slug:'kb-maintainers'}]}})),'enforced','classic restricted pushers enforce it');
     assert.equal(protection(base,answer(NO_ACCESS,CLASSIC)),'enforced');
+    // Status checks alone gate nothing: a direct push that passes them lands.
+    const CHECKS_ONLY={url:CLASSIC.url,required_status_checks:{strict:true,contexts:['ci']},required_pull_request_reviews:null,restrictions:null,enforce_admins:{enabled:false},allow_force_pushes:{enabled:true},allow_deletions:{enabled:true}};
+    assert.equal(protection(base,answer([],CHECKS_ONLY)),'none');
+    assert.equal(protection(base,answer(NO_ACCESS,CHECKS_ONLY)),'unknown','rules unreadable: never none');
     // Unreadable: never none.
     for(const classic of [NO_ACCESS,FORBIDDEN,new Error('gh: not found'),{message:'odd'}]) assert.equal(protection(base,answer([],classic)),'unknown',JSON.stringify(classic.stdout??classic));
     assert.equal(protection(base,answer(NO_ACCESS)),'unknown','rules unreadable');

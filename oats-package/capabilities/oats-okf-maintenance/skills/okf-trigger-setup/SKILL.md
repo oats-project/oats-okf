@@ -83,8 +83,13 @@ accepted branch:
 
 The classic equivalent (Settings → Branches → a protection rule on the
 accepted branch: require a pull request, restrict who can push to the
-maintainer's account, no force pushes, no deletions) meets it too, as does a
-deployment that protects the branch by other means. Then check:
+maintainer's account, no force pushes, no deletions, **and "Do not allow
+bypassing the above settings"**, with no one on a pull-request bypass list)
+meets it too. Without that last setting GitHub exempts administrators and
+custom roles with bypass permission, so an admin account (a maintainer or a
+proposer) could still push directly; it does not stop an admin from changing
+the rule itself. A deployment that protects the branch by other means meets
+it too. Then check:
 
 ```sh
 oats okf bases --soul <a soul that reads the base>    # protection: enforced | none | unknown, per Git base
@@ -93,8 +98,10 @@ oats okf bases --soul <a soul that reads the base>    # protection: enforced | n
 `oats okf bases` reads the branch's active rulesets (`gh api
 repos/<owner>/<repo>/rules/branches/<branch>`) and its classic protection
 (`gh api repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when
-a ruleset requires a PR or restricts updates, or classic protection exists;
-`none` only when both reads succeed and neither protects; `unknown` when
+a ruleset or classic protection requires a PR or restricts who may push;
+`none` only when both reads succeed and neither does (classic protection with
+status checks only gates no direct push; the report does not read bypass
+lists or the admin-bypass setting, so check those by hand); `unknown` when
 either read fails (`gh` absent, or an account without admin read on the
 repository: GitHub answers 404 `Not Found` or 403) or the base is not on
 GitHub. It is read-only and never refuses anything. Run it with an account
@@ -136,13 +143,26 @@ Or let the CLI write it: `oats trigger add --from oats.okf:proposal-review
 file when that repository is not the current checkout). Commit and merge it
 like any other change.
 
-A host runs it only when **both** its `host.name` equals `runsOn` **and** its
-`gh` account equals `owner`. Everywhere else it is listed with the reason:
-`assigned-elsewhere`, `owner-mismatch` or `host-unnamed`. That keeps exactly
-one machine on it, and the operator's consent explicit. A host can opt out
-without a commit: `automations.disabled: [<member>/okf-proposal-review]` in its
-`oats-local.yaml`. Changes reach the host within about ten minutes (after
-`oats sync`, or the tick's refresh).
+A host runs it only when **all three** hold: its `host.name` equals
+`runsOn`, its `gh` account equals `owner`, and its `oats-local.yaml` trusts
+it, the operator's own yes (anyone who can commit to the member can name a
+host):
+
+```yaml
+automations:
+  trust:
+    - <member>/okf-proposal-review    # or trust: "*"
+```
+
+Everywhere else it is listed with the reason: `assigned-elsewhere`,
+`owner-mismatch`, `host-unnamed` or `untrusted` (`oats workspace status`
+prints the exact trust line to add). That keeps exactly one machine on it.
+Check after `oats automations refresh` (or `oats sync`) with
+`oats trigger show <member>/okf-proposal-review --json` that it runs here. A
+host can opt out without a commit: `oats trigger disable
+<member>/okf-proposal-review` (it writes `triggers.disabled`). Changes reach
+the host within about ten minutes (after `oats sync`, or the tick's
+refresh).
 
 ## 5. Or add it locally (machine-private)
 

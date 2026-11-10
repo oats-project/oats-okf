@@ -304,4 +304,43 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     ok(['trigger', 'remove', 'okf-harvest-review']);
     ok(['trigger', 'remove', 'okf-proposal-review']);
   });
+
+  await t.test('j) migrating a workspace harvest-review file: the release note\'s copy command and trust line give a second trigger that runs on the review host', async () => {
+    const lib = name => import(pathToFileURL(join(dirname(dirname(cli)), 'lib', name)).href);
+    const { automationFileText, discoverAutomations, hostOf, placementOf } = await lib('automations.mjs');
+    const { triggerKind } = await lib('triggers.mjs');
+    // The README's commands, verbatim (the CHANGELOG carries the same).
+    const readme = fs.readFileSync(join(root, 'README.md'), 'utf8').replace(/\n\s+/g, ' ');
+    const copy = "sed -e 's/oats.okf:harvest-review/oats.okf:proposal-review/' -e 's/^id: okf-harvest-review$/id: okf-proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml";
+    assert.ok(readme.includes(copy), 'the README names this exact copy command');
+    assert.ok(readme.includes('`- <member>/okf-proposal-review`'), 'and the trust line');
+    // The file `oats trigger add --workspace` writes (explicit id, non-default values), then the copy command run by a shell.
+    const member = join(base, 'automation-member'); fs.mkdirSync(join(member, 'oats-triggers'), { recursive: true });
+    const old = automationFileText(triggerKind(), { id: 'okf-harvest-review', runsOn: 'review-host', owner: 'github.com/kb-bot', body: { from: 'oats.okf:harvest-review', set: { repo: 'github.com/acme/kb', base: 'accepted', harness: 'pi', model: 'custom-model' } } });
+    assert.match(old, /^id: okf-harvest-review$/m, 'the kernel writes an explicit id');
+    write(join(member, 'oats-triggers/okf-harvest-review.yaml'), old);
+    const sh = spawnSync('sh', ['-c', copy], { cwd: member, encoding: 'utf8' });
+    assert.equal(sh.status, 0, sh.stderr);
+    // The kernel's own discovery, parsing and template expansion, against this package's templates.
+    const files = Object.fromEntries(['okf-harvest-review', 'okf-proposal-review'].map(n => [`oats-triggers/${n}.yaml`, fs.readFileSync(join(member, `oats-triggers/${n}.yaml`))]));
+    const pkgTemplates = Object.fromEntries(['harvest-review', 'proposal-review'].map(n => [`oats-package/triggers/${n}.json`, fs.readFileSync(join(root, 'oats-package/triggers', `${n}.json`))]));
+    pkgTemplates['oats-package/oats-package.json'] = fs.readFileSync(join(root, 'oats-package/oats-package.json'));
+    const all = { ...files, ...pkgTemplates };
+    const remote = { listRemoteTree: async () => Object.keys(all).map(path => ({ path, type: 'blob' })), readRemoteFile: async (_r, _c, path) => ({ bytes: Buffer.from(all[path]) }) };
+    const lock = { packages: { 'oats.okf': { version: '6.0.0', commit: 'a'.repeat(40), path: 'oats-package', source: 'git:file:///pkg.git', repository: 'file:///pkg.git' } } };
+    const found = await discoverAutomations({ members: [{ confirmed: true, commit: 'b'.repeat(40), key: 'github.com/acme/workspace' }] }, { remote, memberName: () => 'workspace', kinds: [triggerKind({ lock, remote })] });
+    assert.deepEqual(found.problems, [], JSON.stringify(found.problems));
+    const byId = Object.fromEntries(found.byKind.trigger.map(a => [a.id, a]));
+    assert.deepEqual(Object.keys(byId).sort(), ['workspace/okf-harvest-review', 'workspace/okf-proposal-review']);
+    const fresh = byId['workspace/okf-proposal-review'];
+    assert.equal(fresh.invalid, undefined, JSON.stringify(fresh.invalid));
+    assert.deepEqual([fresh.definition.on.labels, fresh.definition.on.repo, fresh.definition.on.base, fresh.definition.spawn.harness, fresh.definition.spawn.model, fresh.runsOn, fresh.owner],
+      [['okf-proposal'], 'github.com/acme/kb', 'accepted', 'pi', 'custom-model', 'review-host', 'github.com/kb-bot']);
+    // Trust: a named list without the new id leaves it untrusted; the documented line makes it run.
+    const io = { gh: () => ({ status: 0, stdout: 'kb-bot\n', stderr: '' }) };
+    const place = trust => placementOf(fresh, { host: hostOf({ host: { name: 'review-host' }, automations: { trust } }), io });
+    assert.equal(place(['workspace/okf-harvest-review']).reason, 'untrusted');
+    assert.equal(place(['workspace/okf-harvest-review', 'workspace/okf-proposal-review']).runsHere, true);
+    assert.equal(place('*').runsHere, true);
+  });
 });

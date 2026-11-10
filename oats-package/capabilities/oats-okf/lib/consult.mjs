@@ -431,8 +431,9 @@ function onePath(positionals, label) {
 // endpoint shows rulesets only, so classic branch protection is read too:
 // GitHub answers 404 "Branch not protected" when the caller may read it and
 // there is none, and 404 "Not Found" (or 403) when the caller may not.
-// enforced: a ruleset requires a PR or restricts pushes, or classic protection
-// exists; none: both reads succeeded and neither protects; unknown otherwise.
+// enforced: a ruleset, or classic protection, requires a PR or restricts
+// pushes; none: both reads succeeded and neither does (classic protection with
+// status checks only included); unknown otherwise.
 const GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
 export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout }) } = {}) {
   if (base.kind !== 'git' || !GITHUB_REMOTE.test(base.repository)) return 'unknown';
@@ -444,12 +445,16 @@ export function protection(base, { run = (args, timeout) => exec('gh', args, { t
   let classic = 'unreadable';
   try {
     const v = JSON.parse(run(['api', `${repo}/branches/${branch}/protection`], gitTimeoutMs()));
-    if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.url === 'string') classic = 'present';
+    // The same predicate as the rulesets': a required PR review, or restricted
+    // pushers. Classic protection without either (status checks only) does
+    // not gate direct pushes, so it establishes nothing.
+    const obj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+    if (obj(v) && typeof v.url === 'string') classic = obj(v.required_pull_request_reviews) || obj(v.restrictions) ? 'gated' : 'absent';
   } catch (e) {
     let body = null; try { body = JSON.parse(String(e?.stdout ?? '')); } catch { /* not GitHub's answer */ }
     if (body?.message === 'Branch not protected') classic = 'absent';
   }
-  if (classic === 'present') return 'enforced';
+  if (classic === 'gated') return 'enforced';
   return rules && classic === 'absent' ? 'none' : 'unknown';
 }
 

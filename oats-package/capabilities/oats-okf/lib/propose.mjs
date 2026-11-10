@@ -192,7 +192,16 @@ function proposalDir(source, slug) {
 }
 function readPlan(dir) {
   const plan = parseJson(readWithin(dir, join(dir, 'plan.json'), 'E_PROPOSAL_FORMAT'), 'plan.json');
-  if (plan?.version !== 1 || !Array.isArray(plan.bases) || !plan.bases.length) fail('E_PROPOSAL_FORMAT', 'plan.json is not an oats okf propose plan; never edit it; remove the proposal directory and plan again');
+  const bad = () => fail('E_PROPOSAL_FORMAT', 'plan.json is not an oats okf propose plan; never edit it; remove the proposal directory and plan again');
+  if (plan?.version !== 1 || !Array.isArray(plan.bases) || !plan.bases.length || plan.bases.length > 64) bad();
+  // Every value reaches Git or a path: an alias is a plain name, the accepted
+  // commit a full object id (never an option or a revision expression).
+  const seen = new Set();
+  for (const b of plan.bases) {
+    if (!object(b) || Object.keys(b).some(k => !['alias', 'accepted'].includes(k)) || typeof b.alias !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(b.alias)
+      || seen.has(b.alias) || typeof b.accepted !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(b.accepted)) bad();
+    seen.add(b.alias);
+  }
   return plan;
 }
 
@@ -258,8 +267,10 @@ export function backingNotes(task) {
   return [...notes];
 }
 // The provenance block's note grammar (oats.okf-maintenance parses it strictly).
-const NOTE = /^notes\/[A-Za-z0-9._/-]+\.md$/;
-const safeNote = note => NOTE.test(note) && note.split('/').every(p => p && p !== '.' && p !== '..' && !p.startsWith('.'));
+// oats.okf 5.8's safeNote, unchanged: any filename under notes/ ending .md (a
+// space or parentheses included), no backslash or control character, no
+// empty, parent or hidden segment, at most 512 characters.
+const safeNote = note => note.length <= 512 && /^notes\/.+\.md$/.test(note) && !/[\\\x00-\x1f\x7f]/.test(note) && note.split('/').every(p => p && p !== '.' && p !== '..' && !p.startsWith('.'));
 
 /** proposal.md → { claim, bytes, body, notes } or E_PROPOSAL_FORMAT. */
 function readProposal(dir) {
@@ -283,7 +294,7 @@ function readProposal(dir) {
   }
   const notes = backingNotes(shown);
   if (notes.length > MAX_NOTES) fail('E_PROPOSAL_FORMAT', `proposal.md names more than ${MAX_NOTES} backing notes`);
-  for (const note of notes) if (!safeNote(note)) fail('E_PROPOSAL_FORMAT', `backing note ${JSON.stringify(note).slice(0, 120)} is not a plain notes/<path>.md (letters, digits, . _ - / only; no hidden or parent segment)`);
+  for (const note of notes) if (!safeNote(note)) fail('E_PROPOSAL_FORMAT', `backing note ${JSON.stringify(note).slice(0, 120)} is not a notes/<path>.md (no backslash or control character, no empty, hidden or parent segment)`);
   return { claim, bytes, body: shown.replace(/\n{3,}/g, '\n\n').trim() + '\n', notes };
 }
 
@@ -325,12 +336,15 @@ function ownClone(dir, clone, alias) {
     let st; try { st = fs.lstatSync(p); } catch { bad(`${relative(dir, p) || 'the proposal directory'} is missing`); }
     if (!st.isDirectory()) bad(`${relative(dir, p) || 'the proposal directory'} is a symlink or not a directory`);
   }
-  // Git's writable state stays inside the clone: no symlink anywhere under
-  // .git (refs, objects, config, info…), no shared or alternate object store.
+  // Git's writable state stays inside the clone: no symlink and no hard link
+  // anywhere under .git (refs, logs, objects, config, info…; plan clones with
+  // --no-hardlinks), no shared or alternate object store.
   const walk = d => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      if (e.isSymbolicLink()) bad(`.git/${relative(join(clone, '.git'), join(d, e.name))} is a symlink`);
-      if (e.isDirectory()) walk(join(d, e.name));
+      const at = join(d, e.name), shown = `.git/${relative(join(clone, '.git'), at)}`;
+      if (e.isSymbolicLink()) bad(`${shown} is a symlink`);
+      if (e.isDirectory()) walk(at);
+      else if (fs.lstatSync(at).nlink !== 1) bad(`${shown} is hard-linked elsewhere`);
     }
   };
   walk(join(clone, '.git'));
@@ -469,6 +483,7 @@ function prepare(source, dir, plan) {
     const clone = join(dir, 'work', entry.alias);
     ownClone(dir, clone, entry.alias);
     const accepted = entry.accepted;
+    if (git(clone, ['cat-file', '-t', accepted]) !== 'commit') fail('E_PROPOSAL_FORMAT', `plan.json's accepted commit for ${entry.alias} is not a commit in its clone; plan a new proposal`);
     const scope = surface(clone, accepted, owned, source.decl, source.bindings);
     if (source.decl.version === 2 && !scope.subjects) fail('E_CONFIG', `base ${owned.alias} has no subject layout; declare owns/reads (version 1) or bridge the base (release note §7.2)`);
     let treeId = workingTree(clone, accepted), list = changes(clone, accepted, treeId);
@@ -539,7 +554,7 @@ export function plan(source, slug) {
       const clone = join(staging, 'work', owned.alias);
       fs.mkdirSync(dirname(clone), { recursive: true, mode: 0o700 });
       preflightLocalRepository(owned.base, owned.alias, { detail: false });
-      try { gitRemote(dirname(clone), ['clone', '--quiet', '--no-tags', '--single-branch', '--branch', owned.base.acceptedBranch, '--', owned.base.repository, clone]); }
+      try { gitRemote(dirname(clone), ['clone', '--quiet', '--no-tags', '--no-hardlinks', '--single-branch', '--branch', owned.base.acceptedBranch, '--', owned.base.repository, clone]); }
       catch (e) { unavailable(owned.base, owned.alias, 'clone', e, { detail: false }); }
       const accepted = git(clone, ['rev-parse', '--verify', `refs/remotes/origin/${owned.base.acceptedBranch}^{commit}`]);
       const scope = surface(clone, accepted, owned, source.decl, source.bindings);
