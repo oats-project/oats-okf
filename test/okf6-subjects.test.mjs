@@ -960,6 +960,17 @@ test('propose --check, version 2: status: superseded only on a concept one of th
   }
 });
 
+test('propose --check, version 2: a node\'s reserved log.md or index.md is never superseded, even when a claim names it',t=>{
+  for(const file of ['peer/log.md','expert/index.md']) {
+    const p=proposal(t),was='---\ntitle: Peer file\n---\n\n# Peer file\n';
+    write(join(p.root,file),was.replace('title: Peer file','title: Peer file\nstatus: superseded'));
+    write(join(p.root,'claims/insights/better.md'),`---\ntype: Insight\ntitle: Better\ndescription: Better.\nabout: [workstream/knowledge]\nsupersedes: [/${file}]\n---\n`);
+    prepareSubjectProposal({root:p.root,decl:V2,ownedNodes:{},changes:p.changes()});
+    const before=x=>x===file?was:p.before(x);
+    assert.throws(()=>checkWriteSurface({root:p.root,decl:V2,ownedNodes:{},changes:p.changes(),before}),e=>e.code==='E_SCOPE' && e.message.includes(`${file}: outside the write surface`),file);
+  }
+});
+
 test('propose --check: the regenerator is required; a hand-edited generated index is refused',t=>{
   const p=proposal(t);
   write(join(p.root,'claims/decisions/new.md'),NEW_CLAIM.replace('description: Decided now.','description: Decided now.\nabout: [system/okf]'));

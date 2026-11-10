@@ -143,7 +143,8 @@ export function checkWriteSurface({ root, decl, ownedNodes, changes, before }) {
     if (under(p, 'verdicts')) { problems.push(`${p}: only the knowledge maintainer writes verdicts/`); continue; }
     if (under(p, 'subjects/workstream')) { problems.push(`${p}: workstreams change only on a person's cited acceptance, by the knowledge maintainer`); continue; }
     if (p === 'okf-base.json') { problems.push(`${p}: a proposal never changes okf-base.json`); continue; }
-    if (status === 'M' && place(p) === 'claim' && onlySupersedes(before(p), after)) {
+    // A concept only: a node's reserved index.md/log.md is never superseded.
+    if (status === 'M' && place(p) === 'claim' && !isReservedFile(p) && onlySupersedes(before(p), after)) {
       // Only a concept one of the proposal's own claims supersedes, by path or id.
       const id = parseFrontmatter(after).meta.id;
       if (supersedes.has(textKey(p)) || (typeof id === 'string' && id && supersedes.has(textKey(id)))) continue;
