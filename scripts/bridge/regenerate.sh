@@ -7,10 +7,9 @@
 # Leaves the branch as two commits on origin/main: the generated bridge, then the CI adapter commit
 # re-applied. Runs --check and verify.mjs; push with `git push --force-with-lease`.
 set -eu
-OKF=$(cd "$1" && pwd); PR=$2; ADAPTER=$3
+OKF=$(cd "$1" && pwd); PR=$2; ADAPTER=$(git rev-parse --verify "$3^{commit}")
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 test -z "$(git status --porcelain)" || { echo "working tree not clean" >&2; exit 1; }
-git cat-file -e "$ADAPTER^{commit}"
 git fetch -q origin main
 BASE=$(git rev-parse --short=7 origin/main)
 git switch -q --detach origin/main

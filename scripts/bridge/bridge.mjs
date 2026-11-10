@@ -139,13 +139,24 @@ function split(text, rel) {
   return { lines: m[1].split('\n'), body: text.slice(m[0].length) };
 }
 const keyOf = line => (line.match(/^([A-Za-z_][A-Za-z0-9_-]*):/) || [])[1];
-const scalar = (lines, key) => {
-  const line = lines.find(l => keyOf(l) === key);
-  return line === undefined ? undefined : line.slice(key.length + 1).trim();
+// Values as the OKF reader parses them: 5.8.0's scalar rule (an end-of-line ` # comment` and one leading and
+// one trailing quote stripped), and the flow-list subset of the layer spec (bare refs or JSON strings).
+// Anything else the reader would see differently is refused, never guessed.
+const rawValue = (lines, key, rel) => {
+  const found = lines.filter(l => keyOf(l) === key);
+  assert(found.length <= 1, `${rel}: duplicate ${key}`);
+  return found.length ? found[0].match(/^[A-Za-z_][A-Za-z0-9_-]*:\s*(.*)$/)[1] : undefined;
 };
-const flowList = (value, rel) => {
-  assert(/^\[[^\[\]]*\]$/.test(value ?? ''), `${rel}: tags is not a flow list`);
-  return value.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+const scalar = (lines, key, rel) => {
+  const v = rawValue(lines, key, rel);
+  return v === undefined ? undefined : v.replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '').trim();
+};
+const ITEM = String.raw`"(?:[^"\\]|\\.)*"|[A-Za-z0-9_/.:-]+`;
+const FLOW_LIST = new RegExp(String.raw`^\[\s*(?:(?:${ITEM})\s*(?:,\s*(?:${ITEM})\s*)*)?\]$`);
+const flowList = (lines, key, rel) => {
+  const v = (rawValue(lines, key, rel) ?? '').replace(/\s+#.*$/, '').trim();
+  assert(FLOW_LIST.test(v), `${rel}: ${key} is not a flow list the reader parses`);
+  return (v.slice(1, -1).match(new RegExp(ITEM, 'g')) ?? []).map(x => (x.startsWith('"') ? JSON.parse(x) : x));
 };
 
 // Resolve a body link to a base-relative path, or null if external or a pure fragment.
@@ -190,12 +201,13 @@ for (const rel of conceptPaths) {
   const text = read(rel);
   const { lines, body } = split(text, rel);
   const node = rel.split('/')[1];
-  const type = scalar(lines, 'type');
+  const type = scalar(lines, 'type', rel);
   assert(TYPES[type], `${rel}: unmapped type ${type}`);
   const [claimType, kind, status, prefix] = TYPES[type];
-  const title = scalar(lines, 'title'), description = scalar(lines, 'description');
+  const title = scalar(lines, 'title', rel), description = scalar(lines, 'description', rel);
   assert(title && description, `${rel}: title and description are required`);
-  const tags = flowList(scalar(lines, 'tags'), rel);
+  assert(!/[\[\]]/.test(title), `${rel}: a title with brackets would break its index link`);
+  const tags = flowList(lines, 'tags', rel);
 
   const primary = PRIMARY[node];
   const reasons = {};

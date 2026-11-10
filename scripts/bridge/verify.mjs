@@ -5,7 +5,8 @@
 //   node scripts/bridge/verify.mjs <checkout> <base-ref> [--json]
 //
 // Asserts: no file under knowledge/ at <base-ref> was moved or deleted; every changed file only gained lines
-// (pure insertions); each concept gained exactly its bridge keys right after `description:` and its body
+// (pure insertions); node index.md/log.md files are byte-identical; the root index.md only gains a
+// Subjects section and the root log.md only the bridge's dated line; each concept gained exactly its bridge keys right after `description:` and its body
 // after the frontmatter is byte-identical; okf-base.json kept every node and only added the three reserved
 // ones; new files lie only under knowledge/{claims,subjects,verdicts}/; every link that resolved at
 // <base-ref> still resolves, and every link in a new or changed file resolves except those already broken
@@ -66,7 +67,20 @@ for (const [rel, old] of before) {
     assert.equal(n.version, 1); assert.equal(n.id, o.id);
     counts.otherChanged.push(rel); continue;
   }
-  if (isReserved(rel) || !rel.startsWith('nodes/')) { counts.otherChanged.push(rel); continue; }
+  if (rel === 'index.md') {
+    // Only a "Subjects" section appended at the end.
+    const tail = now.slice(old.length);
+    if (!now.startsWith(old) || !/^\n## Subjects\n\n(\* \[[^\]]+\]\([a-z]+\/index\.md\) - [^\n]+\n)+$/.test(tail)) fail(`root index.md: more than an appended Subjects section`);
+    counts.otherChanged.push(rel); continue;
+  }
+  if (rel === 'log.md') {
+    // Only the bridge's one dated line, under its own or an existing date heading.
+    const bullets = added.filter(l => l.startsWith('* '));
+    const rest = added.filter(l => !l.startsWith('* '));
+    if (bullets.length !== 1 || !bullets[0].startsWith('* **Update**: Bridge to the subject layout') || !rest.every(l => l === '' || /^## \d{4}-\d{2}-\d{2}$/.test(l)) || rest.filter(Boolean).length > 1) fail(`root log.md: more than the bridge's dated line`);
+    counts.otherChanged.push(rel); continue;
+  }
+  if (isReserved(rel) || !rel.startsWith('nodes/')) { fail(`changed outside the concepts and the root files: ${rel}`); continue; }
   const fo = fence(old), fn = fence(now);
   if (!fo || !fn) { fail(`frontmatter missing: ${rel}`); continue; }
   if (old.slice(fo[0].length) !== now.slice(fn[0].length)) { fail(`body changed: ${rel}`); continue; }
