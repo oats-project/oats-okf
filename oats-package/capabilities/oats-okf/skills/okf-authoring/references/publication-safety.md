@@ -191,7 +191,8 @@ outcomes instead of replaying them.
 
 ## Amend, then review the new head
 
-For provenance **v2**, stage your sanitized PR changes in the old PR checkout,
+For provenance **v3** (an `okf-proposal` PR) and **v2** (a 5.x `okf-harvest`
+PR), stage your sanitized PR changes in the old PR checkout,
 run whole-base structural validation, and use `rewrite` with `--head` equal to
 the exact old PR head and `--base` equal to the fetched current accepted tip.
 The helper derives the PR's delta from its unique fork and reconciles that delta
@@ -201,7 +202,10 @@ reparented on a newer accepted commit. Three-way text merging uses Git's
 longstanding `merge-file` plumbing, not new Git version-dependent flags. This
 constructs an explicit replacement for review, not a prediction of hosted merge
 semantics (attributes, rename handling and algorithms can differ). The
-maintainer's working tree/index entries stay unchanged.
+maintainer's working tree/index entries stay unchanged. The replacement PR body
+(`--body-file`) keeps the PR's own provenance version: a v3 PR keeps its
+`okf-proposal` block, a v2 PR its `okf-harvest` block; the other version
+refuses `E_PROVENANCE`.
 
 The reconciled tree becomes **one new commit parented on the current accepted
 tip**, not the old PR head. The gate screens its actual bytes before replacing
@@ -233,7 +237,7 @@ head. If content must be removed, **close and delete the PR branch** using
 `close-unsafe`, never an append-only sanitization or rewrite. Even a safe
 textual deletion refuses in `amend-legacy`; close/re-propose instead. If the
 current accepted tip is not an ancestor of a legacy PR head, both `merge` and
-`amend-legacy` refuse with `E_REWRITE_REQUIRED`. Close it for a new v2 proposal;
+`amend-legacy` refuse with `E_REWRITE_REQUIRED`. Close it for re-proposal (a v3 PR);
 never reparent or append a catch-up commit to bypass the legacy ancestry rule.
 
 ## Verdict and settlement
@@ -243,7 +247,7 @@ never reparent or append a catch-up commit to bypass the legacy ancestry rule.
 that exact head and the appropriate verdict (`merge`/`amend+merge`, or
 `close`). `merge` verifies the pinned current accepted tip and requires it to
 be an ancestor of the reviewed head. A behind/divergent PR refuses with
-`E_REWRITE_REQUIRED` (operational exit 2) before comment or merge. For v2, use
+`E_REWRITE_REQUIRED` (operational exit 2) before comment or merge. For v3 or v2, use
 `rewrite` against the current tip, review the actual returned replacement tree,
 and bind a fresh verdict to that head; legacy closes for re-proposal. Never
 reuse a stale base OID or an earlier verdict to bypass the refusal.
