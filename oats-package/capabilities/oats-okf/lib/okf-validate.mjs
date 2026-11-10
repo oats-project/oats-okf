@@ -40,12 +40,11 @@ const files = [];
 
 const errors = [], warnings = [];
 let subjectLayout = false;
-try { subjectLayout = bridged(root); } catch (e) { if (!["E_PATH", "E_TOO_LARGE"].includes(e.code)) throw e; errors.push(e.message); }
+try { subjectLayout = bridged(root); } catch (e) { if (!["E_PATH", "E_TOO_LARGE"].includes(e.code)) throw e; errors.push(e.message); report(0); }
 // A base with the subject layout is read only as plain directories and regular
-// single-link files (as the regenerator writes it): a linked directory or a
-// FIFO is refused, never followed or opened by the freshness check.
-let safeTree = true;
-if (subjectLayout) try { assertSafeTree(root); } catch (e) { if (e.code !== "E_PATH") throw e; errors.push(e.message); safeTree = false; }
+// single-link files (as the regenerator writes it): a link, a FIFO or a
+// hardlink is refused before any file is opened, never followed or read.
+if (subjectLayout) try { assertSafeTree(root); } catch (e) { if (e.code !== "E_PATH") throw e; errors.push(e.message); report(0); }
 const rel = (p) => relative(root, p).split("\\").join("/");
 const isReserved = (p) => ["index.md", "log.md"].includes(posix.basename(rel(p)));
 
@@ -124,7 +123,7 @@ if (subjectLayout) {
     else if (ids.has(textKey(m.id))) errors.push(`${r}: id ${m.id} is also ${ids.get(textKey(m.id))}`);
     else ids.set(textKey(m.id), r);
   }
-  if (strict && safeTree) {
+  if (strict) {
     try {
       const metas = new Map([...concepts].filter(([, c]) => !c.reserved).map(([r, c]) => [r, c.meta]));
       for (const s of staleViews(root, metas)) warnings.push(`${s.path}: generated index is ${s.status}; run okf-reindex.mjs`);
@@ -170,14 +169,18 @@ if (strict) {
   }
 }
 
-const conceptCount = [...concepts.values()].filter((c) => !c.reserved).length;
-if (asJson) {
-  console.log(JSON.stringify({ bundle: root, layout: subjectLayout ? "subjects" : "plain", concepts: conceptCount, errors, warnings, conformant: errors.length === 0 }, null, 2));
-} else {
-  console.log(`OKF validate — ${root}`);
-  console.log(`  ${conceptCount} concept(s), ${errors.length} error(s), ${warnings.length} warning(s)`);
-  for (const e of errors) console.log(`  ERROR ${e}`);
-  for (const w of warnings) console.log(`  warn  ${w}`);
-  console.log(errors.length === 0 ? (strict && warnings.length ? "PASS (with lints)" : "PASS — conformant") : "FAIL — nonconformant");
+report([...concepts.values()].filter((c) => !c.reserved).length);
+/** Print the findings and exit (also early, before any file is read, when
+ *  the base metadata or a subject-layout tree is refused). */
+function report(conceptCount) {
+  if (asJson) {
+    console.log(JSON.stringify({ bundle: root, layout: subjectLayout ? "subjects" : "plain", concepts: conceptCount, errors, warnings, conformant: errors.length === 0 }, null, 2));
+  } else {
+    console.log(`OKF validate — ${root}`);
+    console.log(`  ${conceptCount} concept(s), ${errors.length} error(s), ${warnings.length} warning(s)`);
+    for (const e of errors) console.log(`  ERROR ${e}`);
+    for (const w of warnings) console.log(`  warn  ${w}`);
+    console.log(errors.length === 0 ? (strict && warnings.length ? "PASS (with lints)" : "PASS — conformant") : "FAIL — nonconformant");
+  }
+  process.exit(errors.length > 0 ? 1 : strict && warnings.length > 0 && process.env.OKF_STRICT_EXIT ? 1 : 0);
 }
-process.exit(errors.length > 0 ? 1 : strict && warnings.length > 0 && process.env.OKF_STRICT_EXIT ? 1 : 0);

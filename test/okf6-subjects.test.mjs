@@ -755,7 +755,7 @@ test('a long fence run before CR, U+2028 or U+2029 in the root index keeps regen
   }
 });
 
-test('the standalone validator refuses a linked generated-view directory on a bridged base (never opens what it points at, a FIFO included); a plain base keeps 5.8\'s walk',t=>{
+test('the standalone validator refuses an unsafe tree on a bridged base before opening any file (a linked generated-view directory, a .md FIFO, a .md link to an outside FIFO or file, a hardlinked .md); a plain base keeps 5.8\'s walk',t=>{
   const dir=bridged(t),outside=join(dirname(dir),'outside-okf');
   fs.renameSync(join(dir,'subjects/system/okf'),outside);
   fs.rmSync(join(outside,'index.md'));assert.equal(spawnSync('mkfifo',[join(outside,'index.md')]).status,0);
@@ -763,6 +763,21 @@ test('the standalone validator refuses a linked generated-view directory on a br
   const started=Date.now(),r=spawnSync(process.execPath,[VALIDATE,dir,'--strict','--json'],{encoding:'utf8',timeout:20000});
   assert.equal(r.error,undefined,String(r.error));assert.ok(Date.now()-started<6000);
   assert.equal(r.status,1);assert.ok(JSON.parse(r.stdout).errors.some(e=>/^subjects\/system\/okf: a symlink; generated indexes are read and written only/.test(e)),r.stdout);
+  // an unsafe leaf, refused before any file is opened: nothing outside is read (no marker reaches the output), nothing blocks
+  const LEAVES=[
+    ['a .md FIFO','subjects/index.md',(b,leaf)=>{fs.rmSync(leaf);assert.equal(spawnSync('mkfifo',[leaf]).status,0);},'not a regular file'],
+    ['a .md link to an outside FIFO','claims/trap.md',(b,leaf)=>{const out=join(dirname(b),'outside-fifo.md');assert.equal(spawnSync('mkfifo',[out]).status,0);fs.symlinkSync(out,leaf);},'a symlink'],
+    ['a .md link to an outside file','subjects/system/trap.md',(b,leaf)=>{const out=join(dirname(b),'outside.md');write(out,'---\ntype: PRIVATE-OUTSIDE-MARKER\ntitle: x\n---\n');fs.symlinkSync(out,leaf);},'a symlink'],
+    ['a hardlinked .md file','claims/hard.md',(b,leaf)=>{const out=join(dirname(b),'outside-hard.md');write(out,'---\ntype: PRIVATE-OUTSIDE-MARKER\ntitle: x\n---\n');fs.linkSync(out,leaf);},'a file with more than one link'],
+  ];
+  for(const [name,path,make,why] of LEAVES) {
+    const b=bridged(t),leaf=join(b,path);make(b,leaf);
+    const started=Date.now(),v=spawnSync(process.execPath,[VALIDATE,b,'--strict','--json'],{encoding:'utf8',timeout:20000});
+    assert.equal(v.error,undefined,`${name}: ${v.error}`);assert.ok(Date.now()-started<6000,name);
+    assert.equal(v.status,1,name);assert.ok(!v.stdout.includes('PRIVATE-OUTSIDE-MARKER'),`${name}: ${v.stdout}`);
+    const out=JSON.parse(v.stdout);assert.deepEqual(out.errors,[`${path}: ${why}; generated indexes are read and written only in plain directories and regular single-link files`],name);
+    assert.equal(out.concepts,0,`${name}: no file was read`);
+  }
   const plain=join(tmp(t,'okf6-plain-link-'),'base');writePlainBase(plain);
   fs.symlinkSync(join(plain,'expert'),join(plain,'linked'));
   assert.equal(validate(plain).out.layout,'plain');assert.deepEqual(validate(plain).out.errors,[],'5.8 skips a linked directory on a plain base');
