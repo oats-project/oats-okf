@@ -292,7 +292,10 @@ node okf-validate.mjs <base-dir> --strict  # validator v2
 Frontmatter prose copied into a generated index (titles, descriptions, type
 and kind headings) is rendered as plain text, brackets as parentheses: a
 link in a concept's description would otherwise resolve against the index,
-not the concept. `--type` and `--kind` filters are read the same way.
+not the concept. `--type` and `--kind` filters are read the same way. A verdict record's
+line is `verdict; claim type; title hash; claim description`, with `\` and
+`;` escaped by `\` in the claim type. The root `## Subjects` section is found
+only outside fenced code blocks, so a fenced example of it stays.
 
 The regenerator refuses (`E_PATH`, exit 2), before reading or writing, a
 base that holds a symlink, a non-regular file or a file with more than one

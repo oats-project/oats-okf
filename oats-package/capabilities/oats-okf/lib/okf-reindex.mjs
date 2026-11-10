@@ -314,7 +314,9 @@ export function generate(concepts, rootIndex = "") {
   const verdicts = [...concepts].filter(([p]) => place(p) === "verdicts").sort(([a], [b]) => byText(a, b));
   const vidx = ["# Verdicts", "", `${GENERATED_NOTE} The knowledge maintainer's record of the claims it rejected, superseded or closed as duplicates, one line each: verdict; claim type; title hash; claim description. \`oats okf verdicts --check <claim file>\` reads it.`, ""];
   for (const [p, meta] of verdicts) {
-    const fields = [one(meta?.verdict), one(meta?.["claim-type"]), one(meta?.["title-hash"]), one(meta?.["claim-description"])];
+    // The claim type is free text: `\` and `;` in it are escaped so the
+    // fields split back exactly (parseVerdictsIndex); the description is last.
+    const fields = [one(meta?.verdict), escapeField(one(meta?.["claim-type"])), one(meta?.["title-hash"]), one(meta?.["claim-description"])];
     vidx.push(entry(one(meta?.["claim-title"]) || fallbackTitle(p), p, fields.join("; ")));
   }
   if (!verdicts.length) vidx.push("No verdicts yet.");
@@ -325,13 +327,35 @@ export function generate(concepts, rootIndex = "") {
 export const ROOT_SECTION = "## Subjects\n\n* [Subjects](subjects/index.md) - What this base's knowledge is about, by kind; each subject has a generated index of its claims.\n";
 /** The root index.md with its "## Subjects" section (heading to the next
  *  `## ` heading or the end) replaced by the generated one, or appended. */
+/** Which lines are Markdown text, not inside a fenced code block (``` or ~~~,
+ *  up to three spaces of indent; closed by the same character, at least as
+ *  long, with nothing after; an unclosed fence runs to the end). */
+export function outsideFences(lines) {
+  const out = [];
+  let fence = null;
+  for (const l of lines) {
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(l);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = null;
+      out.push(false);
+      continue;
+    }
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);
+    if (open && !(open[1][0] === "`" && open[2].includes("`"))) { fence = open[1]; out.push(false); continue; }
+    out.push(true);
+  }
+  return out;
+}
 export function withSubjectsSection(text) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
-  const start = lines.findIndex((l) => /^## Subjects\s*$/.test(l));
+  // Only a heading outside a fenced code block starts or ends the section: a
+  // fenced example of one is the author's text and stays.
+  const text_ = outsideFences(lines);
+  const start = lines.findIndex((l, i) => text_[i] && /^## Subjects\s*$/.test(l));
   let before, after;
   if (start < 0) { before = lines.join("\n"); after = ""; }
   else {
-    let end = lines.findIndex((l, i) => i > start && /^## /.test(l));
+    let end = lines.findIndex((l, i) => i > start && text_[i] && /^## /.test(l));
     if (end < 0) end = lines.length;
     before = lines.slice(0, start).join("\n");
     after = lines.slice(end).join("\n");
@@ -415,9 +439,28 @@ export function parseVerdictsIndex(text) {
   for (const line of String(text).split(/\r?\n/)) {
     const e = parseEntry(line), m = e && /^verdicts\/([^/]+)\.md$/.exec(e.path);
     if (!m) continue;
-    const [verdict = "", claimType = "", hash = "", ...rest] = e.description.split("; ");
-    out.push({ id: m[1], path: e.path, title: e.title, verdict, claimType, titleHash: hash, description: rest.join("; ") });
+    const [verdict = "", claimType = "", hash = "", description = ""] = splitFields(e.description, 3);
+    out.push({ id: m[1], path: e.path, title: e.title, verdict, claimType, titleHash: hash, description });
   }
+  return out;
+}
+const escapeField = (s) => s.replace(/\\/g, "\\\\").replace(/;/g, "\\;");
+/** Split `a; b; c; rest` at the first n unescaped `; ` (a `\` escapes the next
+ *  character in those fields; a final `;` also separates); the rest is
+ *  verbatim. Linear. */
+function splitFields(text, n) {
+  const out = [];
+  let field = "", i = 0;
+  while (i < text.length && out.length < n) {
+    const c = text[i];
+    if (c === "\\" && i + 1 < text.length) { field += text[i + 1]; i += 2; continue; }
+    // `; ` separates; a trailing `;` is the separator before an empty
+    // description (the rendered line is trimmed).
+    if (c === ";" && (text[i + 1] === " " || i + 1 === text.length)) { out.push(field); field = ""; i += 2; continue; }
+    field += c; i++;
+  }
+  if (out.length < n) { out.push(field); return out; }
+  out.push(text.slice(i));
   return out;
 }
 

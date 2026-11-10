@@ -663,6 +663,37 @@ test('`claims` cuts a long committed type or kind heading in each row (the filte
   assert.equal(r.out.result.type,type);
 });
 
+test('a claim type holding `; ` or `\\` round-trips through the verdict index: the exact-title lane still finds the verdict; an empty claim description too',t=>{
+  for(const type of ['Decision; architecture','Odd\\; type\\']) {
+    const f=deployment(t),vfile=join(f.repo,`verdicts/${REJECTED.id}.md`);
+    edit(vfile,`claim-type: ${REJECTED.type}`,`claim-type: ${type}`);
+    edit(vfile,`title-hash: ${titleHash(REJECTED.type,REJECTED.title)}`,`title-hash: ${titleHash(type,REJECTED.title)}`);
+    edit(vfile,`claim-description: ${REJECTED.description}\n`,'');
+    reindex(f.repo);assert.equal(validate(f.repo,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+    const row=parseVerdictsIndex(fs.readFileSync(join(f.repo,'verdicts/index.md'),'utf8'))[0];
+    assert.deepEqual([row.verdict,row.claimType,row.titleHash,row.description],['rejected',type,titleHash(type,REJECTED.title),''],type);
+    f.git('add','-A');f.git('commit','-q','-m','odd type');
+    const claim=join(f.dir,'claim.md');write(claim,`---\ntype: ${type}\ntitle: ${REJECTED.title}\ndescription: x\nabout: [system/okf]\n---\n`);
+    const r=run(f,['verdicts','--check',claim,'--fresh','--json']);
+    assert.equal(r.status,0,r.text.slice(0,400));assert.deepEqual(r.out.result.candidates.map(c=>[c.id,c.claimType]),[[REJECTED.id,type]],type);
+  }
+});
+
+test('the root index\'s Subjects section ignores a fenced example of its heading (``` and ~~~): the node list and the example stay',t=>{
+  const dir=join(tmp(t,'okf6-fence-'),'base');writePlainBase(dir);
+  const root=join(dir,'index.md'),original=fs.readFileSync(root,'utf8');
+  const example='# Project knowledge\n\nHow a converted root looks:\n\n```md\n## Subjects\n\n* Subjects\n```\n\n~~~~\n## Subjects\n```\n## Other\n~~~~\n\n';
+  fs.writeFileSync(root,original.replace('# Project knowledge\n\n',example));
+  assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  bridge(dir);
+  const after=fs.readFileSync(root,'utf8');
+  assert.ok(after.startsWith(example),after);
+  for(const l of ['* [expert](expert/index.md) - The expert node.','* [peer](peer/index.md) - The peer node.','* [claims](claims/index.md)']) assert.ok(after.includes(l),l);
+  assert.equal(after.split('\n').filter(l=>l==='## Subjects').length,3,'two fenced examples, one generated section');
+  assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  assert.equal(spawnSync(process.execPath,[REINDEX,dir,'--check'],{encoding:'utf8'}).status,0,'idempotent');
+});
+
 test('`oats okf verdicts --check`: identity refuses a rejected id without reconsiders (E_VERDICT, the reason); the exact title hash lists candidates',t=>{
   const f=deployment(t),claim=join(f.dir,'claim.md');
   write(claim,`---\ntype: Decision\ntitle: Something new\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n`);
