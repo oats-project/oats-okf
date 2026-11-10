@@ -221,7 +221,13 @@ test('the parked-PR re-review step closes, waits for a poll, then reopens, the s
 test('the README says what is an instruction and what is enforced, with the opt-out\'s two limits',()=>{
   const readme=prose('README.md');
   for(const s of ['Personal data is excluded by instruction and a bounded publication screen; neither is a universal privacy guarantee.',
-    'The capture program copies evidence but does not judge its content.','not the initial exposure or GitHub\'s retained pull refs/caches/clones.',
-    'The soul\'s opt-out and source capture checks are enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
-    'It covers that soul\'s own proposals. The spawn hook checks the source a proposal names. What an instance of that soul writes to other seats in messages is theirs to capture and propose.']) assert.ok(readme.includes(s),s);
+    'The propose command copies evidence hashes but does not judge content.','not the initial exposure or GitHub\'s retained pull refs/caches/clones.',
+    'The soul\'s opt-out is enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
+    'It covers that soul\'s own proposals. The command checks the home it is given. What an instance of that soul writes to other seats in messages is theirs to capture and propose.',
+    // oats.okf 6.0 (spec §7): the five steps, the operator form, the gate, protection and the upgrade.
+    'oats okf propose --plan --slug <slug>','oats okf propose --check --slug <slug>','oats okf propose --apply --slug <slug> --digest <digest>',
+    'The operator form.','gates every merge','Protect the accepted branch.','protection: enforced | none | unknown',
+    'Harvesters already running keep their 5.x modules and finish, or a person retires them; a retained one is retired and its claims re-proposed by the source with `oats okf propose`, or by the operator form on its retirement recovery.',
+    '`oats.okf:harvest-review` is its old name','screen-terms-file']) assert.ok(readme.includes(s),s);
+  for(const code of ['E_USAGE','E_SOURCE','E_OPTED_OUT','E_PROPOSAL_EXISTS','E_SCOPE','E_OWNER','E_DIGEST','E_CONTENT_REFUSED','E_CONTENT_INPUT','E_PROPOSAL_FORMAT','E_NOTE','E_BASE_MOVED','E_PUSH_UNCERTAIN','E_GH','E_PR_UNCERTAIN']) assert.ok(readme.includes(`\`${code}\``),code);
 });

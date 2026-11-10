@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { hostname, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash } from './io.mjs';
+import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash, exec } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes } from './config.mjs';
 import { git, gitEnv, validateBase, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
 
@@ -419,17 +419,33 @@ function onePath(positionals, label) {
   return positionals[0];
 }
 
+// ---------------------------------------------------------------- protection
+// oats.okf 6.0: every Git base's accepted branch should take changes by PR
+// only, merged by the knowledge maintainer. One read-only, best-effort GitHub
+// read per base reports it; it never refuses anything. Branch rulesets are
+// what this endpoint returns: classic branch protection is not visible to it.
+const GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
+export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout }) } = {}) {
+  if (base.kind !== 'git' || !GITHUB_REMOTE.test(base.repository)) return 'unknown';
+  let rules;
+  try { rules = JSON.parse(run(['api', `repos/${base.pr.repository}/rules/branches/${base.acceptedBranch}`], gitTimeoutMs())); }
+  catch { return 'unknown'; }
+  if (!Array.isArray(rules)) return 'unknown';
+  // A rule that forbids updates outside a PR, or restricts who may push.
+  return rules.some(r => r && ['pull_request', 'update'].includes(r.type)) ? 'enforced' : 'none';
+}
+
 // ---------------------------------------------------------------- commands
 export function bases(source, flags) {
   const rows = [], receipts = [];
   for (const [alias, base] of Object.entries(source.bindings.bases)) withBase(source.bindings, alias, { fresh: !!flags.fresh }, ctx => {
     const v = verdict(ctx), mine = relation => source.decl[relation].filter(ref => splitRef(ref)[0] === alias).map(ref => splitRef(ref)[1]);
-    rows.push({ alias, id: base.id, kind: base.kind, ...(base.kind === 'git' ? { repository: displayRepo(base.repository), acceptedBranch: base.acceptedBranch, root: base.root, commit: ctx.commit } : { path: base.path, digest: ctx.receipt.digest }),
+    rows.push({ alias, id: base.id, kind: base.kind, ...(base.kind === 'git' ? { repository: displayRepo(base.repository), acceptedBranch: base.acceptedBranch, root: base.root, commit: ctx.commit, protection: protection(base) } : { path: base.path, digest: ctx.receipt.digest }),
       fetchedAt: ctx.receipt.fetchedAt, stale: ctx.receipt.stale, ...(ctx.receipt.reason ? { reason: ctx.receipt.reason } : {}),
       validated: v.ok ? { ok: true } : { ok: false, error: v.error }, nodes: v.ok ? Object.keys(v.nodes) : null, owns: mine('owns'), reads: mine('reads'), receipt: ctx.receipt });
     receipts.push(ctx.receipt);
   });
-  const text = rows.map(r => `${r.alias} (${r.kind}) ${r.kind === 'git' ? `${r.repository} ${r.acceptedBranch} root=${r.root}` : r.path}\n  accepted ${short(r.receipt)} fetched ${age(r.fetchedAt)}${r.stale ? ` STALE: ${r.reason}` : ''}; ${r.validated.ok ? 'valid OKF base' : `INVALID: ${r.validated.error.message}`}\n  owns: ${r.owns.join(', ') || '-'}; reads: ${r.reads.join(', ') || '-'}${r.nodes ? `; nodes: ${r.nodes.join(', ')}` : ''}`).join('\n');
+  const text = rows.map(r => `${r.alias} (${r.kind}) ${r.kind === 'git' ? `${r.repository} ${r.acceptedBranch} root=${r.root} protection: ${r.protection}` : r.path}\n  accepted ${short(r.receipt)} fetched ${age(r.fetchedAt)}${r.stale ? ` STALE: ${r.reason}` : ''}; ${r.validated.ok ? 'valid OKF base' : `INVALID: ${r.validated.error.message}`}\n  owns: ${r.owns.join(', ') || '-'}; reads: ${r.reads.join(', ') || '-'}${r.nodes ? `; nodes: ${r.nodes.join(', ')}` : ''}`).join('\n');
   return { result: { bases: rows }, text: `${text}\n${footer(receipts)}` };
 }
 export function index(source, flags, positionals) {

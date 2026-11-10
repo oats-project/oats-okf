@@ -8,7 +8,8 @@ description: >-
   oats.okf:proposal-review`, with `runsOn` naming the one host and `owner`
   the GitHub account that can merge on the knowledge-base repo), or locally
   with `oats trigger add` for a machine-private setup. Covers protecting the
-  accepted branch, the self-approval limit and `oats trigger test`. Use when
+  accepted branch (a ruleset: PRs only, merged by the maintainer's account),
+  the self-approval limit and `oats trigger test`. Use when
   setting up knowledge operations, when knowledge PRs are not being
   reviewed, when moving the reviewer to another host, or when asked whether
   a host may run the maintainer.
@@ -51,6 +52,45 @@ the reviewer's account are the same GitHub account, then either:
 - the trigger's `owner` is a separate reviewer account or machine user.
 
 Say which one applies when you report the setup.
+
+## 2a. Protect the accepted branch
+
+There is no harvester and no other gate: the knowledge base changes only
+through PRs the knowledge maintainer merges. **Every Git base's accepted
+branch must refuse direct pushes and force-pushes and accept changes by pull
+request only, merged by the knowledge maintainer's account.** Proposing
+hosts then need only branch-create access (or a fork flow); none of them can
+change the accepted branch.
+
+On GitHub, add a **branch ruleset** on the KB repository (Settings → Rules →
+Rulesets → New branch ruleset), enforcement **Active**, targeting the
+accepted branch:
+
+- **Restrict updates**: only actors on the bypass list may update the branch.
+- **Require a pull request before merging.**
+- **Block force pushes** and **Restrict deletions.**
+- **Bypass list**: the role or team that holds the maintainer's account (the
+  trigger's `owner`), set to **For pull requests only**, so it too changes
+  the branch only by merging a PR. Rulesets grant bypass to roles, teams and
+  apps, not to a single user: give the maintainer account a role or team no
+  proposing account has.
+
+The classic equivalent (Settings → Branches → a protection rule on the
+accepted branch: require a pull request, restrict who can push to the
+maintainer's account, no force pushes, no deletions) meets it too, as does a
+deployment that protects the branch by other means. Then check:
+
+```sh
+oats okf bases --soul <a soul that reads the base>    # protection: enforced | none | unknown, per Git base
+```
+
+`oats okf bases` reads the branch's active rulesets with one `gh api
+repos/<owner>/<repo>/rules/branches/<branch>`: `enforced` when a rule
+requires a PR or restricts updates, `none` when no such ruleset applies,
+`unknown` when `gh` is absent, the read fails or the base is not on GitHub.
+It is read-only and never refuses anything. Classic branch protection is not
+visible to that read, so a classically protected base reports `none`: say
+which one you set up when you report it.
 
 ## 3. Messaging
 

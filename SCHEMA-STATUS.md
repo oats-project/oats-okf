@@ -1,8 +1,8 @@
 # Schema and verification status
 
-oats.okf **5.8.0** requires **OATS >=0.69.2**, the first kernel that reads the `background:` key used by
-both the `knowledge-harvester` and `knowledge-maintainer` souls; source
-capture's public gone-home instance-event lookup needs only >=0.49.0.
+oats.okf (6.0 unreleased; manifests read 5.8.0) requires **OATS >=0.69.2**,
+the first kernel that reads the `background:` key used by the
+`knowledge-maintainer` soul (the `knowledge-harvester` soul is removed in 6.0).
 Version declarations are not evidence of a published release.
 
 ## Schemas
@@ -22,17 +22,22 @@ The generic ProviderBinding1 envelope is a kernel contract. Runtime code
 also checks what a schema cannot: filesystem containment, identities,
 overlap, base metadata, ownership and OKF conformance.
 
-The harvest PR's `okf-harvest` provenance block has no JSON Schema; its
-parser (`oats.okf-maintenance` `lib/provenance.mjs`) is strict and accepts:
+A knowledge PR's provenance block has no JSON Schema; its parser
+(`oats.okf-maintenance` `lib/provenance.mjs`) is strict, requires the fence to
+match the version, and accepts:
 
-- **version 2** (5.0): `source {soul, owner (required), instance,
+- **version 3** (6.0, fence `okf-proposal`): `source {soul, owner, instance,
+  incarnation, ownedNodes, readNodes, bases}`, the same `evidence` and
+  `tasks`, and `proposer {form: live | recovery, instance (null only in the
+  recovery form), alias}`;
+- **version 2** (5.0, fence `okf-harvest`): `source {soul, owner (required), instance,
   ownedNodes, readNodes, bases}`, `evidence [{note: notes/…/*.md, sha256?}]`
   (at most 100), `tasks {provider, refs}`, `harvester {instance, alias}`;
   a base's `repository` is its GitHub `owner/repo`, never a path or URL;
 - **version 1** (4.x): `run`, `input` ids and `source` with `soulId`, so 4.x
   PRs stay reviewable.
 
-Unknown keys are refused in both.
+Unknown keys are refused in all three.
 
 ## What the tests check
 
@@ -42,13 +47,15 @@ the distribution, skill trees) and the 5.x suite (`test/okf5-*.test.mjs`;
 the 4.x tests of the removed machinery were removed, not ported):
 consultation of Git bases through the host cache, the hooks, `inspect`,
 `init` and `migrate`, the removed surfaces, the legacy-settings guard and
-cleanup, the provenance parser for versions 1 and 2, and source capture
-(including legacy note forms, full delimited filenames and refusal paths).
+cleanup, the provenance parser for versions 1, 2 and 3, and `oats okf
+propose` (`test/okf6-propose.test.mjs`: plan, check and apply on a local
+remote with the shipped helper and a fake `gh`, the refusals, the recovery
+form).
 The vendored `schemas/capability-manifest.schema.json` is oats v0.27.1's
 `docs/capability-manifest.schema.json` plus the `hooks.upgrade` property from
 OATS v0.68.1 (13f8f133), byte for byte; `test/okf5-manifests.test.mjs` pins
 its hash. `test/okf5-upgrade-hook.test.mjs` runs the upgrade hook on homes
-made by released v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses
+made by released v5.8.0, v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses
 every write and child process.
 
 CI's `kernel-upgrade-0692` job installs the released **OATS 0.69.2** and runs
@@ -59,14 +66,13 @@ the respawn remedy.
 
 CI's `real-kernel-0692` job installs the released **OATS 0.69.2** in a
 disposable prefix and runs `test/okf5-real-kernel.test.mjs` through it: the
-legacy-key cleanup, a real spawn, a checkpoint proposal spawning a top-level
-harvester, and the removed surfaces. After the source retires, a new harvester
-captures from its event-named recovery and retains the input after recovery
-disposal; reusing the source address for a new live incarnation then refuses
-the old proposal. A knowledge-maintainer spawn is also checked; both souls
-answer `background: true`, `backgroundFrom: 'soul'`, with
-`.oats-background.json` recorded in each home. All spawns use `--no-launch`
-(no model, messaging or GitHub).
+legacy-key cleanup, a real spawn running `oats okf propose --plan` and
+`--check` through the kernel's in-home dispatch, `oats spawn
+oats.okf/knowledge-harvester` refused as an unknown soul, the removed
+surfaces, the operator form on the retired source's real recovery, both
+opt-out spellings, the spawn refusal of `knowledge.propose`, and the
+knowledge-maintainer's preview and `background: true` default. All spawns use
+`--no-launch` (no model, messaging or GitHub).
 
 The schemas themselves are not exercised by the suite: no test validates
 documents or the `examples/portable-binding/` data against them, or checks
@@ -76,7 +82,7 @@ tests in the 5.x suite either.
 
 ## Not covered
 
-- A real harvester session judging a proposal, and a real maintainer review.
+- A model-run proposer judging its own knowledge, and a real maintainer review.
 - That an agent follows an instruction, the personal-data exclusion included:
   the suite pins the shipped text, not the behaviour.
 - A real GitHub PR, merge and accepted-head visibility.
