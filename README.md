@@ -1137,6 +1137,13 @@ knowledge maintainer and checks both souls' defaults: the spawn answers
 `.oats-background.json`. Instances are spawned with `--no-launch`: no model,
 messaging or GitHub PR is involved.
 
+`okf6-subjects-real-kernel` runs in the same job on the same kernel: a
+version-2 soul spawns against a bridged Git base (its TASK.md brief lists
+its subjects with counts) and `oats okf index` prints its subjects'
+generated indexes; a version-1 soul against the same base prints its node
+indexes exactly as on the plain base; a version-2 soul against a plain base
+is refused at spawn.
+
 `okf5-upgrade-hook` runs the upgrade hook (above) on homes made by the
 released v5.3.0, v5.1.0 and v4.2.2 code, under a preload that refuses every
 write and child process. `okf5-kernel-upgrade` runs only when

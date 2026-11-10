@@ -25,7 +25,7 @@ jobs:
       - name: Report default coverage limits
         run: |
           echo "npm test validates the manifests and runs the provider in-process and through its CLI with disposable Git/directory bases."
-          echo "SKIPPED here: test/okf5-real-kernel.test.mjs (needs OATS_OKF_REAL_CLI); the real-kernel-0692 job runs it on released OATS 0.69.2."
+          echo "SKIPPED here: test/okf5-real-kernel.test.mjs and test/okf6-subjects-real-kernel.test.mjs (need OATS_OKF_REAL_CLI); the real-kernel-0692 job runs them on released OATS 0.69.2."
           echo "SKIPPED here: test/okf5-kernel-upgrade.test.mjs (needs OATS_OKF_UPGRADE_CLI); the kernel-upgrade-0692 job runs it on released OATS 0.69.2."
           echo "NOT COVERED: OKF acquire/lock/restore/trust, a model-run harvester, real GitHub PRs."
 
@@ -73,6 +73,12 @@ jobs:
           node "$OATS_OKF_REAL_CLI" --version
           node --test --test-reporter=spec test/okf5-real-kernel.test.mjs | tee "$RUNNER_TEMP/okf-real-kernel.txt"
           grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf-real-kernel.txt"
+      - name: Real kernel - the subject layout (test/okf6-subjects-real-kernel.test.mjs)
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=spec test/okf6-subjects-real-kernel.test.mjs | tee "$RUNNER_TEMP/okf6-subjects-real-kernel.txt"
+          grep -E '^ℹ skipped 0$' "$RUNNER_TEMP/okf6-subjects-real-kernel.txt"
       - name: Evidence boundary
         run: |
           echo 'Real released OATS 0.69.2 CLI; isolated file-Git workspace, package pinned from this exact checkout, a real on-disk Git knowledge base.'
