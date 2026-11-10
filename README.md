@@ -292,7 +292,10 @@ node okf-validate.mjs <base-dir> --strict  # validator v2
 The regenerator refuses (`E_PATH`, exit 2), before reading or writing, a
 base that holds a symlink, a non-regular file or a file with more than one
 link, and writes each generated file through a fresh temporary file renamed
-over it, so a checked-out base cannot redirect a write outside itself.
+over it, so a checked-out base cannot redirect a write outside itself. It
+also refuses a file name holding a backslash, and never links a path that a
+reader would resolve to another file (spaces, parentheses, angle brackets,
+`?`, `#` or `%`): such a base does not validate with `--strict`.
 
 On a bridged base the validator also errors on: a malformed flow list (a
 value starting with `[` that is not a flat list, or has no `]` at all; a

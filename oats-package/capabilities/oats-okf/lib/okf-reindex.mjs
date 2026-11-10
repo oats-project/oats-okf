@@ -124,8 +124,10 @@ export function parseFrontmatter(text) {
     let list;
     if (/^\s*\[/.test(kv[2])) {
       const v = listValue(kv[2]), closed = closesAt(v);
-      if (closed === v.length - 1) list = flowList(v);
-      else if (closed < 0) list = null;
+      // A list unless the first close is followed by text (`[WIP] title`):
+      // `[a, b]]` or `[a, b],` is a malformed list, not a scalar.
+      if (closed < 0) list = null;
+      else if (/^[\s\],]*$/.test(v.slice(closed + 1))) list = flowList(v);
     }
     if (list === null) listErrors.push(kv[1]);
     meta[kv[1]] = Array.isArray(list) ? list : scalarValue(kv[2]);
@@ -195,7 +197,9 @@ const one = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 // validator's included), leaving the claim unlinked: shown as parentheses.
 const linkText = (s) => one(s).replace(/\[/g, "(").replace(/\]/g, ")");
 function entry(title, path, description) {
-  if (/[\s()<>]/.test(path)) throw Object.assign(new Error(`${path}: a path with spaces, parentheses or angle brackets cannot be linked from a generated index`), { code: "E_PATH" });
+  // Consult resolves a link by cutting `?` and `#` and decoding `%`, so a path
+  // holding one would read a different file: such a path is never linked.
+  if (/[\s()<>?#%\\]/.test(path)) throw Object.assign(new Error(`${path}: a path with spaces, parentheses, angle brackets, ?, #, % or \\ cannot be linked from a generated index (a reader would resolve it to another file)`), { code: "E_PATH" });
   const d = one(description);
   return `* [${linkText(title)}](/${path})${d ? ` - ${d}` : ""}`;
 }

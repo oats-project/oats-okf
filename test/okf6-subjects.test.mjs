@@ -9,6 +9,7 @@ import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, RE
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
+import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 import { prepareSubjectProposal, checkWriteSurface, proposalFindings, proposalVerdicts, verdictSection, legacyMap } from '../oats-package/capabilities/oats-okf/lib/write-surface.mjs';
@@ -119,8 +120,9 @@ test('the flow-list parser: bare and JSON-quoted items, empty, and malformed or 
 });
 
 test('flow lists through the frontmatter parser: an unclosed list is malformed, a quoted \' #\' survives, a bracketed scalar stays a scalar',t=>{
-  const fm=parseFrontmatter('---\ntags: [broken\nkeys: ["C # compiler", tool] # a comment\ntitle: [WIP] a draft\nnote: plain # comment\nnested: [a, [b] junk\nquoted: ["]", x\n---\n');
-  assert.deepEqual(fm.listErrors,['tags','nested','quoted']);
+  const fm=parseFrontmatter('---\ntags: [broken\nkeys: ["C # compiler", tool] # a comment\ntitle: [WIP] a draft\nnote: plain # comment\nnested: [a, [b] junk\nquoted: ["]", x\nextra: [a,b]]\ntrailing: [a, b],\nlater: [WIP] x [y]\n---\n');
+  assert.deepEqual(fm.listErrors,['tags','nested','quoted','extra','trailing']);
+  assert.equal(fm.meta.later,'[WIP] x [y]');
   assert.deepEqual([fm.meta.keys,fm.meta.title,fm.meta.note],[['C # compiler','tool'],'[WIP] a draft','plain']);
   const dir=bridged(t);edit(join(dir,'peer/lesson.md'),'kind: lesson','kind: lesson\ntags: [broken');
   assert.ok(validate(dir).out.errors.includes("peer/lesson.md: malformed flow list in 'tags' (flat [a, \"b\"] items only)"));
@@ -214,6 +216,19 @@ for(const [name,link] of LINKS) test(`the regenerator and propose refuse ${name}
     else if(/okf-base/.test(name)) assert.deepEqual(prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/insights/new.md',status:'A'}]}),{about:[],regenerated:[]},'a linked okf-base.json is never read: no layout, nothing written (validateTree refuses the link)');
     else assert.throws(()=>prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/insights/new.md',status:'A'}]}),e=>e.code==='E_PATH');
     assert.deepEqual(snapshot(),before,`${via}: the outside files are unchanged`);
+  }
+});
+
+test('every generated link reads back its own file; a path a reader would resolve elsewhere (?, #, %) is never linked',t=>{
+  const dir=bridged(t);
+  for(const p of ['subjects/index.md','subjects/system/okf/index.md','subjects/workstream/knowledge/index.md','verdicts/index.md'])
+    for(const line of fs.readFileSync(join(dir,p),'utf8').split('\n')) { const m=/\]\(\/([^)]+)\)/.exec(line); if(m) { assert.equal(resolveBasePath('/'+m[1]),m[1],line); assert.ok(fs.existsSync(join(dir,m[1])),line); } }
+  for(const name of ['consult-reads-one-blob.md?different.md','x#y.md','x%2e.md']) {
+    const d=bridged(t);
+    write(join(d,'claims/insights',name),'---\ntype: Decision\ntitle: Different\ndescription: Another claim.\nabout: [system/okf]\nid: dec-different\n---\n');
+    const r=spawnSync(process.execPath,[REINDEX,d],{encoding:'utf8'});
+    assert.equal(r.status,2,name);assert.match(r.stderr,/E_PATH: .*cannot be linked from a generated index/);
+    assert.ok(validate(d).out.errors.some(e=>/cannot be linked from a generated index/.test(e)),name);
   }
 });
 
