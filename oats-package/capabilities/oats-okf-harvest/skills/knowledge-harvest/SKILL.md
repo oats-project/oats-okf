@@ -294,6 +294,11 @@ publish() {
   # Only the trusted helper's captured stdout enters reports, never a stale file.
   printf '%s\n' "$push_result"
   printf '%s\n' "$push_result" 2>/dev/null > "$push_output" || { printf '%s\n' 'E_PUSH_RESULT_WRITE'; return 2; }
+  if [ "$publication_status" -eq 0 ]; then
+    # The PR is parented on the result's base; it differs from "$base" after a recovery.
+    node -p 'const r = JSON.parse(process.argv[1]); `Accepted commit: ${r.base}; base-move recoveries: ${r.recovered}`' "$push_result" 2>/dev/null ||
+      printf '%s\n' 'Accepted commit: see base and recovered in the create result above.'
+  fi
   return "$publication_status"
 }
 if publish 2>/dev/null > "$report_file"; then
@@ -338,6 +343,12 @@ confirmation. Even an identical/up-to-date ref is a refusal. Do not retry a
 collision, relax the lease, use an ordinary force-push or replace the helper
 with native publication commands. Its exit 1 is content refused; exit 2 is an
 input/operational error. Both reach the retained-failure block.
+
+On success the `create` result also names `base`, the accepted commit the PR
+is parented on, and `recovered`, how many times `create` replayed the
+proposal onto a moved accepted tip before its push (0 normally). The block
+writes both into the report; `base` is the accepted commit your hand-over
+names. The commit text and PR body are unchanged and never name it.
 
 The PR title is a fixed literal; the claims are in the body. The helper passes
 `gh` the explicit repository and exact branch; it never infers either from
@@ -393,11 +404,22 @@ block, version 2 (no run or input ids):
 
 **Success or nothing promotable:** after all required PRs are open (or there
 is nothing to publish), hand over in your final reply: the source, each PR
-URL, and every dropped claim with its reason. Then retire (the oats skill).
+URL with the accepted commit it is parented on (`base` in the report), and
+every dropped claim with its reason. Then retire (the oats skill).
 The **knowledge maintainer** reviews each labelled PR without waiting for
 or reporting back to you; it amends, merges or closes on the PR's evidence.
 No PR means no maintainer role yet: never look up or notify a maintainer as
 publication preflight or as a fallback recipient.
+
+**An accepted branch that moved during the harvest is not a failure.** When
+the accepted tip has moved before the push, `create` itself fetches it,
+replays the proposal's delta onto it, screens the new range again and
+pushes; it does this up to three times and reports it as `recovered` in the
+result. Only what follows it is the stop below: its refusal
+(`E_BASE_MOVED` with a `recover` diagnostic: retries exhausted, a conflict
+with the accepted changes, an accepted branch that was rewritten, nothing
+left to publish, or a failed fetch), or any uncertainty after a push. Never
+rerun `create` yourself to recover a moved tip.
 
 **Any publication failure:** the failure-only block in section 8 runs before
 your final reply. **Do not retire.** Stop publication, retain the live home,

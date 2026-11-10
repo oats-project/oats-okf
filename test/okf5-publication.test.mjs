@@ -522,7 +522,7 @@ for (const mode of ['rename', 'empty-file-deletion']) test(`amend-legacy refuses
 // Content screening covers every introduced commit, not only the final tree.
 test('clean create publishes the supplied OID, screened stdin body and fixed title', t => {
   const f = fixture(t), head = f.change(), out = success(f.run('create', head));
-  assert.deepEqual(out, { ok: true, head, branch: BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, status: 'created' });
+  assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, status: 'created' });
   assert.equal(f.git(f.remote, 'rev-parse', REF), head); assert.equal(f.git(f.remote, 'rev-parse', 'main'), f.base);
   const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['label', 'create', 'view']);
   assert.equal(calls[1].input, fs.readFileSync(f.bodyFile, 'utf8'));
@@ -612,7 +612,13 @@ for (const input of ['missing-body', 'symlink-body', 'hardlink-body', 'malformed
     if (input === 'url-rewrite') { f.git(f.repo, 'config', `url.${f.remote}.insteadOf`, 'fixture-prefix'); code = 'E_REMOTE'; }
     if (input === 'moved-base') { f.publish(head, 'main'); code = 'E_BASE_MOVED'; }
     if (input === 'invalid-github') { extra.github = 'invalid-repository-shape'; code = 'E_GITHUB'; }
-    const before = f.snapshot(); refusal(f.run('create', head, extra), code); unchanged(f, before);
+    const before = f.snapshot(), r = f.run('create', head, extra); refusal(r, code); unchanged(f, before);
+    if (input === 'moved-base') {
+      // The proposal is already the accepted tip: the recovery fetched it and
+      // found nothing to publish. Only the local clone gained the fetch.
+      assert.deepEqual(r.out.diagnostic, { phase: 'recover', attempts: 1, reason: 'nothing-to-publish' });
+      assert.equal(f.git(f.repo, 'rev-parse', 'FETCH_HEAD'), head);
+    }
   });
 }
 
@@ -1623,3 +1629,199 @@ for (const history of ['unrelated', 'ambiguous-criss-cross']) {
     });
   }
 }
+
+// #129: a pre-push accepted-tip move is recovered inside create. The writer
+// stages its commits in the bare remote's object store without moving main and
+// without touching the proposal clone, so only the recovery's own fetch can
+// make them local. Every transport is the fixture's local bare repository.
+function writerCommits(f, changes, { from = f.base, unrelated = false } = {}) {
+  const repo = fs.mkdtempSync(join(f.root, 'recovery-writer-'));
+  f.git(f.root, 'clone', '-q', f.remote, repo);
+  f.git(repo, 'config', 'protocol.allow', 'never'); f.git(repo, 'config', 'protocol.file.allow', 'always');
+  f.git(repo, 'checkout', '-q', '--detach', from);
+  const tips = [];
+  for (const change of changes) {
+    if (unrelated) {
+      // A rewritten accepted branch: a root commit sharing no history.
+      tips.push(f.git(repo, ...IDENTITY, 'commit-tree', `${from}^{tree}`, '-m', 'Unrelated rewritten accepted history'));
+      continue;
+    }
+    change({ repo, put: (path, data) => {
+      const target = join(repo, path); fs.mkdirSync(dirname(target), { recursive: true }); fs.writeFileSync(target, data);
+    } });
+    f.git(repo, 'add', '-A'); f.git(repo, ...IDENTITY, 'commit', '-q', '-m', 'Independent synthetic accepted change');
+    tips.push(f.git(repo, 'rev-parse', 'HEAD'));
+  }
+  f.git(repo, 'push', '-q', 'origin', `${tips.at(-1)}:refs/heads/fixture-writer`);
+  f.git(f.remote, 'update-ref', '-d', 'refs/heads/fixture-writer');
+  return tips;
+}
+// The harvest's local branch exists at its head, as the skill's `switch -c` makes it.
+function recoveryFixture(t, { seed, change } = {}) {
+  const f = fixture(t, { seed }), head = change ? change(f) : f.change();
+  f.git(f.repo, 'branch', BRANCH, head);
+  return { f, head };
+}
+const moveMain = (f, id) => f.git(f.remote, 'update-ref', 'refs/heads/main', id);
+const localObjects = f => f.git(f.repo, 'cat-file', '--batch-all-objects', '--batch-check=%(objectname)').split('\n').sort();
+// Real upload-pack behind Git's supported uploadpack override, the read-side
+// twin of receiveHook. After the clone has fetched the current accepted tip
+// (its FETCH_HEAD equals main), the next ls-remote/fetch first advances main
+// to the next queued writer commit: one move per completed recovery fetch.
+// With failFrom, invocation number failFrom and later fail without serving.
+function uploadBoundary(f, { tips = [], failFrom = 0 } = {}) {
+  const shim = join(f.root, 'upload-pack-boundary'), state = join(f.root, 'upload-pack.json');
+  fs.writeFileSync(state, JSON.stringify({ tips, moved: [], invocations: 0 }));
+  fs.writeFileSync(shim, `#!${process.execPath}\nconst fs = require('node:fs');
+const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const argv = process.argv.slice(2);
+assert.deepEqual(argv, [${JSON.stringify(f.remote)}]);
+const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k)));
+const git = (where, ...args) => spawnSync('git', ['-C', where, ...args], { env, encoding: 'utf8' });
+const s = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8'));
+s.invocations += 1;
+const save = () => fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(s));
+if (${failFrom} && s.invocations >= ${failFrom}) { save(); process.exit(1); }
+const main = git(${JSON.stringify(f.remote)}, 'rev-parse', 'refs/heads/main').stdout.trim();
+const fetched = git(${JSON.stringify(f.repo)}, 'rev-parse', '--verify', '--quiet', 'FETCH_HEAD').stdout.trim();
+if (s.tips.length && fetched === main) {
+  const next = s.tips.shift(), moved = git(${JSON.stringify(f.remote)}, 'update-ref', 'refs/heads/main', next, main);
+  assert.equal(moved.status, 0, moved.stderr); s.moved.push(next);
+}
+save();
+const result = spawnSync('git', ['upload-pack', ...argv], { env, stdio: 'inherit' });
+process.exit(result.status ?? 98);\n`, { mode: 0o755 });
+  f.git(f.repo, 'config', 'remote.origin.uploadpack', shim);
+  return () => JSON.parse(fs.readFileSync(state, 'utf8'));
+}
+function recoveredPr(f, out, head, tip) {
+  assert.equal(out.base, tip); assert.notEqual(out.head, head);
+  assert.equal(f.git(f.remote, 'rev-parse', REF), out.head);
+  assert.equal(f.git(f.remote, 'rev-parse', 'main'), tip, 'create never writes the accepted branch');
+  // One commit on the new tip: the screened range is exactly tip..head.
+  assert.equal(f.git(f.remote, 'show', '-s', '--format=%P', out.head), tip);
+  assert.equal(f.git(f.remote, 'rev-list', '--count', `${tip}..${out.head}`), '1');
+  assert.equal(f.git(f.remote, 'show', `${out.head}:expert/decision.md`), '# Synthetic proposed decision');
+  assert.equal(f.git(f.remote, 'show', '-s', '--format=%B', out.head), f.git(f.repo, 'show', '-s', '--format=%B', head));
+  assert.equal(f.git(f.repo, 'rev-parse', `refs/heads/${BRANCH}`), out.head, 'the local branch moved by compare-and-swap');
+  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['label', 'create', 'view']);
+  assert.equal(calls[1].argv[7], BRANCH);
+}
+function notRecovered(r, attempts, reason) {
+  refusal(r, 'E_BASE_MOVED');
+  assert.deepEqual(r.out.diagnostic, { phase: 'recover', attempts, reason });
+}
+
+test('create recovers one pre-push accepted-tip move onto the new tip', t => {
+  const { f, head } = recoveryFixture(t);
+  const [tip] = writerCommits(f, [({ put }) => {
+    put('expert/independent.md', 'Independently accepted knowledge\n');
+    // Accepted-only content the screen would refuse if it were in the outgoing
+    // range: success proves the range is newTip..head, not oldBase..head.
+    put('code/accepted-fixture.txt', `${SECRET}\n`);
+  }]);
+  moveMain(f, tip);
+  assert.notEqual(f.rawGit(f.repo, ['cat-file', '-e', tip]).status, 0, 'only the recovery fetch makes the new tip local');
+  const out = success(f.run('create', head));
+  assert.equal(out.recovered, 1); recoveredPr(f, out, head, tip);
+  assert.equal(f.git(f.remote, 'show', `${out.head}:expert/independent.md`), 'Independently accepted knowledge');
+  assert.equal(f.git(f.remote, 'rev-parse', `${out.head}:code/accepted-fixture.txt`), f.git(f.remote, 'rev-parse', `${tip}:code/accepted-fixture.txt`));
+});
+
+test('the recovery fetch writes no local ref through configured fetch destinations', t => {
+  const { f, head } = recoveryFixture(t);
+  // A valid configured mapping onto a local branch, and the default remote-tracking one.
+  f.git(f.repo, 'branch', 'local-safety-copy', head);
+  f.git(f.repo, 'config', '--add', 'remote.origin.fetch', '+refs/heads/main:refs/heads/local-safety-copy');
+  const tracking = f.git(f.repo, 'rev-parse', 'refs/remotes/origin/main');
+  const [tip] = writerCommits(f, [({ put }) => put('expert/independent.md', 'Independently accepted knowledge\n')]);
+  moveMain(f, tip);
+  const out = success(f.run('create', head));
+  assert.equal(out.recovered, 1); recoveredPr(f, out, head, tip);
+  assert.equal(f.git(f.repo, 'rev-parse', 'refs/heads/local-safety-copy'), head, 'an unrelated local branch is never overwritten');
+  assert.equal(f.git(f.repo, 'rev-parse', 'refs/remotes/origin/main'), tracking, 'no opportunistic remote-tracking update either');
+  assert.equal(f.git(f.repo, 'rev-parse', 'FETCH_HEAD'), tip);
+});
+
+test('create recovers a second move between attempts', t => {
+  const { f, head } = recoveryFixture(t);
+  const tips = writerCommits(f, [1, 2].map(n => ({ put }) => put(`expert/independent-${n}.md`, `Independent change ${n}\n`)));
+  moveMain(f, tips[0]); const boundary = uploadBoundary(f, { tips: [tips[1]] });
+  const out = success(f.run('create', head));
+  assert.deepEqual(boundary().moved, [tips[1]], 'the second move happened after the first recovery fetch');
+  assert.equal(out.recovered, 2); recoveredPr(f, out, head, tips[1]);
+  for (const n of [1, 2]) assert.equal(f.git(f.remote, 'show', `${out.head}:expert/independent-${n}.md`), `Independent change ${n}`);
+});
+
+test('create stops after three recoveries when the accepted tip moves a fourth time', t => {
+  const { f, head } = recoveryFixture(t);
+  const tips = writerCommits(f, [1, 2, 3, 4].map(n => ({ put }) => put(`expert/independent-${n}.md`, `Independent change ${n}\n`)));
+  moveMain(f, tips[0]); const boundary = uploadBoundary(f, { tips: tips.slice(1) });
+  const before = f.snapshot(), r = f.run('create', head);
+  notRecovered(r, 3, 'retries-exhausted');
+  assert.deepEqual(boundary().moved, tips.slice(1));
+  assert.deepEqual(f.snapshot().objects, before.objects, 'nothing was pushed');
+  assert.equal(f.rawGit(f.remote, ['rev-parse', '--verify', '--quiet', REF]).status, 1, 'no publication ref');
+  assert.equal(f.git(f.remote, 'rev-parse', 'main'), tips[3]);
+  assert.deepEqual(f.calls(), []);
+});
+
+test('create refuses a recovery whose replay conflicts with the moved accepted tip', t => {
+  const { f, head } = recoveryFixture(t);
+  const [tip] = writerCommits(f, [({ put }) => put('expert/decision.md', '# Independently changed decision\n')]);
+  moveMain(f, tip);
+  const before = f.snapshot(); notRecovered(f.run('create', head), 1, 'conflict'); unchanged(f, before);
+  assert.equal(f.git(f.repo, 'rev-parse', `refs/heads/${BRANCH}`), head);
+});
+
+test('create refuses a not-fast-forward accepted branch without attempting a replay', t => {
+  const { f, head } = recoveryFixture(t);
+  const [tip] = writerCommits(f, [null], { unrelated: true });
+  moveMain(f, tip);
+  const before = f.snapshot(), objects = localObjects(f);
+  notRecovered(f.run('create', head), 1, 'not-fast-forward'); unchanged(f, before);
+  assert.equal(f.git(f.repo, 'rev-parse', `refs/heads/${BRANCH}`), head);
+  // The fetch added only the unrelated commit (it reuses the base's tree):
+  // no reconciled tree or commit was written.
+  assert.deepEqual(localObjects(f), [...objects, tip].sort());
+});
+
+test('create refuses a recovery whose fetch fails', t => {
+  const { f, head } = recoveryFixture(t);
+  const [tip] = writerCommits(f, [({ put }) => put('expert/independent.md', 'Independently accepted knowledge\n')]);
+  moveMain(f, tip); const boundary = uploadBoundary(f, { failFrom: 2 });
+  const before = f.snapshot(); notRecovered(f.run('create', head), 1, 'fetch-failed'); unchanged(f, before);
+  assert.equal(boundary().invocations, 2, 'the tip read was served; the recovery fetch failed');
+  assert.equal(f.git(f.repo, 'rev-parse', `refs/heads/${BRANCH}`), head);
+});
+
+test('create keeps E_PR_UNCERTAIN for an accepted-tip move after the push', t => {
+  const { f, head } = recoveryFixture(t);
+  const [tip] = writerCommits(f, [({ put }) => put('expert/independent.md', 'Independently accepted knowledge\n')]);
+  f.patchGh({ hook: { event: 'label', action: 'remote-ref', ref: 'refs/heads/main', oid: tip } });
+  const r = f.run('create', head); hookRan(f); refusal(r, 'E_PR_UNCERTAIN');
+  assert.equal(r.out.diagnostic, undefined);
+  assert.equal(f.git(f.remote, 'rev-parse', REF), head, 'the pushed head is not replayed after the push');
+  assert.deepEqual(f.calls().filter(c => c.kind === 'create'), []);
+  assert.equal(f.rawGit(f.repo, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD']).status, 1, 'no recovery fetch after the push');
+});
+
+test('create screens the recovered range: accepted content carried into the replayed merge is refused before any push', t => {
+  const lines = n => Array.from({ length: n }, (_, i) => `Synthetic shared line ${i + 1}`);
+  const shared = lines(12);
+  const { f, head } = recoveryFixture(t, {
+    seed: ({ put }) => put('expert/shared.md', `${shared.join('\n')}\n`),
+    change: f => { f.put('expert/shared.md', `${['Proposed first line', ...shared.slice(1)].join('\n')}\n`); return f.commit(); },
+  });
+  success(f.run('screen', head));
+  const [tip] = writerCommits(f, [({ put }) => put('expert/shared.md', `${[...shared.slice(0, 11), `Accepted ${SECRET}`].join('\n')}\n`)]);
+  moveMain(f, tip);
+  const before = f.snapshot(), r = f.run('create', head);
+  refusal(r, 'E_CONTENT_REFUSED'); unchanged(f, before);
+  const replayed = f.git(f.repo, 'rev-parse', `refs/heads/${BRANCH}`);
+  assert.notEqual(replayed, head, 'the refusal came from screening the recovered commit');
+  assert.equal(f.git(f.repo, 'show', '-s', '--format=%P', replayed), tip);
+  assert.equal(f.git(f.repo, 'show', `${replayed}:expert/shared.md`).split('\n')[0], 'Proposed first line');
+  assert.ok(r.out.findings.some(x => x.location.includes(replayed)));
+});

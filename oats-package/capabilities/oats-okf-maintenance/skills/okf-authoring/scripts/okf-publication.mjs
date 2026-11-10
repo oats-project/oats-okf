@@ -359,6 +359,43 @@ function commitFromTree(o, treeId, message, parent = o.base) {
     '-c', 'committer.name=OKF harvest', '-c', 'committer.email=okf@localhost',
     '-c', 'commit.gpgSign=false', 'commit-tree', treeId, '-p', oid(parent)], { input: message })).trim());
 }
+// A pre-push accepted-tip move is recovered inside create, a bounded number of
+// times. Nothing has left the host before the push, so the proposal's delta is
+// replayed onto the new tip and screened again. The bound is a constant, not
+// an option. Refusals keep E_BASE_MOVED with fixed diagnostic constants only.
+const RECOVERIES = 3;
+function unrecovered(attempts, reason) {
+  throw Object.assign(new Error('E_BASE_MOVED'), { code: 'E_BASE_MOVED', diagnostic: { phase: 'recover', attempts, reason } });
+}
+function recoverBase(o, attempts) {
+  remoteGuard(o);
+  const reference = baseRef(o['base-branch']), old = { base: oid(o.base), head: oid(o.head) };
+  let tipId;
+  try {
+    // The one network read the recovery adds. No tags, submodules or automatic
+    // maintenance; the empty refmap stops configured fetch destinations from
+    // writing any local ref (only the CAS below moves one). FETCH_HEAD names
+    // exactly the tip this fetch made local.
+    git(o.repo, ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'fetch', '--quiet', '--no-tags',
+      '--no-recurse-submodules', '--refmap=', 'origin', reference]);
+    tipId = oid(text(git(o.repo, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}'])).trim());
+  } catch { unrecovered(attempts, 'fetch-failed'); }
+  guardRepo(o.repo);
+  object(o.repo, tipId, 'commit');
+  // A rewritten accepted branch is not something to replay onto.
+  if (git(o.repo, ['merge-base', '--is-ancestor', old.base, tipId], { optional: true }) === null) unrecovered(attempts, 'not-fast-forward');
+  const staged = oid(text(git(o.repo, ['rev-parse', `${old.head}^{tree}`])).trim());
+  let treeId;
+  try { treeId = reconcileTree({ ...o, base: tipId, head: old.head }, staged); }
+  catch (error) { if (error?.code === 'E_REWRITE_CONFLICT') unrecovered(attempts, 'conflict'); throw error; }
+  if (treeId === text(git(o.repo, ['rev-parse', `${tipId}^{tree}`])).trim()) unrecovered(attempts, 'nothing-to-publish');
+  // The original message, byte for byte: everything after the header block.
+  const raw = object(o.repo, old.head, 'commit'), split = raw.indexOf('\n\n');
+  const head = commitFromTree(o, treeId, split < 0 ? Buffer.alloc(0) : raw.subarray(split + 2), tipId);
+  try { git(o.repo, ['update-ref', ref(o.branch), head, old.head]); }
+  catch { fail('E_HEAD_MOVED'); }
+  o.base = tipId; o.head = head;
+}
 function verdict(bytes, head, allowed) {
   let v;
   try {
@@ -400,7 +437,14 @@ export function execute(command, o) {
     if (!o.branch?.startsWith('okf-harvest/')) fail('E_BRANCH');
     const body = readText(o['body-file'], 'PR body');
     const p = provenance(text(body)); if (p.version !== 2) fail('E_PROVENANCE');
-    const head = screenedPush(o, o.head, '', o.branch);
+    let head, recovered = 0;
+    for (;;) {
+      // Every E_BASE_MOVED from screenedPush is decided before its push.
+      try { head = screenedPush(o, o.head, '', o.branch); break; }
+      catch (error) { if (error?.code !== 'E_BASE_MOVED') throw error; }
+      if (recovered === RECOVERIES) unrecovered(recovered, 'retries-exhausted');
+      recoverBase(o, ++recovered);
+    }
     gh(o, ['label', 'create', 'okf-harvest', '--repo', o.github, '--force', '--color', '0E8A16', '--description', 'OKF harvest PR (oats.okf)']);
     try {
       verifyBase(o);
@@ -410,7 +454,7 @@ export function execute(command, o) {
       '--label', 'okf-harvest', '--title', 'OKF knowledge proposal', '--body-file', '-'], body)).trim();
     if (!url.startsWith(`https://github.com/${o.github}/pull/`) || !/\/pull\/[1-9][0-9]*$/.test(url)) fail('E_PR_UNCERTAIN');
     confirmPr({ ...o, pr: url.split('/').at(-1) }, 'OPEN', o.branch);
-    return { head, branch: o.branch, url, status: 'created' };
+    return { head, base: o.base, recovered, branch: o.branch, url, status: 'created' };
   }
   remoteGuard(o);
   const closing = command === 'close' || command === 'close-unsafe';

@@ -85,7 +85,7 @@ const jsonLines=p=>fs.existsSync(p)?fs.readFileSync(p,'utf8').trim().split('\n')
 // exact destination deterministically. gh and messaging prove adapter invocation,
 // not GitHub publication or delivery. No copied publication/notifier logic here:
 // execute the shipped block, including the failure transition, as one script.
-function publication(t,{source='src',harvester='harvester',fixedUUID,collision,notification='available',ghFailure='',hostilePaths=false,unsafeHome=false,notificationError='source unreachable',blockResult=false}={}) {
+function publication(t,{source='src',harvester='harvester',fixedUUID,collision,notification='available',ghFailure='',hostilePaths=false,unsafeHome=false,notificationError='source unreachable',blockResult=false,acceptedMove=false}={}) {
   const root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'okf5-publish-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const home=join(root,unsafeHome?`home-ghp_${'A'.repeat(36)}`:hostilePaths?`home 'q' $(touch ${MARK})`: 'home'),clone=join(home,'work','kb'),origin=join(root,'origin.git'),bin=join(root,'bin');
   const ghLog=join(root,'gh.log'),sendLog=join(root,'send.log'),retireLog=join(root,'retire.log');
@@ -98,6 +98,14 @@ function publication(t,{source='src',harvester='harvester',fixedUUID,collision,n
   fs.mkdirSync(join(clone,'expert'));fs.writeFileSync(join(clone,'expert','a.md'),'seed\n');
   git(clone,'add','-A');git(clone,...ID,'commit','-qm','seed');git(clone,'push','-q','origin','HEAD:main');
   const seed=git(clone,'rev-parse','HEAD').trim();
+  let moved;
+  if(acceptedMove) {
+    // Another writer advances the accepted branch after this harvest cloned it.
+    const writer=join(root,'writer');git(root,'clone','-q',origin,writer);
+    fs.writeFileSync(join(writer,'expert','b.md'),'independently accepted\n');
+    git(writer,'add','-A');git(writer,...ID,'commit','-qm','independent');git(writer,'push','-q','origin','HEAD:main');
+    moved=git(writer,'rev-parse','HEAD').trim();
+  }
   fs.writeFileSync(join(clone,'expert','a.md'),'promoted\n');
   const msg=join(home,'publish','kb-commit.txt'),body=join(home,'publish','kb-pr.md'),report=join(home,'publish','kb-publish.txt');
   fs.mkdirSync(join(home,'publish'));
@@ -161,7 +169,7 @@ console.log('test adapter accepted the report; delivery unproven');
     .replaceAll('<owner>/<repo>','acme/kb').replaceAll('<acceptedBranch>','main')
     .replace('<source notification command or skipped notice>',()=>notify);
   const run=()=>spawnSync('bash',['-e','-c',filled],{cwd:home,env,encoding:'utf8',timeout:30000});
-  return {root,home,clone,origin,env,git,seed,msg,body,report,message,prBody,ref,existing,ghLog,sendLog,retireLog,run};
+  return {root,home,clone,origin,env,git,seed,moved,msg,body,report,message,prBody,ref,existing,ghLog,sendLog,retireLog,run};
 }
 function retained(f,r,expected) {
   assert.equal(r.status,1,r.stdout+r.stderr);
@@ -211,7 +219,21 @@ test('real Git publishes valid complete refs with hostile source/harvester ident
     assert.deepEqual(jsonLines(f.sendLog),[],'no notification preflight on success');
     for(const where of [f.home,f.clone,f.root,process.cwd()]) assert.equal(fs.existsSync(join(where,MARK)),false);
     assert.equal(f.git(f.origin,'rev-parse','main').trim(),f.seed);
+    assert.ok(r.stdout.includes(`Accepted commit: ${f.seed}; base-move recoveries: 0\n`),'the report names the accepted commit the PR is parented on');
   }
+});
+
+test('an accepted branch moved before the push is recovered by create and reported, not retained',t=>{
+  const f=publication(t,{acceptedMove:true}),r=f.run();assert.equal(r.status,0,r.stdout+r.stderr);
+  const branch=f.git(f.clone,'branch','--show-current').trim(),ref=`refs/heads/${branch}`;
+  assert.equal(f.git(f.origin,'show','-s','--format=%P',ref).trim(),f.moved,'the PR is parented on the moved accepted tip');
+  assert.equal(f.git(f.origin,'show',`${ref}:expert/a.md`),'promoted\n');
+  assert.equal(f.git(f.origin,'show',`${ref}:expert/b.md`),'independently accepted\n');
+  assert.equal(f.git(f.origin,'log','-1','--format=%B',ref),`${f.message}\n`);
+  assert.ok(r.stdout.includes(`Accepted commit: ${f.moved}; base-move recoveries: 1\n`),r.stdout);
+  assert.doesNotMatch(r.stdout+r.stderr,/DO NOT RETIRE/);
+  assert.deepEqual(jsonLines(f.sendLog),[],'no failure notification');
+  assert.equal(f.git(f.origin,'rev-parse','main').trim(),f.moved);
 });
 
 test('quoted publication artifact paths stay data on the successful gh body-file path',t=>{

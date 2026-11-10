@@ -471,6 +471,10 @@ The harvester (`knowledge: none`, capability `oats.okf-harvest`) follows the
    uses an ordinary force-push, or closes a PR. No automatic collision retry.
    The source is explicit in the native-written commit text and PR provenance;
    the harvester remains in provenance. Claims and identities stay data.
+   An accepted branch that moves before the push is not a publication
+   incident: the helper replays the proposal onto the new tip, screens it
+   again and publishes, up to three times, and reports the accepted commit
+   the PR is parented on; only a refusal after that retains the harvester.
 9. **Hands over and retires only on success or nothing promotable** (the
    source, each PR URL, every dropped claim and why). **On any publication
    failure it does not retire:** the live home retains the clone, safe error
