@@ -202,7 +202,9 @@ oats spawn oats.okf/knowledge-maintainer --task "Review knowledge-base PR <url> 
 ```
 
 That is a call, not a station: do not wait for it. Keep the backing notes
-until the PR is settled; the maintainer may read the cited evidence there.
+until the PR is settled, for your own audit and any re-proposal; the
+maintainer never reads them in your home (the hashes in the provenance fix
+what you relied on).
 
 ## Hand-back
 

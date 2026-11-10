@@ -729,9 +729,9 @@ runs, completes or drains anything.
 | `oats okf migrate --source-home` | nothing: there is no source registration |
 | `--source FILE` on any command | run from the instance home, or from the deployment with `--soul` |
 | `OATS_SOURCE_RECEIPT_FILE` or `OATS_INVOCATION_CONTEXT_FILE` in the environment | nothing: captured receipts and invocation contexts are gone |
-| `oats okf-harvest complete`, `harvest-status` | gone with the capability in 6.0 (the kernel answers an unknown command); `oats okf propose` opens the PR |
+| `oats okf-harvest complete`, `harvest-status` | `E_REMOVED` from the 6.x stub capability where a home composes it; any other home gets the kernel's `E_UNKNOWN_COMMAND` (see [Upgrading to 6.0](#upgrading-to-60)); `oats okf propose` opens the PR |
 | settings `harvest`, `harvest-runtime`, `harvest-model` | remove them (see [Settings](#settings)) |
-| the `harvester-max-age` setting of `oats.okf-harvest` | none (the capability itself is removed in 6.0) |
+| the `harvester-max-age` setting of `oats.okf-harvest` | none (6.0 reduces the capability to a refusing stub until 7.0; it has no settings) |
 | the retire hook, and the spawn hook's `sourceReceipt` input | none |
 | binding `payloadVersion` 1 and its `execution` | `payloadVersion` 2 |
 
