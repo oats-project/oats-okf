@@ -373,9 +373,11 @@ function recoverBase(o, attempts) {
   let tipId;
   try {
     // The one network read the recovery adds. No tags, submodules or automatic
-    // maintenance; FETCH_HEAD names exactly the tip this fetch made local.
+    // maintenance; the empty refmap stops configured fetch destinations from
+    // writing any local ref (only the CAS below moves one). FETCH_HEAD names
+    // exactly the tip this fetch made local.
     git(o.repo, ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'fetch', '--quiet', '--no-tags',
-      '--no-recurse-submodules', 'origin', reference]);
+      '--no-recurse-submodules', '--refmap=', 'origin', reference]);
     tipId = oid(text(git(o.repo, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}'])).trim());
   } catch { unrecovered(attempts, 'fetch-failed'); }
   guardRepo(o.repo);

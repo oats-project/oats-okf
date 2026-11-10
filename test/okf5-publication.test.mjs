@@ -1723,6 +1723,21 @@ test('create recovers one pre-push accepted-tip move onto the new tip', t => {
   assert.equal(f.git(f.remote, 'show', `${out.head}:expert/independent.md`), 'Independently accepted knowledge');
 });
 
+test('the recovery fetch writes no local ref through configured fetch destinations', t => {
+  const { f, head } = recoveryFixture(t);
+  // A valid configured mapping onto a local branch, and the default remote-tracking one.
+  f.git(f.repo, 'branch', 'local-safety-copy', head);
+  f.git(f.repo, 'config', '--add', 'remote.origin.fetch', '+refs/heads/main:refs/heads/local-safety-copy');
+  const tracking = f.git(f.repo, 'rev-parse', 'refs/remotes/origin/main');
+  const [tip] = writerCommits(f, [({ put }) => put('expert/independent.md', 'Independently accepted knowledge\n')]);
+  moveMain(f, tip);
+  const out = success(f.run('create', head));
+  assert.equal(out.recovered, 1); recoveredPr(f, out, head, tip);
+  assert.equal(f.git(f.repo, 'rev-parse', 'refs/heads/local-safety-copy'), head, 'an unrelated local branch is never overwritten');
+  assert.equal(f.git(f.repo, 'rev-parse', 'refs/remotes/origin/main'), tracking, 'no opportunistic remote-tracking update either');
+  assert.equal(f.git(f.repo, 'rev-parse', 'FETCH_HEAD'), tip);
+});
+
 test('create recovers a second move between attempts', t => {
   const { f, head } = recoveryFixture(t);
   const tips = writerCommits(f, [1, 2].map(n => ({ put }) => put(`expert/independent-${n}.md`, `Independent change ${n}\n`)));
