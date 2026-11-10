@@ -617,7 +617,9 @@ export function search(source, flags, positionals) {
 // ---------------------------------------------------------------- subject layout (okf 6.0)
 // The verbs read committed generated indexes (one blob each), never scan the
 // base. A base without the reserved nodes answers E_USAGE.
-const isSubjectArg = (source, p) => SUBJECT_REF.test(p) && !Object.hasOwn(source.bindings.bases, p.split('/')[0]);
+// A version-2 soul has no nodes: a <kind>/<slug> is always a subject. A
+// version-1 soul keeps alias/node precedence for a kind that is a bound alias.
+const isSubjectArg = (source, p) => SUBJECT_REF.test(p) && (source.decl.version === 2 || !Object.hasOwn(source.bindings.bases, p.split('/')[0]));
 function subjectArg(ref) {
   if (typeof ref !== 'string' || !SUBJECT_REF.test(ref)) fail('E_USAGE', `expected a subject <system|workstream|project>/<slug>, got ${JSON.stringify(ref ?? null)}`);
   return ref;

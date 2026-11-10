@@ -10,6 +10,7 @@ import { validateDeclaration, resolveSubjects } from '../oats-package/capabiliti
 import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
+import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 import { prepareSubjectProposal, checkWriteSurface, proposalFindings, proposalVerdicts, verdictSection, legacyMap } from '../oats-package/capabilities/oats-okf/lib/write-surface.mjs';
@@ -213,7 +214,6 @@ for(const [name,link] of LINKS) test(`the regenerator and propose refuse ${name}
       const r=spawnSync(process.execPath,[REINDEX,dir,...args],{encoding:'utf8',timeout:20000});
       assert.equal(r.status,2,r.stdout+r.stderr);assert.match(r.stderr,/E_PATH/);
     }
-    else if(/okf-base/.test(name)) assert.deepEqual(prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/insights/new.md',status:'A'}]}),{about:[],regenerated:[]},'a linked okf-base.json is never read: no layout, nothing written (validateTree refuses the link)');
     else assert.throws(()=>prepareSubjectProposal({root:dir,decl:V2,ownedNodes:{},changes:[{path:'claims/insights/new.md',status:'A'}]}),e=>e.code==='E_PATH');
     assert.deepEqual(snapshot(),before,`${via}: the outside files are unchanged`);
   }
@@ -230,6 +230,20 @@ test('every generated link reads back its own file; a path a reader would resolv
     assert.equal(r.status,2,name);assert.match(r.stderr,/E_PATH: .*cannot be linked from a generated index/);
     assert.ok(validate(d).out.errors.some(e=>/cannot be linked from a generated index/.test(e)),name);
   }
+});
+
+test('okf-base.json is classified the same by every reader: padding cannot hide the layout; a linked one is refused, not read as plain',t=>{
+  const dir=bridged(t);
+  edit(join(dir,'claims/insights/consult-reads-one-blob.md'),'about: [system/okf]\n','');
+  fs.appendFileSync(join(dir,'okf-base.json'),' '.repeat(2*1024*1024));
+  const r=validate(dir);
+  assert.equal(r.out.layout,'subjects');
+  assert.ok(r.out.errors.some(e=>/consult-reads-one-blob\.md: 'about' must list/.test(e)),JSON.stringify(r.out.errors));
+  assert.throws(()=>validateBase(dir,{id:'base-1',kind:'directory',path:dir}),e=>e.code==='E_VALIDATION' && /'about' must list/.test(e.message));
+  const linked=bridged(t),outside=join(dirname(linked),'meta.json');
+  fs.renameSync(join(linked,'okf-base.json'),outside);fs.symlinkSync(outside,join(linked,'okf-base.json'));
+  const v=validate(linked);
+  assert.equal(v.status,1);assert.ok(v.out.errors.includes('okf-base.json: a symlink; the base metadata must be a regular single-link file'),JSON.stringify(v.out.errors));
 });
 
 test('the shipped copies of the validator and the regenerator are byte-identical',()=>{
@@ -409,6 +423,19 @@ test('`oats okf index` for a version-2 soul prints its subjects\' generated inde
   assert.match(text.stdout,new RegExp(`— project@${head.slice(0,12)} \\(fetched`));
   const root=run(f,['index','--base','project','--json']);
   assert.equal(root.out.result.indexes[0].path,'index.md','--base still reads the base root index');
+});
+
+test('a version-2 soul\'s project/<slug> is a subject even when a bound base is aliased `project` (a version-1 soul keeps alias/node)',t=>{
+  const f=deployment(t,{decl:{version:2,subjects:['project/trial']}});
+  write(join(f.repo,'subjects/project/trial.md'),'---\ntype: Project\ntitle: Trial\ndescription: A trial.\nstatus: open\n---\n\n# Trial\n');
+  reindex(f.repo);assert.equal(validate(f.repo,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+  f.git('add','-A');f.git('commit','-q','-m','trial');
+  for(const args of [['index','project/trial'],['index','project/trial','--base','project']]) {
+    const r=run(f,[...args,'--json']);
+    assert.equal(r.status,0,r.text);assert.equal(r.out.result.indexes[0].path,'subjects/project/trial/index.md');
+  }
+  json(join(f.soul,'okf.json'),{version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']});
+  assert.equal(run(f,['index','project/expert','--json']).out.result.indexes[0].path,'expert/index.md','version 1: project/expert is the node');
 });
 
 test('`oats okf subjects` and `subject` read subjects/index.md and the subject\'s file and index',t=>{

@@ -39,7 +39,8 @@ const files = [];
 })(root);
 
 const errors = [], warnings = [];
-const subjectLayout = bridged(root);
+let subjectLayout = false;
+try { subjectLayout = bridged(root); } catch (e) { if (e.code !== "E_PATH") throw e; errors.push(e.message); }
 const rel = (p) => relative(root, p).split("\\").join("/");
 const isReserved = (p) => ["index.md", "log.md"].includes(posix.basename(rel(p)));
 

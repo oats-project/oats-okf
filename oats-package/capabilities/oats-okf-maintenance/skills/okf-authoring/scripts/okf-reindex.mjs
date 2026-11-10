@@ -142,22 +142,26 @@ export function isBridgedMeta(m) {
   if (!m || typeof m !== "object" || m.version !== 1 || !m.nodes || typeof m.nodes !== "object") return false;
   return RESERVED_NODES.every((n) => Object.hasOwn(m.nodes, n) && m.nodes[n]?.path === n && m.nodes[n]?.owner === SENTINEL);
 }
-/** Whether the base at root declares the subject layout. okf-base.json is
- *  read only when it is a regular single-link file under 1 MiB, never through
- *  a link or from a device or FIFO; anything else is a plain base here (and
- *  is refused by every consumer's own tree check). */
+/** Whether the base at root declares the subject layout: false when it has
+ *  no okf-base.json or one that is not valid JSON (every consumer refuses that
+ *  base on its own). okf-base.json is read only as a regular single-link file,
+ *  never through a link or from a FIFO; anything else is refused (E_PATH), so
+ *  no reader can see a layout another reader does not. */
 export function bridged(root) {
   const file = join(root, "okf-base.json");
-  let fd;
+  const unsafe = (why) => { throw Object.assign(new Error(`okf-base.json: ${why}; the base metadata must be a regular single-link file`), { code: "E_PATH" }); };
+  let st;
+  try { st = lstatSync(file); } catch (e) { if (e.code === "ENOENT") return false; throw e; }
+  if (!st.isFile()) unsafe(st.isSymbolicLink() ? "a symlink" : "not a regular file");
+  if (st.nlink !== 1) unsafe("a file with more than one link");
+  const fd = openSync(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  let text;
   try {
-    const st = lstatSync(file);
-    if (!st.isFile() || st.nlink !== 1 || st.size > 1024 * 1024) return false;
-    fd = openSync(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
     const opened = fstatSync(fd);
-    if (!opened.isFile() || opened.ino !== st.ino || opened.size > 1024 * 1024) return false;
-    return isBridgedMeta(JSON.parse(readFileSync(fd, "utf8")));
-  } catch { return false; }
-  finally { if (fd !== undefined) closeSync(fd); }
+    if (!opened.isFile() || opened.ino !== st.ino || opened.dev !== st.dev) unsafe("replaced while it was opened");
+    text = readFileSync(fd, "utf8");
+  } finally { closeSync(fd); }
+  try { return isBridgedMeta(JSON.parse(text)); } catch { return false; }
 }
 export const subjectRef = (kind, slug) => `${kind}/${slug}`;
 /** subjects/<kind>/<slug>.md → { kind, slug, ref }, else null. */
@@ -445,8 +449,9 @@ function main(argv) {
   const unknown = argv.filter((a) => a.startsWith("--") && !["--check", "--json"].includes(a));
   if (!dir || !existsSync(dir) || unknown.length) { console.error("usage: okf-reindex.mjs <bundle-dir> [--check] [--json]"); return 2; }
   const root = realpathSync(resolve(dir));
-  try { assertSafeTree(root); } catch (e) { console.error(`okf-reindex: ${e.code ? `${e.code}: ` : ""}${e.message}`); return 2; }
-  if (!bridged(root)) {
+  let layout;
+  try { assertSafeTree(root); layout = bridged(root); } catch (e) { console.error(`okf-reindex: ${e.code ? `${e.code}: ` : ""}${e.message}`); return 2; }
+  if (!layout) {
     const message = `${root} has no subject layout: okf-base.json does not list the reserved nodes ${RESERVED_NODES.join(", ")} (owner ${SENTINEL})`;
     if (asJson) console.log(JSON.stringify({ bundle: root, bridged: false, error: message })); else console.error(message);
     return 2;

@@ -372,7 +372,9 @@ oats okf verdicts --check <claim file>
   answers `E_USAGE: base <alias> has no subject layout`.
 - `index` without an argument keeps its version-1 behaviour for a version-1
   soul, and `--base ALIAS` alone still reads the base's root index. A
-  `<kind>/<slug>` argument reads a subject unless its kind is a bound alias.
+  `<kind>/<slug>` argument always reads a subject for a version-2 soul; for a
+  version-1 soul it does unless its kind is a bound alias (then it is that
+  base's node, as before).
 - `--type` and `--kind` match case-insensitively.
 
 ### Proposing on a bridged base
@@ -439,12 +441,18 @@ The `oats.okf` spawn hook is required. For a working instance it:
    base or unresolved node/owner still refuses. Validation reads blobs in
    one byte-framed `git cat-file --batch`, with paths/modes confined first;
    consultation still refetches on `consult-max-age` or `--fresh`, including
-   the first read after spawn. There is no background fetch;
+   the first read after spawn. There is no background fetch. A soul with
+   `okf.json` version 2 (subjects) primes and validates **every** bound base,
+   since a subject may live in any base with the subject layout, and resolves
+   its subjects across the cached commits; only when they do not resolve does
+   it prime once more, refreshing the due caches, before refusing;
 2. creates the home's instance knowledge if missing: `STATE.md`, `log.md`
    and `notes/`;
 3. writes `okf-harvest-policy.json` in home with the effective soul opt-out,
    exposed by `oats okf status`;
-4. answers a brief naming consultation commands and owned/read nodes only.
+4. answers a brief naming consultation commands and owned/read nodes only
+   (version 1), or one line per declared subject with its claim counts
+   (version 2).
    No harvest or proposal direction goes into TASK.md.
 
 A service (capability) instance gets a brief and no knowledge upkeep. A
