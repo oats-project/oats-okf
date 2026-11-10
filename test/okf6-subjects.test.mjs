@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX, VALIDATE } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue, keyValue, textKey, GENERATED_NOTE } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
+import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue, keyValue, textKey, GENERATED_NOTE, counts } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
@@ -581,8 +581,10 @@ test('one long committed type over many kinds: `claims --type` compares the filt
 });
 
 test('text from a base or an index is keyed by textKey: many long distinct types, kinds or ids stay linear (V8 hashes a long string by its length)',()=>{
-  assert.equal(textKey('Decision'),'Decision');assert.equal(textKey('x'.repeat(16000)),'x'.repeat(16000));
-  assert.match(textKey('x'.repeat(16001)),/^\u0000sha256:[0-9a-f]{64}$/);assert.notEqual(textKey('x'.repeat(16001)),textKey('y'.repeat(16001)));
+  assert.equal(textKey('Decision'),'=Decision');assert.equal(textKey('x'.repeat(16000)),'='+'x'.repeat(16000));
+  assert.match(textKey('x'.repeat(16001)),/^#[0-9a-f]{64}$/);assert.notEqual(textKey('x'.repeat(16001)),textKey('y'.repeat(16001)));
+  // the two forms never meet: no text keys like another text's digest
+  const long='T'.repeat(16001);for(const forged of [textKey(long),textKey(long).slice(1),'\u0000sha256:'+textKey(long).slice(1)]) assert.notEqual(textKey(forged),textKey(long));
   const prefix='T'.repeat(17000),types=Array.from({length:2500},(_,i)=>`${prefix}${String(i).padStart(6,'0')}`);
   let started=Date.now();const v=parseView(['# S','',GENERATED_NOTE,'',...types.flatMap((ty,i)=>[`## ${ty}`,`### ${ty}`,`* [C${i}](/claims/c${i}.md)`])].join('\n'));
   assert.ok(Date.now()-started<3000,`parseView took ${Date.now()-started} ms`);assert.equal(v.sections.length,2500);
@@ -590,6 +592,52 @@ test('text from a base or an index is keyed by textKey: many long distinct types
   started=Date.now();const out=generate(concepts);
   assert.ok(Date.now()-started<3000,`generate took ${Date.now()-started} ms`);
   assert.equal(parseView(out.get('subjects/system/okf/index.md')).sections.length,2500);
+});
+
+test('a short type spelled like a long type\'s digest is a different type for `claims --type`',t=>{
+  const f=deployment(t),long='T'.repeat(16001);
+  const forged=parseView(['# S','',GENERATED_NOTE,'Subject file: [S](/subjects/system/okf.md)','',`## ${long}`,'* [A](/claims/a.md)',`## ${textKey(long)}`,'* [B](/claims/b.md)'].join('\n'));
+  assert.deepEqual(forged.sections.map(x=>x.entries.map(e=>e.title).join()),['A','B']);
+  const view=join(f.repo,'subjects/system/okf/index.md');
+  fs.appendFileSync(view,`\n## ${long}\n\n* [A](/claims/a.md)\n\n## ${textKey(long)}\n\n* [B](/claims/b.md)\n`);
+  f.git('add','-A');f.git('commit','-q','-m','forged key');
+  const r=run(f,['claims','--about','system/okf','--type',textKey(long),'--fresh','--json']);
+  assert.deepEqual(r.out.result.claims.map(c=>c.title),['B'],r.text.slice(0,300));
+});
+
+test('a subject description that starts with # or reads like the generated note survives the round trip (brief, subject)',t=>{
+  for(const description of ['# OATS knowledge',GENERATED_NOTE,'Subject file: x']) {
+    const dir=bridged(t);
+    edit(join(dir,'subjects/system/okf.md'),'description: The knowledge provider package.',`description: ${JSON.stringify(description)}`);
+    reindex(dir);assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+    const v=parseView(fs.readFileSync(join(dir,'subjects/system/okf/index.md'),'utf8'));
+    assert.equal(v.title,'oats-okf');assert.equal(v.description,description);
+    assert.deepEqual(Object.fromEntries(counts(v)),SUBJECT_COUNTS['system/okf']);
+  }
+  const bare=bridged(t);
+  edit(join(bare,'subjects/system/okf.md'),'description: The knowledge provider package.\n','');
+  reindex(bare);const v=parseView(fs.readFileSync(join(bare,'subjects/system/okf/index.md'),'utf8'));
+  assert.equal(v.description,'');assert.ok(v.sections.length>0);
+});
+
+test('links in frontmatter prose do not move into generated indexes: a relative link in a description, type or title stays text, and both validators pass',t=>{
+  const dir=join(tmp(t,'okf6-links-'),'base');writePlainBase(dir);
+  edit(join(dir,'expert/decision.md'),'description: The owner is pinned when the instance spawns.','description: See [the decision](decision.md) before spawning.');
+  edit(join(dir,'expert/index.md'),'- The owner is pinned when the instance spawns.','- See [the decision](decision.md) before spawning.');
+  assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0,'the plain base is valid');
+  bridge(dir);
+  edit(join(dir,'subjects/system/okf.md'),'description: The knowledge provider package.','description: Read [the guide](guide.md) first.');
+  edit(join(dir,'claims/insights/consult-reads-one-blob.md'),'type: Insight','type: See [x](missing.md)');
+  reindex(dir);
+  const view=fs.readFileSync(join(dir,'subjects/system/okf/index.md'),'utf8');
+  assert.ok(view.includes('See (the decision)(decision.md) before spawning.'),view);
+  assert.ok(view.includes('Read (the guide)(guide.md) first.'));assert.ok(view.includes('## See (x)(missing.md)'));
+  const old=join(dirname(dir),'okf-validate-5.8.0.mjs');
+  fs.writeFileSync(old,spawnSync('git',['-C',ROOT,'show','v5.8.0:oats-package/capabilities/oats-okf/lib/okf-validate.mjs'],{encoding:'utf8'}).stdout);
+  for(const validator of [undefined,old]) {
+    const r=validate(dir,{validator,env:{OKF_STRICT_EXIT:'1'}});
+    assert.equal(r.status,0,`${validator?'5.8':'6.0'}: ${r.text}`);assert.deepEqual([r.out.errors,r.out.warnings],[[],[]]);
+  }
 });
 
 test('a claim type spelled like the membership heading stays a claim; members are the subject files under it',t=>{

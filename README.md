@@ -289,6 +289,11 @@ node okf-reindex.mjs <base-dir> --check    # exit 1 when any differs; writes not
 node okf-validate.mjs <base-dir> --strict  # validator v2
 ```
 
+Frontmatter prose copied into a generated index (titles, descriptions, type
+and kind headings) is rendered as plain text, brackets as parentheses: a
+link in a concept's description would otherwise resolve against the index,
+not the concept. `--type` and `--kind` filters are read the same way.
+
 The regenerator refuses (`E_PATH`, exit 2), before reading or writing, a
 base that holds a symlink, a non-regular file or a file with more than one
 link, and writes each generated file through a fresh temporary file renamed

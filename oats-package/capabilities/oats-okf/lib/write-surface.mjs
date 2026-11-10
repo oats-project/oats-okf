@@ -37,15 +37,15 @@ export function onlySupersedes(before, after) {
   return meta.parsed && meta.meta.status === 'superseded' && withoutStatus(before) === withoutStatus(after);
 }
 
-/** The base's legacy-nodes map: node name → subject ref. */
+/** The base's legacy-nodes map: node name → subject ref (get/has by node
+ *  name; keyed inside by textKey, node names being untrusted base text). */
 export function legacyMap(root) {
   const out = new Map();
   for (const [p, meta] of readConcepts(root)) {
     const s = subjectOfPath(p);
-    // keyed by textKey: node names are untrusted base text (a real node name is short, its own key)
     if (s && Array.isArray(meta['legacy-nodes'])) for (const node of meta['legacy-nodes']) if (!out.has(textKey(node))) out.set(textKey(node), s.ref);
   }
-  return out;
+  return { get: node => out.get(textKey(node)), has: node => out.has(textKey(node)), get size() { return out.size; } };
 }
 
 /** Insert `about: [<ref>]` after `description:` (else at the end of the

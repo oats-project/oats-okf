@@ -221,11 +221,16 @@ const one = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 // Brackets would end the link text for every reader's link pattern (the 5.8
 // validator's included), leaving the claim unlinked: shown as parentheses.
 const linkText = (s) => one(s).replace(/\[/g, "(").replace(/\]/g, ")");
+// Frontmatter prose (a description, a type or kind heading, a subject title)
+// moves into a generated index, where a link it holds would resolve against
+// the index, not its concept: rendered as plain text, brackets as parentheses,
+// so no reader (the 5.8 validator included) sees a link.
+export const plainText = linkText;
 function entry(title, path, description) {
   // Consult resolves a link by cutting `?` and `#` and decoding `%`, so a path
   // holding one would read a different file: such a path is never linked.
   if (/[\s()<>?#%\\]/.test(path)) throw Object.assign(new Error(`${path}: a path with spaces, parentheses, angle brackets, ?, #, % or \\ cannot be linked from a generated index (a reader would resolve it to another file)`), { code: "E_PATH" });
-  const d = one(description);
+  const d = plainText(description);
   return `* [${linkText(title)}](/${path})${d ? ` - ${d}` : ""}`;
 }
 const fallbackTitle = (p) => p.split("/").pop().replace(/\.md$/, "");
@@ -238,9 +243,10 @@ const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
  *  V8 hashes a string longer than 16383 characters by its length alone, so
  *  many long keys of one length make each insertion compare against all the
  *  others (quadratic); such text is keyed by its sha256 instead, computed once.
- *  Short text is its own key. */
+ *  The two forms are tagged ("=" text, "#" digest) so no text keys like
+ *  another's digest. */
 export const KEY_CHARS = 16000;
-export const textKey = (text) => text.length <= KEY_CHARS ? text : `\u0000sha256:${createHash("sha256").update(text).digest("hex")}`;
+export const textKey = (text) => text.length <= KEY_CHARS ? `=${text}` : `#${createHash("sha256").update(text).digest("hex")}`;
 export function generate(concepts, rootIndex = "") {
   const subjects = new Map();
   for (const [p, meta] of concepts) {
@@ -265,9 +271,9 @@ export function generate(concepts, rootIndex = "") {
     if (Array.isArray(list)) for (const w of new Set(list.filter((x) => subjects.has(x)))) if (w !== r) { if (!membersOf.has(w)) membersOf.set(w, []); membersOf.get(w).push(r); }
   }
   for (const ref of sortedRefs) {
-    const s = subjects.get(ref), title = one(s.meta.title) || s.slug;
+    const s = subjects.get(ref), title = plainText(s.meta.title) || s.slug;
     const lines = [`# ${title}`, ""];
-    if (one(s.meta.description)) lines.push(one(s.meta.description), "");
+    if (plainText(s.meta.description)) lines.push(plainText(s.meta.description), "");
     lines.push(GENERATED_NOTE, `Subject file: [${linkText(title)}](/${s.path})`, "");
     if (s.kind === "workstream") {
       const members = membersOf.get(ref) ?? [];
@@ -281,7 +287,7 @@ export function generate(concepts, rootIndex = "") {
     const types = new Map();
     for (const c of claimsOf.get(ref)) {
       const mapped = claimType(typeof c.meta.type === "string" ? one(c.meta.type) : "", typeof c.meta.kind === "string" ? one(c.meta.kind) : "");
-      const type = mapped.type || "Untyped", kind = mapped.kind, tk = textKey(type), kk = textKey(kind);
+      const type = plainText(mapped.type) || "Untyped", kind = plainText(mapped.kind), tk = textKey(type), kk = textKey(kind);
       if (!types.has(tk)) types.set(tk, { type, kinds: new Map() });
       const kinds = types.get(tk).kinds;
       if (!kinds.has(kk)) kinds.set(kk, { kind, entries: [] });
@@ -290,7 +296,7 @@ export function generate(concepts, rootIndex = "") {
     if (!types.size) lines.push("No claims are about this subject yet.", "");
     for (const { type, kinds } of [...types.values()].sort((a, b) => byText(a.type, b.type))) {
       lines.push(`## ${type}`, "");
-      if (kinds.has("")) lines.push(...kinds.get("").entries, "");
+      if (kinds.has(textKey(""))) lines.push(...kinds.get(textKey("")).entries, "");
       for (const { kind, entries } of [...kinds.values()].filter((k) => k.kind).sort((a, b) => byText(a.kind, b.kind))) lines.push(`### ${kind}`, "", ...entries, "");
     }
     out.set(viewFile(ref), lines.join("\n").replace(/\n+$/, "") + "\n");
@@ -348,13 +354,22 @@ export function parseEntry(line) {
  *  like that heading stays a claim section. */
 export function parseView(text) {
   const lines = String(text).split(/\r?\n/), out = { title: "", description: "", members: [], sections: [] };
-  let type = null, kind = null, typeKey = null, kindKey = null, inMembers = false, sawNote = false;
+  let type = null, kind = null, typeKey = null, kindKey = null, inMembers = false;
   const byType = new Map();
   let current = null;
-  for (const line of lines) {
-    if (!out.title && line.startsWith("# ")) { out.title = line.slice(2).trim(); continue; }
-    if (line.startsWith(GENERATED_NOTE)) { sawNote = true; continue; }
-    if (!sawNote && out.title && line.trim() && !line.startsWith("#")) { out.description = line.trim(); continue; }
+  // The preamble is fixed: `# title`, blank, [description, blank], the
+  // generated note, `Subject file: ...`. Read by position, so a description
+  // starting with `#` or reading like the note stays the description.
+  let body = 0;
+  if (lines[0]?.startsWith("# ")) {
+    out.title = lines[0].slice(2).trim();
+    const noteAt = (i) => lines[i] === GENERATED_NOTE && /^Subject file: /.test(lines[i + 1] ?? "");
+    if (noteAt(2)) body = 3;
+    else if (lines[1] === "" && lines[3] === "" && noteAt(4)) { out.description = lines[2].trim(); body = 5; }
+    else body = 1;
+  }
+  for (let i = body; i < lines.length; i++) {
+    const line = lines[i];
     const h2 = /^## (.+)$/.exec(line), h3 = /^### (.+)$/.exec(line);
     if (h2) { type = h2[1].trim(); typeKey = textKey(type); inMembers = type === MEMBERS; kind = null; kindKey = null; current = null; continue; }
     if (h3) { kind = h3[1].trim(); kindKey = textKey(kind); current = null; continue; }

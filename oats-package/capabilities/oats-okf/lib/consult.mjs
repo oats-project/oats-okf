@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash, exec } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes, resolveSubjects } from './config.mjs';
 import { git, gitEnv, validateBase, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
-import { isBridgedMeta, METADATA_LIMIT, metadataTooLarge, parseFrontmatter, parseView, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
+import { isBridgedMeta, METADATA_LIMIT, metadataTooLarge, parseFrontmatter, parseView, plainText, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
 import { verdictLanes } from './verdicts.mjs';
 
 const HIT_LIMIT = 50, SNIPPET = 200, FRONTMATTER_BYTES = 8 * 1024, TEXT_BYTES = 64 * 1024 * 1024;
@@ -743,7 +743,8 @@ export function claims(source, flags, positionals) {
     // The filter is compared once per distinct type and kind (keyed by the
     // parser's textKey), not once per section: one long type over many kinds.
     const memo = (want, cache = new Map()) => (text, key) => { if (want === undefined) return true; if (!cache.has(key)) cache.set(key, (text ?? '').toLowerCase() === want); return cache.get(key); };
-    const typeOk = memo(flags.type?.toLowerCase()), kindOk = memo(flags.kind?.toLowerCase());
+    // A filter is read as the index renders a heading (plain text, brackets as parentheses).
+    const typeOk = memo(flags.type === undefined ? undefined : plainText(flags.type).toLowerCase()), kindOk = memo(flags.kind === undefined ? undefined : plainText(flags.kind).toLowerCase());
     const rows = view.sections.filter(x => typeOk(x.type, x.typeKey) && kindOk(x.kind, x.kindKey)).flatMap(x => {
       const type = cutHeading(x.type), kind = x.kind === null ? null : cutHeading(x.kind);
       return x.entries.map(c => ({ type, kind, title: c.title, path: c.path, description: c.description }));
