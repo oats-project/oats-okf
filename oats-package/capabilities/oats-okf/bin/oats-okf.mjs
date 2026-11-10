@@ -47,7 +47,7 @@ use one absolute bindings-file.
 // hook that reported one is quarantined when the spawn rolls back. This hook
 // only writes working memory and the policy in the home (removed with it) and
 // primes the shared host cache.
-const NEW_WAY='run `oats okf propose` from the instance home: the working agent proposes its own knowledge by PR at its checkpoints (the compulsory okf-propose skill; `oats okf status` first); oats.okf keeps no source custody, runs, drains or harvesters (README#upgrading-to-60)';
+const NEW_WAY='run `oats okf propose` from the instance home: the working agent proposes its own knowledge by PR at its checkpoints (the compulsory okf-propose skill; `oats okf status` first); oats.okf keeps no source custody, runs or drains (README#upgrading-to-60)';
 const removed=(what)=>fail('E_REMOVED',`${what} was removed in oats.okf 5.0: ${NEW_WAY}`);
 const args=process.argv.slice(2);
 if(args.includes('--help') || args.includes('-h')) {process.stdout.write(HELP);}

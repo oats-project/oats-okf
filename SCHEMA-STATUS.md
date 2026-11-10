@@ -2,7 +2,7 @@
 
 oats.okf (6.0 unreleased; manifests read 5.8.0) requires **OATS >=0.69.2**,
 the first kernel that reads the `background:` key used by the
-`knowledge-maintainer` soul (the `knowledge-harvester` soul is removed in 6.0).
+`knowledge-maintainer` soul and the `knowledge-harvester` stub (removed in 6.0; it refuses every spawn until 7.0).
 Version declarations are not evidence of a published release.
 
 ## Schemas
@@ -68,8 +68,8 @@ CI's `real-kernel-0692` job installs the released **OATS 0.69.2** in a
 disposable prefix and runs `test/okf5-real-kernel.test.mjs` through it: the
 legacy-key cleanup, a real spawn running `oats okf propose --plan` and
 `--check` through the kernel's in-home dispatch, `oats spawn
-oats.okf/knowledge-harvester` refused as an unknown soul, the removed
-surfaces, the operator form on the retired source's real recovery, both
+oats.okf/knowledge-harvester` refused by the stub's spawn hook with the
+`E_REMOVED` fix, the removed surfaces, the operator form on the retired source's real recovery, both
 opt-out spellings, the spawn refusal of `knowledge.propose`, and the
 knowledge-maintainer's preview and `background: true` default. All spawns use
 `--no-launch` (no model, messaging or GitHub).

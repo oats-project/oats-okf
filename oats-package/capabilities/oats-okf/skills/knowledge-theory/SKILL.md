@@ -215,13 +215,17 @@ of a published source you cite is fine.
 Private evidence (a proposal, a note, a session) is not publication permission. Drop tool noise, task
 residue, code descriptions and duplicates. Do not quote third-party text just
 because it appears in a source record. Preserve verified, generalized
-conclusions only.
+conclusions only. In oats.okf 6 the proposing instance applies these
+exclusions to its own outgoing diff before it publishes, and the maintainer
+reads them again as the second reader; nobody else judges in between.
 
 ## Provenance
 
 Every promoted or merged concept cites where it came from: the proposal and
-the source notes it relied on (an oats.okf 4.x harvest cited the durable input
-id and the transcript turn ids). Provenance is what
+the source notes it relied on. The proposing instance writes that citation
+itself; its PR's `okf-proposal` provenance block names the source
+incarnation and hashes each note it read (an oats.okf 4.x harvest cited the
+durable input id and the transcript turn ids). Provenance is what
 lets a later judge (and a human) check the claim instead of trusting it. Do
 not put copied home paths, account details, machine state or secrets in
 reusable knowledge.

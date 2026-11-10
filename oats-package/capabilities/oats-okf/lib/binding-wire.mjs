@@ -29,7 +29,7 @@ const wireError=code=>{throw Object.assign(new Error(code),{wireCode:code});};
 // Private diagnostic marker and closed literal vocabulary. Never serialize a
 // caught exception's message, supplied value, path, alias or unknown key.
 const settingDiagnostic=Symbol('runtime-setting-diagnostic');
-const V1_REMOVED='E_REMOVED: OKF binding payloadVersion 1 (harvest runtime/model) was removed in oats.okf 5.0; respawn to bind with oats.okf 5 (the harvester uses the kernel\'s own harness and model)';
+const V1_REMOVED='E_REMOVED: OKF binding payloadVersion 1 (harvest runtime/model) was removed in oats.okf 5.0; respawn to bind with oats.okf 5 (there is no harvest runtime or model)';
 const settingMessages=Object.freeze({
   'bindings-file:missing':'setting bindings-file is required (absolute host path)',
   'bindings-file:invalid':'setting bindings-file must be a normalized absolute host path',

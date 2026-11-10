@@ -139,8 +139,8 @@ captured ProviderBinding as execution authority:
 - Provider codecs run only after exact retained executable approval. Their
   populated binding is not proof of readiness, enrollment, credentials, privacy
   or publication authority. Respect typed non-ready results.
-- oats.okf 6 keeps no source descriptors, captured custody, harvest workers
-  or harvesters: the instance proposes its knowledge at checkpoints with
+- oats.okf 6 keeps no source descriptors, captured custody or harvest
+  workers, and no harvest soul: the instance proposes its knowledge at checkpoints with
   `oats okf propose`, which opens a reviewed PR. No source gets a scheduler
   job.
 - Captured `setup`, `init`, `migrate`, and `unlock` are deliberate refusals.

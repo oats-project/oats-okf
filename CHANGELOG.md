@@ -4,8 +4,9 @@
 
 ### 6.0: no harvesters — the instance proposes its knowledge by PR, the maintainer gates
 
-Requires OATS >=0.69.2, unchanged. A major release: it removes a capability
-(`oats.okf-harvest`) and a package soul (`oats.okf/knowledge-harvester`). The
+Requires OATS >=0.69.2, unchanged. A major release: it removes the knowledge
+harvester (`oats.okf-harvest` and `oats.okf/knowledge-harvester` stay as a
+refusing stub until 7.0). The
 build record is `docs/design/2026-11-10-no-harvesters-propose-by-pr.md`; the
 rationale is the knowledge-base-by-subject design's §5. The version number is
 the release lane's.
@@ -79,13 +80,13 @@ the release lane's.
 
 #### Removed
 
-- `oats.okf-harvest` and `oats.okf/knowledge-harvester`:
-  `oats spawn oats.okf/knowledge-harvester` is refused by the kernel as an
-  unknown soul; run `oats okf propose` from the instance home.
-  `oats okf harvest` answers `E_REMOVED` naming it; `oats okf-harvest
-  complete|harvest-status` go with the capability (the kernel answers an
-  unknown command). `oats okf-maintenance notify-harvester` answers
-  `E_REMOVED` ("there is no harvester; the proposer reads the PR").
+- The knowledge harvester: `oats.okf-harvest` loses its skills, scripts,
+  inject and source capture, and with `oats.okf/knowledge-harvester` becomes
+  a stub until 7.0 whose required spawn hook always refuses, before any home
+  is kept, with the `E_REMOVED` text below. `oats okf harvest`,
+  `oats okf-harvest complete|harvest-status` and
+  `oats okf-maintenance notify-harvester` answer `E_REMOVED` ("there is no
+  harvester; the proposer reads the PR" for the last).
 
 #### Upgrading to 6.0
 
@@ -94,15 +95,57 @@ the release lane's.
   retires them; a retained one is retired and its claims re-proposed by the
   source with `oats okf propose`, or by the operator form on its retirement
   recovery.
-- A recovery copy without the 5.2 spawn policy (a 4.x or 5.0/5.1 seat) is
-  `E_SOURCE` in the operator form. This includes the retired 4.x seats the
-  unreleased #125 admission below served through the harvester.
+- A recovery copy without the 5.2 spawn policy (a retired 4.x or 5.0/5.1
+  seat) is decided in the operator form as 5.8's harvest spawn hook decided
+  it: the #125 admission below survives the harvester's removal. A live home
+  without the policy stays `E_SOURCE` (respawn it).
 - Declare `proposal-review` (or keep `harvest-review`, its alias), never both.
 - Protect every Git base's accepted branch; give proposing hosts
   branch-create access or use the fork flow; optionally set
   `screen-terms-file`.
 - No change to bindings, `okf.json`, `okf-base.json` or any handled error
   code. Open `okf-harvest` PRs stay reviewable.
+
+#### What to delete, and what replaces the harvest
+
+A spawn of `oats.okf/knowledge-harvester` is refused by the stub soul's
+required spawn hook, before any home is kept:
+
+```text
+oats-okf-harvest E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; rename the trigger template oats.okf:harvest-review to oats.okf:proposal-review. See the 6.0 release note.
+```
+
+The hand steps, from the deployment directory:
+
+1. **What replaces the harvest:** at a checkpoint the instance runs, from its
+   home, `oats okf propose --plan --slug <slug>`, writes the knowledge in the
+   clone and fills `proposal.md`, then `oats okf propose --check --slug <slug>`
+   and `oats okf propose --apply --slug <slug> --digest <digest>`. For a
+   retired source, the operator runs
+   `oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>`
+   (then `--check` and `--apply` with the same `--home` and `--soul`).
+2. **Delete the harvester's launch preference** from `oats-local.yaml`, if
+   any: `grep -n "knowledge-harvester" oats-local.yaml` shows it (under
+   `souls:` → `launch:`, the line `oats.okf/knowledge-harvester: …` or
+   `knowledge-harvester: …`); delete that line by hand, and the `launch:` or
+   `souls:` key with it if it is left empty.
+3. **Delete every `--provider oats.okf harvest=…` spawn flag** from the
+   scripts and briefs that spawn instances:
+   `grep -rn -- "--provider oats.okf harvest" <your scripts>`. A leftover host
+   `harvest` key is removed with
+   `oats okf setup --remove-legacy-settings --soul <soul>` (`--plan` first).
+4. **Rename the trigger template.** A workspace automation file (in a
+   member repository) keeps its id and changes only its template:
+   `sed -i 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml`,
+   then commit and merge it. A local trigger:
+   `oats trigger remove okf-harvest-review`, then
+   `oats trigger add --from oats.okf:proposal-review --set repo=github.com/<owner>/<kb-repo>`.
+   Until you do, `harvest-review` is an identical alias and keeps working.
+5. **Retire harvesters still listed** once they have handed over:
+   `oats status`, then `oats retire <harvester instance>`; re-propose a
+   retained one's claims by step 1 (the source, or the operator form on the
+   harvester's source's recovery).
+
 
 ### Retired 4.x sources (unreleased on 5.x; superseded by 6.0's removal of the harvester)
 

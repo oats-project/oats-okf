@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PKG=join(ROOT,'oats-package');
 const CAPS=['oats-okf','oats-okf-maintenance'];
+// oats.okf 6.0: the removed harvester's stub (until 7.0): no skills, one refusing hook.
+const STUB_CAP='oats-okf-harvest',STUB_SOUL='knowledge-harvester';
 const readJson=p=>JSON.parse(fs.readFileSync(p,'utf8'));
 const cap=name=>readJson(join(PKG,'capabilities',name,'oats.json'));
 /** relative path → bytes, for every file under dir. */
@@ -63,15 +65,86 @@ test('oats.okf ships consultation, capture, compulsory proposing and theory skil
   assert.equal(cap('oats-okf').commands.status,'bin/oats-okf.mjs status');
 });
 
-test('the package enumerates exactly the slot and the maintainer, one soul and both trigger templates; no harvester remains',()=>{
+test('the package enumerates the slot, the maintainer, the harvester stub (until 7.0), two souls and both trigger templates',()=>{
   const pkg=readJson(join(PKG,'oats-package.json'));
-  assert.deepEqual(pkg.capabilities,['capabilities/oats-okf','capabilities/oats-okf-maintenance']);
-  assert.deepEqual(pkg.souls,['souls/knowledge-maintainer']);
+  assert.deepEqual(pkg.capabilities,['capabilities/oats-okf','capabilities/oats-okf-harvest','capabilities/oats-okf-maintenance']);
+  assert.deepEqual(pkg.souls,['souls/knowledge-harvester','souls/knowledge-maintainer']);
+  assert.match(pkg.description,/until 7\.0, the removed knowledge harvester's stub soul and capability, whose spawn always refuses with E_REMOVED/);
   assert.deepEqual(pkg.triggers,[{id:'proposal-review',file:'triggers/proposal-review.json'},{id:'harvest-review',file:'triggers/harvest-review.json'}]);
-  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities')).sort(),CAPS);
-  assert.deepEqual(fs.readdirSync(join(PKG,'souls')).sort(),['knowledge-maintainer']);
-  assert.equal(fs.existsSync(join(PKG,'capabilities','oats-okf-harvest')),false);
-  assert.equal(fs.existsSync(join(PKG,'souls','knowledge-harvester')),false);
+  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities')).sort(),[...CAPS,STUB_CAP].sort());
+  assert.deepEqual(fs.readdirSync(join(PKG,'souls')).sort(),[STUB_SOUL,'knowledge-maintainer']);
+});
+
+// Spec §4 and acceptance condition 2: a bare unknown-soul error is not enough.
+const REMOVED_SPAWN='E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; rename the trigger template oats.okf:harvest-review to oats.okf:proposal-review. See the 6.0 release note.';
+test('the harvester stub: no skills or instructions, a required spawn hook that always refuses with the spec\'s E_REMOVED text and writes nothing',()=>{
+  const m=cap(STUB_CAP);
+  assert.deepEqual(m.hooks,{spawn:{command:'bin/okf-harvest.mjs spawn',required:true}});
+  assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
+  for(const k of ['skills','inject','settings']) assert.equal(Object.hasOwn(m,k),false,k);
+  assert.deepEqual(files(join(PKG,'capabilities',STUB_CAP)),{'oats.json':files(join(PKG,'capabilities',STUB_CAP))['oats.json'],'bin/okf-harvest.mjs':files(join(PKG,'capabilities',STUB_CAP))['bin/okf-harvest.mjs']},'no skills, scripts or inject');
+  const soul=fs.readFileSync(join(PKG,'souls',STUB_SOUL,'soul.yaml'),'utf8');
+  assert.match(soul,/^knowledge: none$/m);assert.ok(soul.includes(`  oats.okf-harvest: { from: here }`));
+  const bin=join(PKG,'capabilities',STUB_CAP,'bin/okf-harvest.mjs');
+  for(const proposal of ['# OKF proposal: x\n\nSource: instance src, home /d/agents/s/instances/src, soul s\n','anything']) {
+    const cwd=fs.mkdtempSync(join(ROOT,'.stub-')),home=fs.mkdtempSync(join(ROOT,'.stub-home-'));
+    try {
+      const r=spawnSync(process.execPath,[bin,'spawn'],{cwd,env:{PATH:process.env.PATH,OATS_EVENT:'spawn',OATS_INSTANCE_HOME:home,OATS_TASK:proposal},encoding:'utf8'});
+      assert.equal(r.status,1);assert.deepEqual(JSON.parse(r.stdout),{warning:`oats-okf-harvest ${REMOVED_SPAWN}`},'no meta, the exact text');
+      assert.deepEqual(fs.readdirSync(home),[]);assert.deepEqual(fs.readdirSync(cwd),[]);
+    } finally {fs.rmSync(cwd,{recursive:true,force:true});fs.rmSync(home,{recursive:true,force:true});}
+  }
+  for(const command of ['complete','harvest-status']) {
+    const r=spawnSync(process.execPath,[bin,command,'--json'],{encoding:'utf8'});
+    assert.equal(r.status,1);const e=JSON.parse(r.stdout).error;assert.equal(e.code,'E_REMOVED');assert.match(e.message,/oats okf propose/);
+  }
+  // The release note and the README carry the same fix, with the hand steps.
+  for(const doc of ['README.md','CHANGELOG.md']) {
+    const text=prose(doc);
+    assert.ok(text.includes(REMOVED_SPAWN),`${doc} quotes the refusal`);
+    for(const step of ['grep -n "knowledge-harvester" oats-local.yaml','oats trigger remove okf-harvest-review','oats trigger add --from oats.okf:proposal-review --set repo=github.com/<owner>/<kb-repo>',
+      "sed -i 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml",'oats okf propose --plan --slug <slug>','oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>']) assert.ok(text.includes(step),`${doc}: ${step}`);
+  }
+});
+
+// Acceptance condition 3: every instance's knowledge instructions change in
+// 6.0, and the shipped capabilities name a harvester only in a migration
+// section (Markdown) or in the legacy code that reads 5.x/4.x PRs.
+test('every shipped knowledge instruction changed since v5.8.0',()=>{
+  for(const p of ['oats-package/capabilities/oats-okf/injects/okf.md','oats-package/capabilities/oats-okf/skills/okf-propose/SKILL.md',
+    'oats-package/capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md','oats-package/capabilities/oats-okf/skills/knowledge-theory/SKILL.md',
+    'oats-package/souls/knowledge-maintainer/AGENTS.md','oats-package/capabilities/oats-okf-maintenance/skills/knowledge-review/SKILL.md',
+    'oats-package/capabilities/oats-okf-maintenance/injects/maintainer.md','README.md']) {
+    const old=spawnSync('git',['show',`v5.8.0:${p}`],{cwd:ROOT,encoding:'utf8'});
+    assert.equal(old.status,0,`${p} existed in v5.8.0`);
+    assert.notEqual(fs.readFileSync(join(ROOT,p),'utf8'),old.stdout,`${p} changed in this release`);
+  }
+});
+
+const LEGACY_CODE={
+  'oats-okf-maintenance/lib/provenance.mjs':'parses version 2 blocks, whose key is `harvester`',
+  'oats-okf-maintenance/bin/okf-maintenance.mjs':'review-context for version 2 PRs; notify-harvester answering E_REMOVED',
+  'oats-okf-maintenance/oats.json':'the removed command notify-harvester stays declared so it answers E_REMOVED',
+};
+test('the shipped capabilities say "harvester" only in a migration section or in legacy 5.x/4.x code',()=>{
+  const found=[];
+  const walk=(dir,rel='')=>{for(const e of fs.readdirSync(dir,{withFileTypes:true})) {const r=rel?`${rel}/${e.name}`:e.name;if(e.isDirectory()) walk(join(dir,e.name),r);else found.push(r);}};
+  for(const c of CAPS) walk(join(PKG,'capabilities',c),c);
+  walk(join(PKG,'souls','knowledge-maintainer'),'souls/knowledge-maintainer');
+  const offenders=[];
+  for(const rel of found) {
+    const text=fs.readFileSync(join(PKG,rel.startsWith('souls/')?'':'capabilities',rel),'utf8');
+    if(!/harvester/i.test(text)) continue;
+    if(!rel.endsWith('.md')) {if(!Object.hasOwn(LEGACY_CODE,rel)) offenders.push(`${rel} (code)`);continue;}
+    let section='';
+    text.split('\n').forEach((line,i)=>{
+      const h=/^#{1,6}\s+(.*)$/.exec(line);if(h) section=h[1];
+      if(/harvester/i.test(line) && !/^Migration\b/.test(section)) offenders.push(`${rel}:${i+1}`);
+    });
+  }
+  assert.deepEqual(offenders,[],'a harvester may be named only under a "Migration…" heading, or in the listed legacy code');
+  // And no instruction says a harvester decides what is promoted, or that an agent waits for one.
+  for(const rel of found.filter(r=>r.endsWith('.md'))) assert.doesNotMatch(fs.readFileSync(join(PKG,rel.startsWith('souls/')?'':'capabilities',rel),'utf8'),/harvester (?:promotes|decides|judges)|wait (?:on|for) (?:the|a|its) harvester/i,rel);
 });
 
 test('proposal-review fires on okf-proposal and okf-harvest; harvest-review is its byte-identical alias',()=>{

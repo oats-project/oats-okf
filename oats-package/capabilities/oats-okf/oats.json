@@ -66,7 +66,7 @@
       "check action is not an admitted knowledge operation",
       "OKF settings missing bindings-file: set settings.oats.okf bindings-file, or deactivate oats.okf",
       "OKF soul declaration missing: create okf.json for this soul, or deactivate oats.okf",
-      "E_REMOVED: OKF binding payloadVersion 1 (harvest runtime/model) was removed in oats.okf 5.0; respawn to bind with oats.okf 5 (the harvester uses the kernel's own harness and model)",
+      "E_REMOVED: OKF binding payloadVersion 1 (harvest runtime/model) was removed in oats.okf 5.0; respawn to bind with oats.okf 5 (there is no harvest runtime or model)",
       "OKF binding missing or invalid: provision soul OKF declaration and bindings file, or deactivate oats.okf",
       "OKF bindings file missing or invalid: repair configured bindings file, or deactivate oats.okf",
       "more than 64 git knowledge bases declared",

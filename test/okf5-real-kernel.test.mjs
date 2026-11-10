@@ -43,7 +43,8 @@ const listing = dir => {
 /** Every string value in a JSON document. */
 const strings = (v, out = []) => { if (typeof v === 'string') out.push(v); else if (v && typeof v === 'object') for (const x of Object.values(v)) strings(x, out); return out; };
 
-const HARVESTER_DIR = 'oats-okf--knowledge-harvester'; // packageSoulAgentName('oats.okf', 'knowledge-harvester'): must never appear
+const HARVESTER_DIR = 'oats-okf--knowledge-harvester'; // packageSoulAgentName('oats.okf', 'knowledge-harvester'): no home is ever kept
+const { REMOVED_SPAWN } = await import('../oats-package/capabilities/oats-okf-harvest/bin/okf-harvest.mjs');
 
 test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-key cleanup, a source spawn proposing by PR (plan, check), the retired source's recovery form, no harvester, knowledge.propose and opt-out refusals, and the maintainer soul`, { skip: !cli }, async t => {
   const base = real(fs.mkdtempSync(join(tmpdir(), 'okf5-real-kernel-')));
@@ -191,19 +192,18 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     refused(['okf', 'propose', '--check', '--slug', 'retry-budget'], 'E_OWNER', { cwd: src, as });
     fs.rmSync(join(b.clone, 'knowledge/peer/claim.md'));
     assert.equal(git(kbRemote, ['for-each-ref', '--format=%(refname)']), 'refs/heads/main', 'nothing was pushed');
-    assert.equal(fs.existsSync(join(dep, 'agents', HARVESTER_DIR)), false, 'no harvester exists');
+    assert.equal(fs.existsSync(join(dep, 'agents', HARVESTER_DIR)), false, 'no harvester was spawned');
     Object.assign(state, { src, slug: 'retry-budget' });
   });
 
-  await t.test('c) oats spawn oats.okf/knowledge-harvester is refused as an unknown soul, and creates nothing', () => {
+  await t.test('c) oats spawn oats.okf/knowledge-harvester is refused by the stub\'s spawn hook with the E_REMOVED fix, and keeps no home', () => {
     const { src } = state;
     write(join(src, 'proposals/old-style.md'), `# OKF proposal: x\n\nSource: instance src, home ${src}, soul source\n\n## What\nA claim.\n`);
-    for (const args of [['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/old-style.md', '--relation', 'unrelated', '--no-launch'], ['spawn', 'oats.okf/knowledge-harvester', '--preview']]) {
-      const r = run(args, { cwd: src, as: { instance: 'src', home: src } });
-      assert.notEqual(r.status, 0, r.text);
-      assert.match(r.text, /knowledge-harvester/, r.text);
-    }
-    assert.equal(fs.existsSync(join(dep, 'agents', HARVESTER_DIR)), false);
+    const r = run(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/old-style.md', '--relation', 'unrelated', '--no-launch'], { cwd: src, as: { instance: 'src', home: src } });
+    assert.notEqual(r.status, 0, r.text);
+    assert.ok(r.text.replace(/\s+/g, ' ').includes(REMOVED_SPAWN), r.text);
+    const instances = join(dep, 'agents', HARVESTER_DIR, 'instances');
+    assert.deepEqual(fs.existsSync(instances) ? fs.readdirSync(instances).filter(n => !n.startsWith('.')) : [], [], 'no harvester home is kept');
   });
 
   await t.test('d) the removed surfaces refuse on the real kernel, naming oats okf propose, and create nothing', () => {
@@ -211,8 +211,9 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const before = listing(src);
     const e1 = refused(['okf', 'harvest'], 'E_REMOVED', { cwd: src, as: { instance: 'src', home: src } });
     assert.match(e1.message, /oats okf harvest was removed in oats\.okf 5\.0: run `oats okf propose` from the instance home/);
-    const e2 = run(['okf-harvest', 'complete', '--source', 'x', '--run', 'y'], { cwd: src, as: { instance: 'src', home: src } });
-    assert.notEqual(e2.status, 0, e2.text);
+    // A working home does not compose the stub capability, so the kernel itself
+    // refuses its commands there (the stub answers E_REMOVED only where composed).
+    refused(['okf-harvest', 'complete', '--source', 'x', '--run', 'y'], 'E_UNKNOWN_COMMAND', { cwd: src, as: { instance: 'src', home: src } });
     const e3 = refused(['okf-maintenance', 'notify-harvester', '--pr', 'https://github.com/fixture/knowledge/pull/1', '--state', 'merged'], 'E_REMOVED');
     assert.match(e3.message, /there is no harvester; the proposer reads the PR/);
     assert.deepEqual(listing(src), before);

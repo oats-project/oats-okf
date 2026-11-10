@@ -19,7 +19,7 @@ description: >-
 
 The trigger makes a knowledge PR get reviewed: when a PR labelled
 `okf-proposal` (an instance's own proposal, oats.okf 6) or `okf-harvest` (a
-5.x harvester's) opens on the knowledge-base (KB) repository, the host tick
+5.x harvest PR) opens on the knowledge-base (KB) repository, the host tick
 spawns a new `oats.okf/knowledge-maintainer` to review it and gate its merge.
 It runs on one machine, acting as one GitHub account, and that account must
 be able to **merge** on the KB repository.
@@ -55,7 +55,7 @@ Say which one applies when you report the setup.
 
 ## 2a. Protect the accepted branch
 
-There is no harvester and no other gate: the knowledge base changes only
+The maintainer is the only gate: the knowledge base changes only
 through PRs the knowledge maintainer merges. **Every Git base's accepted
 branch must refuse direct pushes and force-pushes and accept changes by pull
 request only, merged by the knowledge maintainer's account.** Proposing

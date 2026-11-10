@@ -1,6 +1,6 @@
 // oats.okf 6.0: the instance proposes its own knowledge as a pull request
-// (docs/design/2026-11-10-no-harvesters-propose-by-pr.md). There is no
-// harvester: `oats okf propose` clones the soul's owned bases (--plan), checks
+// (the 6.0 build spec in the repository's docs/design/). Nothing harvests
+// on its behalf: `oats okf propose` clones the soul's owned bases (--plan), checks
 // the instance's edits and prints the complete outgoing diff and a digest
 // (--check), then publishes exactly that through the package's publication
 // helper (--apply). The knowledge maintainer gates every merge.
@@ -16,8 +16,13 @@ import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
 import { git, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
-// The proposer's own copy of the shared publication helper (okf-authoring).
+// The proposer's own copy of the shared publication helper (okf-authoring),
+// byte-identical to the maintainer's: the SAME screen and publication calls
+// the 5.x harvest procedure made (screen, commit, create), moved here.
 import { execute } from '../skills/okf-authoring/scripts/okf-publication.mjs';
+/** The one seam to the helper: every call goes through `publication.execute`
+ *  (a test records the exact inputs; production never replaces it). */
+export const publication = { execute };
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -85,10 +90,12 @@ export function resolveSource(home, env = process.env) {
     let recorded; try { recorded = fs.realpathSync(record.home); } catch { recorded = record.home; }
     if (recorded !== fs.realpathSync(home)) fail('E_SOURCE', `the instance record names another home (${record.home}); for a retirement recovery give the recovery directory that holds recovery.json`);
   } else if (record.instance !== manifest.instance || record.home !== manifest.sourceHome) fail('E_SOURCE', 'the recovery copy\'s record does not match its retirement manifest');
-  // The spawn-recorded duty, as `oats okf status` answers it.
+  // The spawn-recorded duty, as `oats okf status` answers it. A LIVE home
+  // without one (5.0/5.1) is refused; a recovery copy without one (a retired
+  // 4.x or 5.0/5.1 seat) is decided below as 5.8's harvest spawn hook decided it.
   let policy;
   try { policy = harvestPolicy(root); } catch (e) { fail('E_SOURCE', `${e.message}`); }
-  if (policy.harvest === 'unknown') fail('E_SOURCE', 'this home has no spawn-recorded knowledge duty (okf-harvest-policy.json): it was spawned by oats.okf 5.0/5.1 or earlier; respawn it with the current oats.okf (`oats instance upgrade` keeps the duty unknown); nothing was cloned');
+  if (policy.harvest === 'unknown' && form === 'live') fail('E_SOURCE', 'this home has no spawn-recorded knowledge duty (okf-harvest-policy.json): it was spawned by oats.okf 5.0/5.1 or earlier; respawn it with the current oats.okf (`oats instance upgrade` keeps the duty unknown); nothing was cloned');
   // The soul: as recorded at spawn, and as the kernel dispatched it (OATS_SOUL).
   const souls = [];
   if (typeof record.soulDir === 'string' && isAbsolute(record.soulDir) && present(join(record.soulDir, 'soul.yaml'))) souls.push(['recorded', record.soulDir]);
@@ -99,6 +106,7 @@ export function resolveSource(home, env = process.env) {
   if (names.size !== 1 || names.has(null)) fail('E_SOURCE', 'the soul given (--soul, or the instance\'s own) is not the soul this home\'s record was spawned from');
   const soul = [...names][0];
   if (policy.harvest === 'off' || texts.some(([, t]) => OPTED_OUT.test(t))) fail('E_OPTED_OUT', `the soul ${soul} opts out (knowledge: { harvest: off } or { publish: off }): its instances never publish knowledge`);
+  const legacyKeysIgnored = policy.harvest === 'unknown' ? retiredAdmission(record, texts.find(([which]) => which === 'recorded')?.[1], soul) : [];
   const { decl, bindings } = consultSource(root);
   const capabilities = [record.capabilities, record.capabilityRuntime].flatMap(l => Array.isArray(l) ? l : []);
   const tasksProvider = capabilities.find(c => c?.layer === 'tasks')?.id ?? null;
@@ -106,7 +114,35 @@ export function resolveSource(home, env = process.env) {
   const proposer = form === 'live'
     ? { form, instance: record.instance, alias: messaging ? record.instance : null }
     : { form, instance: typeof env.OATS_INSTANCE === 'string' && NAME.test(env.OATS_INSTANCE) ? env.OATS_INSTANCE : null, alias: null };
-  return { form, home, root, record, soul, decl, bindings, tasksProvider: typeof tasksProvider === 'string' ? tasksProvider : null, proposer };
+  return { form, home, root, record, soul, decl, bindings, tasksProvider: typeof tasksProvider === 'string' ? tasksProvider : null, proposer, legacyKeysIgnored };
+}
+
+/** A retired seat with no spawn-recorded duty (spawned on 4.x or 5.0/5.1),
+ *  admitted as 5.8's harvest spawn hook admitted it (oats-okf#125, #128),
+ *  which the 6.0 operator form keeps: the opt-out was already decided from the
+ *  recorded soul.yaml text (no host setting masks it); any other soul
+ *  `harvest`/`publish` value refuses; the record's removed 4.x keys are judged
+ *  by their RECORDED origin. A manifest default was nobody's decision; a
+ *  soul-origin key or one with no recorded origin fails closed; a host, spawn or
+ *  workspace key was the deployment's consent to 4.x's own machinery and is
+ *  ignored on a retired source. → the ignored keys. */
+function retiredAdmission(record, soulText, soul) {
+  if (typeof soulText !== 'string') fail('E_SOURCE', `the retired seat has no spawn-recorded duty and its recorded soul (soulDir) is not readable, so whether ${soul} opts out cannot be established`);
+  // A KEY at a line start or after `{`/`,` in a flow mapping; never the bare word.
+  if (/(?:^|[{,])[ \t]*(?:harvest|publish)[ \t]*:/m.test(soulText)) fail('E_SOURCE', `the recorded soul ${soul} declares a harvest or publish value other than off, which no version of oats.okf accepts as a decision; fix the soul's reviewed source (only knowledge: { harvest: off } is valid)`);
+  const okf = record.providers?.['oats.okf'];
+  if (!object(okf)) fail('E_SOURCE', `the retired seat ${record.instance} has no oats.okf knowledge slot in its record`);
+  const origins = [record.capabilities, record.capabilityRuntime].flatMap(l => Array.isArray(l) ? l : []).find(c => c?.id === 'oats.okf')?.settingsOrigins;
+  const ignored = [];
+  for (const key of ['harvest', 'harvest-runtime', 'harvest-model'].filter(k => Object.hasOwn(okf, k))) {
+    const kind = origins?.[`/${key}`]?.kind;
+    if (kind === 'manifest-default') continue;
+    if (key === 'harvest' && okf.harvest === 'off' && kind === 'soul') fail('E_OPTED_OUT', `the soul ${soul} opts out (recorded soul-origin harvest: off): its instances never publish knowledge`);
+    if (typeof kind !== 'string') fail('E_SOURCE', `the record of retired seat ${record.instance} sets oats.okf ${key} with no recorded origin, so whether its soul opts out cannot be established`);
+    if (kind === 'soul') fail('E_SOURCE', `the record of retired seat ${record.instance} sets oats.okf ${key} from soul, a setting removed in oats.okf 5.0 that no version accepts as a decision; fix the soul's reviewed source`);
+    ignored.push(key);
+  }
+  return ignored;
 }
 
 /** The owned Git bases, and the owned directory bases skipped with a reason. */
@@ -336,7 +372,7 @@ function termsFile() {
 }
 /** Run one helper command in process; its refusals keep their codes. */
 function runHelper(command, options) {
-  try { return execute(command, { ...options }); }
+  try { return publication.execute(command, { ...options }); }
   catch (e) {
     const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
     const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) };
@@ -417,7 +453,7 @@ export function plan(source, slug) {
     atomic(join(staging, 'proposal.md'), SKELETON);
     atomic(join(staging, 'plan.json'), JSON.stringify({ version: 1, slug, form: source.form, bases: rows.map(({ alias, accepted }) => ({ alias, accepted })) }, null, 2) + '\n');
     fs.renameSync(staging, dir);
-    return { proposal: dir, form: source.form, source: { instance: source.record.instance, soul: source.soul, owner: source.decl.owner },
+    return { proposal: dir, form: source.form, source: { instance: source.record.instance, soul: source.soul, owner: source.decl.owner }, ...(source.legacyKeysIgnored.length ? { legacyKeysIgnored: source.legacyKeysIgnored } : {}),
       bases: rows.map(r => ({ ...r, clone: join(dir, 'work', r.alias) })), skipped,
       next: `write the knowledge in each clone (owned nodes and the base root index.md only), fill ${join(dir, 'proposal.md')}, then oats okf propose --check --slug ${slug}` };
   } catch (e) { fs.rmSync(staging, { recursive: true, force: true }); throw e; }

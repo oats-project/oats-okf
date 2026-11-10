@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { backingNotes, SKELETON } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
+import { backingNotes, SKELETON, propose, publication } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
+import { execute as shippedExecute } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 import { isolatedGit } from './fixtures/isolated-git.mjs';
 // oats.okf 6.0 (docs/design/2026-11-10-no-harvesters-propose-by-pr.md): the
 // instance proposes its own knowledge with `oats okf propose`. Real Git, a
@@ -339,4 +340,123 @@ test('the operator form reads a retirement recovery copy and names the form in t
   refused(f.run(['--plan', '--slug', 'y', '--home', join(recovery, 'home')], { cwd: f.d, as: 'operator' }), 'E_SOURCE', /names another home.*recovery/);
   json(join(recovery, 'recovery.json'), { version: 1, phase: 'copying', instance: 'src', sourceHome: f.home });
   refused(f.run(['--plan', '--slug', 'y', '--home', recovery], { cwd: f.d, as: 'operator' }), 'E_SOURCE', /not a completed/);
+});
+
+// The recovery form keeps 5.8's retired-seat admission (oats-okf#125, #128):
+// a recovery copy without the spawn policy (a retired 4.x or 5.0/5.1 seat) is
+// decided from the recorded soul.yaml text and the record's keys by origin.
+const OKF4 = fs.readFileSync(join(ROOT, 'test/fixtures/okf4-instance-record.json'), 'utf8');
+function retired(t, { edit = r => r, soulYaml, record = true } = {}) {
+  const f = fixture(t, { policy: null, ...(soulYaml ? { soulYaml } : {}) });
+  if (record) {
+    const r = edit(JSON.parse(OKF4.replaceAll('<HOME>', f.home).replaceAll('<SOUL_DIR>', f.soul).replaceAll('<BINDINGS_FILE>', f.bindingsFile)));
+    delete r._comment; r.agent = 'source';
+    json(join(f.home, 'instance.json'), r);
+  } else {
+    // A 5.0/5.1 record: the slot with its bindings, no policy file.
+    const r = JSON.parse(fs.readFileSync(join(f.home, 'instance.json'), 'utf8'));
+    json(join(f.home, 'instance.json'), { ...r, providers: { 'oats.okf': { 'bindings-file': f.bindingsFile } } });
+  }
+  const recovery = join(f.d, 'agents', 'source', 'instances', '.oats-retirement', 'recovery', 'src-Old4x');
+  fs.mkdirSync(recovery, { recursive: true }); fs.renameSync(f.home, join(recovery, 'home'));
+  json(join(recovery, 'recovery.json'), { version: 1, phase: 'complete', instance: 'src', sourceHome: f.home });
+  f.plan = (slug = 'x') => f.run(['--plan', '--slug', slug, '--home', recovery], { cwd: f.d, as: 'operator' });
+  return f;
+}
+const origin = (key, kind, value) => r => { if (value !== undefined) { r.providers['oats.okf'][key] = value; r.capabilities[0].settings[key] = value; } r.capabilities[0].settingsOrigins[`/${key}`] = { kind, at: 'x' }; return r; };
+
+test('the recovery form admits a retired 4.x seat with only manifest defaults, and a retired 5.0/5.1 seat, with no policy file', t => {
+  const plan = ok(retired(t).plan());
+  assert.equal(plan.form, 'recovery'); assert.equal(Object.hasOwn(plan, 'legacyKeysIgnored'), false);
+  const five = retired(t, { record: false });
+  assert.equal(ok(five.plan()).form, 'recovery', 'a 5.0/5.1 recovery copy without a policy is admitted too');
+});
+
+for (const [key, kind, value] of [['harvest', 'host', 'on'], ['harvest', 'host', 'off'], ['harvest', 'spawn', 'on'], ['harvest-runtime', 'host', 'claude'], ['harvest', 'workspace', 'on']]) {
+  test(`the recovery form ignores a retired 4.x seat's ${key} set by ${kind} (${value}) and names it`, t => {
+    assert.deepEqual(ok(retired(t, { edit: origin(key, kind, value) }).plan()).legacyKeysIgnored, [key]);
+  });
+}
+
+test('the recovery form never admits an opted-out or undecidable retired seat', t => {
+  // The soul's off in its text, masked in the record by a host on: the text decides.
+  refused(retired(t, { edit: origin('harvest', 'host', 'on'), soulYaml: 'schemaVersion: 2\nname: source\nknowledge: { harvest: off }\n' }).plan(), 'E_OPTED_OUT');
+  refused(retired(t, { edit: origin('harvest', 'soul') }).plan(), 'E_OPTED_OUT', /recorded soul-origin harvest: off/);
+  refused(retired(t, { edit: origin('harvest', 'soul', 'on') }).plan(), 'E_SOURCE', /harvest from soul, a setting removed/);
+  refused(retired(t, { edit: r => { delete r.capabilities; return r; } }).plan(), 'E_SOURCE', /no recorded origin/);
+  for (const yaml of ['schemaVersion: 2\nname: source\nknowledge: { harvest: on }\n', 'schemaVersion: 2\nname: source\nknowledge:\n  publish: on\n'])
+    refused(retired(t, { soulYaml: yaml }).plan(), 'E_SOURCE', /other than off/);
+  // A capability id ending in -harvest is not a harvest key.
+  ok(retired(t, { soulYaml: 'schemaVersion: 2\nname: source\ncapabilities:\n  oats.okf-harvest: { from: here }\n' }).plan());
+  refused(retired(t, { edit: r => { delete r.providers; return r; } }).plan(), 'E_SOURCE', /no oats\.okf knowledge slot/);
+  // The same 4.x record in a LIVE home stays refused: respawn.
+  const live = fixture(t, { policy: null });
+  json(join(live.home, 'instance.json'), { ...JSON.parse(OKF4.replaceAll('<HOME>', live.home).replaceAll('<SOUL_DIR>', live.soul).replaceAll('<BINDINGS_FILE>', live.bindingsFile)), agent: 'source' });
+  refused(live.run(['--plan', '--slug', 'x']), 'E_SOURCE', /no spawn-recorded knowledge duty/);
+});
+
+// Acceptance condition 1 (spec §8): the proposer's pre-push screen is the SAME
+// screen and helper calls the 5.x harvester's publication made, moved. The
+// expected calls are read from the released v5.8.0 knowledge-harvest skill's
+// publish block in this repository's history, not restated here.
+function harvesterCalls() {
+  const skill = execFileSync('git', ['show', 'v5.8.0:oats-package/capabilities/oats-okf-harvest/skills/knowledge-harvest/SKILL.md'], { cwd: ROOT, encoding: 'utf8' });
+  const call = name => {
+    const m = new RegExp(`okf-publication\\.mjs' ${name} \\\\\\n([\\s\\S]*?)2>/dev/null\\)`).exec(skill);
+    assert.ok(m, `v5.8.0 skill calls the helper's ${name}`);
+    return Object.fromEntries([...m[1].matchAll(/--([a-z-]+) ('[^']*'|"[^"]*")/g)].map(([, k, v]) => [k, v.slice(1, -1)]));
+  };
+  return { commit: call('commit'), create: call('create') };
+}
+async function inProcess(f, fn) {
+  const saved = { ...process.env }, cwd = process.cwd();
+  Object.assign(process.env, f.env, { OATS_SOUL: f.soul, OATS_SETTINGS: JSON.stringify(f.settings), OATS_TEAM_SCOPE: f.d, OATS_INSTANCE_HOME: f.home, OATS_INSTANCE: 'src',
+    FIXTURE_GH_LOG: f.ghLog, FIXTURE_GH_STATE: f.ghState, FIXTURE_REMOTE: f.origin });
+  for (const k of Object.keys(process.env)) if (/^GIT_(?!CONFIG_)/.test(k)) delete process.env[k];
+  process.chdir(f.home);
+  const calls = [], real = publication.execute;
+  publication.execute = (command, o) => { calls.push([command, structuredClone(o)]); return real(command, o); };
+  try { return await fn(calls); }
+  finally { publication.execute = real; process.chdir(cwd); for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); }
+}
+
+test('condition 1: --check and --apply feed the shipped helper exactly the harvester\'s §8 inputs (plus the host terms), through the same screen', async t => {
+  assert.equal(publication.execute, shippedExecute, 'propose calls the shipped okf-authoring helper, not a copy of its logic');
+  const terms = join(tmpdir(), `okf6-same-terms-${process.pid}-${Date.now()}.txt`); fs.writeFileSync(terms, 'unrelated-term\n'); t.after(() => fs.rmSync(terms, { force: true }));
+  const expected = harvesterCalls();
+  assert.deepEqual(Object.keys(expected.commit).sort(), ['base', 'branch', 'commit-file', 'head', 'repo']);
+  assert.deepEqual(Object.keys(expected.create).sort(), ['base', 'base-branch', 'body-file', 'branch', 'github', 'head', 'remote', 'repo']);
+  for (const withTerms of [false, true]) {
+    const f = fixture(t, { settings: withTerms ? { 'screen-terms-file': terms } : {} });
+    await inProcess(f, async calls => {
+      const plan = propose(f.home, { plan: true, slug: 'same' }).result;
+      const clone = edit(f, plan), accepted = plan.bases[0].accepted;
+      assert.deepEqual(calls, [], 'plan never calls the helper');
+      const checked = propose(f.home, { check: true, slug: 'same' }).result;
+      const extra = withTerms ? { 'terms-file': terms } : {};
+      // --check: the helper's `screen` over the exact outgoing range and both outgoing texts.
+      assert.equal(calls.length, 1); const [cmd, screen] = calls[0];
+      assert.equal(cmd, 'screen');
+      assert.deepEqual(Object.keys(screen).sort(), ['base', 'head', 'repo', 'text-file', ...Object.keys(extra)].sort());
+      assert.equal(screen.repo, clone); assert.equal(screen.base, accepted); assert.equal(screen['terms-file'], extra['terms-file']);
+      const [commitFile, bodyFile] = screen['text-file'];
+      assert.equal(fs.readFileSync(commitFile, 'utf8'), checked.commitText); assert.equal(fs.readFileSync(bodyFile, 'utf8'), checked.prBody);
+      calls.length = 0;
+      const [pr] = propose(f.home, { apply: true, slug: 'same', digest: checked.digest }).result.prs;
+      // --apply: the same screen again (it re-verifies before any write), then exactly the
+      // harvester's commit and create, with its flags bound to the same values.
+      assert.deepEqual(calls.map(([c]) => c), ['screen', 'commit', 'create']);
+      const [[, rescreen], [, commit], [, create]] = calls;
+      assert.deepEqual({ ...rescreen, head: undefined }, { ...screen, head: undefined });
+      assert.equal(f.git(clone, 'rev-parse', `${rescreen.head}^{tree}`), f.git(clone, 'rev-parse', `${screen.head}^{tree}`));
+      assert.deepEqual(Object.keys(commit).sort(), [...Object.keys(expected.commit), ...Object.keys(extra)].sort());
+      assert.deepEqual(Object.keys(create).sort(), [...Object.keys(expected.create), ...Object.keys(extra)].sort());
+      assert.deepEqual(commit, { repo: clone, base: accepted, head: accepted, branch: pr.branch, 'commit-file': commitFile, ...extra }, 'harvester: --base "$base" --head "$base"');
+      assert.deepEqual(create, { repo: clone, remote: f.origin, github: 'acme/kb', base: accepted, 'base-branch': 'main', head: pr.head, branch: pr.branch, 'body-file': bodyFile, ...extra },
+        'harvester: --remote <recorded clone locator> --github <owner>/<repo> --base-branch <acceptedBranch> --head "$head"');
+      // What --check screened is what --apply published: the same tree and message bytes.
+      assert.equal(f.git(clone, 'rev-parse', `${screen.head}^{tree}`), f.git(clone, 'rev-parse', `${pr.head}^{tree}`));
+      assert.equal(f.git(clone, 'cat-file', '-p', screen.head).split('\n\n').slice(1).join('\n\n'), f.git(clone, 'cat-file', '-p', pr.head).split('\n\n').slice(1).join('\n\n'));
+    });
+  }
 });
