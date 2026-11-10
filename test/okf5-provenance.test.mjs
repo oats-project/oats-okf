@@ -22,10 +22,54 @@ test('a realistic 4.x version 1 block still parses',()=>{
   const r=parseProvenance(block(V1));assert.equal(r.valid,true,r.problems.join('; '));assert.deepEqual(r.value,V1);
 });
 
-test('a version 2 block parses; version 3 is refused',()=>{
+test('a version 2 block parses; version 4 is refused',()=>{
   const r=parseProvenance(block(V2));assert.equal(r.valid,true,r.problems.join('; '));assert.deepEqual(r.value,V2);
   assert.deepEqual(problems({...V2,evidence:[]}),[]);
-  assert.deepEqual(parseProvenance(block({...V2,version:3})),{valid:false,problems:['version must be 1 or 2'],value:null});
+  assert.deepEqual(parseProvenance(block({...V2,version:4})),{valid:false,problems:['version must be 1, 2 or 3'],value:null});
+});
+
+// oats.okf 6.0: the instance proposes its own knowledge; the block is fenced
+// okf-proposal, names the source incarnation and the proposer, never a harvester.
+const proposalBlock=v=>`Proposed claims.\n\n\`\`\`okf-proposal\n${JSON.stringify(v,null,2)}\n\`\`\`\n`;
+const V3={version:3,source:{...source,incarnation:'2026-11-10T10:05:52.783Z'},evidence:[{note:'notes/decisions/a.md',sha256:HEX},{note:'notes/missing.md'}],tasks:{provider:null,refs:[]},proposer:{form:'live',instance:'source-1',alias:null}};
+const problems3=v=>parseProvenance(proposalBlock(v)).problems;
+
+test('a version 3 okf-proposal block parses, live and recovery forms',()=>{
+  const r=parseProvenance(proposalBlock(V3));assert.equal(r.valid,true,r.problems.join('; '));assert.deepEqual(r.value,V3);
+  assert.deepEqual(problems3({...V3,proposer:{form:'recovery',instance:null,alias:null}}),[]);
+  assert.deepEqual(problems3({...V3,proposer:{form:'recovery',instance:'operator-seat',alias:'operator-seat'}}),[]);
+});
+
+test('fence names: v3 only in okf-proposal, v1/v2 only in okf-harvest',()=>{
+  assert.match(parseProvenance(block(V3)).problems.join(),/version 3 belongs in a ```okf-proposal block, not ```okf-harvest/);
+  assert.match(parseProvenance(proposalBlock(V2)).problems.join(),/version 2 belongs in a ```okf-harvest block, not ```okf-proposal/);
+  assert.match(parseProvenance(proposalBlock(V1)).problems.join(),/version 1 belongs in a ```okf-harvest block/);
+  assert.deepEqual(parseProvenance('No block.\n').problems,['no ```okf-proposal or ```okf-harvest provenance block in the PR body']);
+  // The first block counts, whichever fence it has.
+  assert.equal(parseProvenance(proposalBlock(V3)+block(V2)).value.version,3);
+});
+
+test('version 3 refuses unknown keys, a harvester, a missing incarnation and a bad proposer, with v2 limits',()=>{
+  assert.match(problems3({...V3,extra:1}).join(),/provenance: unknown key "extra"/);
+  assert.match(problems3({...V3,harvester:{instance:'h',alias:null}}).join(),/provenance: unknown key "harvester"/);
+  assert.match(problems3({...V3,source:{...V3.source,soulId:'x'}}).join(),/source: unknown key "soulId"/);
+  const {incarnation,...noIncarnation}=V3.source;
+  assert.match(problems3({...V3,source:noIncarnation}).join(),/source\.incarnation must be/);
+  assert.match(problems3({...V3,proposer:undefined}).join(),/proposer must be an object/);
+  assert.match(problems3({...V3,proposer:{...V3.proposer,home:'/h'}}).join(),/proposer: unknown key "home"/);
+  assert.match(problems3({...V3,proposer:{...V3.proposer,form:'harvester'}}).join(),/proposer\.form must be live or recovery/);
+  assert.match(problems3({...V3,proposer:{...V3.proposer,instance:null}}).join(),/proposer\.instance must be a name/,'only the recovery form may have no instance');
+  assert.match(problems3({...V3,proposer:{...V3.proposer,alias:7}}).join(),/proposer\.alias must be/);
+  assert.match(problems3({...V3,source:{...V3.source,bases:[{...source.bases[0],repository:'/srv/kb.git'}]}}).join(),/repository must be the GitHub owner\/repo/);
+  assert.match(problems3({...V3,evidence:[{note:'notes/../x.md'}]}).join(),/evidence must be/);
+  assert.match(problems3({...V3,evidence:Array.from({length:101},(_,i)=>({note:`notes/n${i}.md`}))}).join(),/evidence must be/);
+});
+
+test('review-context for a v3 PR lists the evidence notes and the proposer, and no harvester',()=>{
+  const r=reviewContext({pr:URL_},{},{view:view(pr(proposalBlock(V3),{headRefName:'okf-proposal/20261110-x',labels:[{name:'okf-proposal'}]}))});
+  assert.equal(r.provenance.valid,true);assert.deepEqual(r.evidence,V3.evidence);assert.deepEqual(r.proposer,V3.proposer);assert.equal(r.harvester,null);
+  assert.ok(r.reading.includes(`the claims and their evidence are in the PR body; the proposer relied on: notes/decisions/a.md (sha256 ${HEX.slice(0,12)}), notes/missing.md (not read)`),r.reading.join('\n'));
+  assert.equal(reviewContext({pr:URL_},{},{view:view(pr(block(V2)))}).proposer,null);
 });
 
 test('version 2 refuses run/input keys, a missing owner, unknown keys and bad evidence',()=>{

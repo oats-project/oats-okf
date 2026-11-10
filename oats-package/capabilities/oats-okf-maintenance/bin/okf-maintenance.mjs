@@ -109,7 +109,7 @@ export function reviewContext(flags, env = process.env, { view = viewPr, git = g
     `git diff --stat origin/${pr.baseRefName}...HEAD`,
     ...(p ? [`read the owned nodes' index.md and neighbours: ${p.source.ownedNodes.join(', ') || '(none)'}`, `read the source's read nodes for context: ${p.source.readNodes.join(', ') || '(none)'}`] : ['no valid provenance: review it as an unprovenanced change (request changes or close)']),
     // v2 evidence names the source's own notes; the PR body carries the claims they back.
-    ...(p?.version === 2 ? [`the claims and their evidence are in the PR body; the harvester relied on: ${p.evidence.map((e) => `${e.note}${e.sha256 ? ` (sha256 ${e.sha256.slice(0, 12)})` : ' (not read)'}`).join(', ') || '(no notes)'}`] : []),
+    ...(p?.version >= 2 ? [`the claims and their evidence are in the PR body; the ${p.version === 3 ? 'proposer' : 'harvester'} relied on: ${p.evidence.map((e) => `${e.note}${e.sha256 ? ` (sha256 ${e.sha256.slice(0, 12)})` : ' (not read)'}`).join(', ') || '(no notes)'}`] : []),
   ];
   const result = {
     pr: { repo: ref.repo, number: pr.number, url: pr.url, state: pr.state, draft: pr.isDraft === true, head: pr.headRefName, headSha: pr.headRefOid, base: pr.baseRefName, labels, mergedAt: pr.mergedAt || null, closedAt: pr.closedAt || null },
@@ -117,8 +117,10 @@ export function reviewContext(flags, env = process.env, { view = viewPr, git = g
     settled: pr.state !== 'OPEN',
     provenance: { valid: provenance.valid, problems: provenance.problems, value: p },
     tasks: p ? { provider: p.tasks.provider, refs: p.tasks.refs, note: p.tasks.provider ? `read these through your tasks capability if it is ${p.tasks.provider}; otherwise record tasks: "unavailable"` : 'no tasks provider recorded: record tasks: "unavailable"' } : null,
-    harvester: p ? p.harvester : null,
-    evidence: p?.version === 2 ? p.evidence : null,
+    harvester: p && p.version !== 3 ? p.harvester : null,
+    // v3 (oats.okf 6.0): the source proposed it itself; the proposer reads the PR.
+    proposer: p?.version === 3 ? p.proposer : null,
+    evidence: p?.version >= 2 ? p.evidence : null,
     reading,
   };
   if (flags.checkout) result.checkout = checkoutFacts(flags.checkout, pr, p, git);
@@ -128,6 +130,7 @@ export function notifyHarvester(flags, env = process.env, { view = viewPr } = {}
   if (!STATES.includes(flags.state)) fail('E_USAGE', `--state must be one of ${STATES.join(', ')}`);
   const ref = resolveRef(flags), pr = view(ref, env), provenance = parseProvenance(pr.body);
   if (!provenance.valid) fail('E_PROVENANCE', `the PR has no valid provenance, so its harvester is unknown: ${provenance.problems.join('; ')}`);
+  if (provenance.value.version === 3) fail('E_PROVENANCE', 'a version 3 PR was proposed by its source instance: there is no harvester to notify; the proposer reads the PR');
   const h = provenance.value.harvester;
   // okf 5.0 (v2): the harvester normally retires after successful handover;
   // publication failure may retain it. The notice concerns only this PR,
@@ -151,7 +154,7 @@ function text(event, r) {
   if (event === 'notify-harvester') return `to: ${r.to}\nsubject: ${r.subject}\n\n${r.body}`;
   const lines = [`${r.pr.url} ${r.pr.state}${r.pr.draft ? ' (draft)' : ''} ${r.pr.head}@${String(r.pr.headSha).slice(0, 12)} → ${r.pr.base} [${r.pr.labels.join(', ')}]`];
   const v = r.provenance.value;
-  lines.push(r.provenance.valid ? `provenance v${v.version}: ${v.version === 1 ? `run ${v.run}, ` : ''}source ${v.source.soul}/${v.source.instance}, harvester ${r.harvester.alias || r.harvester.instance}` : `provenance INVALID: ${r.provenance.problems.join('; ')}`);
+  lines.push(r.provenance.valid ? `provenance v${v.version}: ${v.version === 1 ? `run ${v.run}, ` : ''}source ${v.source.soul}/${v.source.instance}, ${v.version === 3 ? `proposer ${r.proposer.form} ${r.proposer.alias || r.proposer.instance || '(operator)'}` : `harvester ${r.harvester.alias || r.harvester.instance}`}` : `provenance INVALID: ${r.provenance.problems.join('; ')}`);
   if (r.tasks) lines.push(`tasks: ${r.tasks.refs.join(', ') || '(none)'} — ${r.tasks.note}`);
   lines.push('reading list:', ...r.reading.map((x) => `  - ${x}`));
   if (r.checkout) for (const b of r.checkout.bases) lines.push(`checkout ${b.alias} (${b.root}): ${b.problem || `${b.changed.length} changed; owner ${b.owner ?? '(unknown)'}; outside owned nodes: ${b.outsideOwned.join(', ') || 'none'}${b.baseMetaChanged ? '; okf-base.json CHANGED' : ''}${b.claimedNotOwned.length ? `; provenance claims nodes not owned by ${b.owner}: ${b.claimedNotOwned.join(', ')}` : ''}`}`);

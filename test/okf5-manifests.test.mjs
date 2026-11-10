@@ -58,7 +58,7 @@ test('oats.okf hooks are exactly soul-scaffold, a required spawn with no inputs 
 });
 
 test('oats.okf ships consultation, capture, compulsory proposing and theory skills plus its status command',()=>{
-  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities','oats-okf','skills')).sort(),['knowledge-theory','okf-consultation','okf-instance-knowledge','okf-propose']);
+  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities','oats-okf','skills')).sort(),['knowledge-theory','okf-authoring','okf-consultation','okf-instance-knowledge','okf-propose']);
   assert.equal(cap('oats-okf').commands.status,'bin/oats-okf.mjs status');
 });
 
@@ -68,10 +68,10 @@ test('the three knowledge-theory copies are byte-identical',()=>{
   for(const copy of rest) assert.deepEqual(copy,first);
 });
 
-test('the two okf-authoring copies are byte-identical',()=>{
-  const [a,b]=['oats-okf-harvest','oats-okf-maintenance'].map(name=>files(join(PKG,'capabilities',name,'skills','okf-authoring')));
+test('every okf-authoring copy is byte-identical (the proposer\'s in oats.okf, the maintainer\'s)',()=>{
+  const [a,...rest]=CAPS.map(name=>files(join(PKG,'capabilities',name,'skills','okf-authoring')));
   assert.ok(Object.keys(a).length);
-  assert.deepEqual(b,a);
+  for(const b of rest) assert.deepEqual(b,a);
 });
 
 for (const [name, capability] of [['knowledge-harvester', 'oats.okf-harvest'], ['knowledge-maintainer', 'oats.okf-maintenance']]) {
