@@ -574,7 +574,13 @@ protects the branch by other means meets it too. The `okf-trigger-setup`
 skill has the steps. `protection: enforced` does not read bypass lists or
 the admin-bypass setting.
 `oats okf bases` reports `protection: enforced | none | unknown` per Git
-base, from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
+base. The field answers one question: **can anyone but a reviewer land a
+change on the accepted branch?** `enforced` = a ruleset or classic rule
+requires a PR review or restricts who may push; `none` = nothing of the sort
+(classic protection with status checks only included, because it reviews
+nothing); `unknown` = either GitHub read failed. The command prints that
+definition with its answer (and `protectionMeaning` in `--json`). It comes
+from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
 (rulesets) and `gh api repos/<owner>/<repo>/branches/<branch>/protection`
 (classic branch protection, which the first never shows). `enforced` when an
 active ruleset, or classic protection, requires a PR or restricts who may

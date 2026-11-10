@@ -68,7 +68,8 @@ the release lane's.
   case-insensitively, as rule `host-term`, location only. It only adds
   refusals.
 - **`oats okf bases` reports `protection: enforced | none | unknown`** per
-  Git base, from the rulesets read (`gh api
+  Git base, answering "can anyone but a reviewer land a change on the
+  accepted branch?" (printed with it, `protectionMeaning` in `--json`), from the rulesets read (`gh api
   repos/<owner>/<repo>/rules/branches/<branch>`) and the classic read (`gh api
   repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when a
   ruleset or classic protection requires a PR review or restricts pushers;
