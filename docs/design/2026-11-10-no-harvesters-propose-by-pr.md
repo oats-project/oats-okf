@@ -95,10 +95,17 @@ proposer's copy, with the maintenance copy identical (the manifests test checks 
 
 ## 4. Removal of the harvester
 
-- Delete `oats-package/capabilities/oats-okf-harvest/` and `oats-package/souls/knowledge-harvester/`; update
-  `oats-package/oats-package.json` (capabilities, souls, description). `oats spawn oats.okf/knowledge-harvester`
-  is then refused by the kernel as an unknown soul; the release note and README say: "run `oats okf propose` from
-  the instance home".
+- The harvester is removed, but its name keeps answering (Juan's side's condition: a bare unknown-soul error is
+  not enough). `oats-package/souls/knowledge-harvester/` stays as a **stub soul** (`knowledge: none`, its own
+  capability `from: here`) and `oats-package/capabilities/oats-okf-harvest/` is reduced to a stub capability
+  with one required spawn hook that always refuses, before any home is kept:
+  `E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run
+  `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from
+  the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any
+  --provider oats.okf harvest=... spawn flag; rename the trigger template oats.okf:harvest-review to
+  oats.okf:proposal-review. See the 6.0 release note.` The stub's skills, scripts and `complete`/`harvest-status`
+  commands are gone (`E_REMOVED` as today for the commands). The stub is removed in 7.0, when the name becomes
+  unknown. `oats-package/oats-package.json` keeps both entries and says what the stub is.
 - `knowledge: { harvest: off }` in a soul keeps its meaning (this soul's instances never publish knowledge) and
   gains the spelling `publish: off`; `oats okf status` keeps `harvest` and adds `publish` with the same value. A
   soul `knowledge.propose` key is refused by the spawn hook: `E_CONFIG: knowledge.propose is not a setting;
@@ -159,8 +166,9 @@ this spec is the build record.
    (`okf-content-screen.mjs` and the helper's `screen`, `screenRange`, `screen-text` over the exact outgoing
    commit objects, paths, blobs and PR body), moved, not a weaker copy; the test suite proves `propose --check`
    and `--apply` call it with the same inputs the harvester's §8 did, plus the optional host term list.
-2. Removing the soul refuses with an error that names the change: a spawn of `oats.okf/knowledge-harvester`
-   gets the kernel's unknown-soul refusal, and the release note and README name what to delete from a
+2. Removing the soul refuses with an error that names the change and the fix: a spawn of
+   `oats.okf/knowledge-harvester` is refused by the stub soul's required spawn hook with the `E_REMOVED` text of
+   §4 (a bare unknown-soul error is not enough), and the release note and README name what to delete from a
    deployment's configuration (`souls.launch` keys for the harvester, any `--provider` harvest keys, the
    `harvest-review` trigger rename) and what replaces the harvest (`oats okf propose` from the instance home;
    the operator form on a recovery), with the hand steps as exact commands.
@@ -169,7 +177,15 @@ this spec is the build record.
    `knowledge-review`, the README. No text may still say a harvester decides what is promoted, or that an
    agent waits for one. A test greps the shipped capabilities for "harvester" outside the migration section.
 
-## 9. Not in this build
+## 9. Delivery
+
+The PR converges in the developer's review loop; the package expert verifies and confirms CI green; the
+coordination lead is told the exact head and informs the maintainer and Juan's side; Juan's side gives its
+second read at that exact head; release-maintainer-pepe signs off after it. Juan's side accepted the design's
+§8.2 questions 4 (the operator form replaces the recovery harvest) and 6 (the alias period); its questions 1, 2,
+3 and 5 are for its own deployments, which adopt the release when he answers them; they do not block this build.
+
+## 10. Not in this build
 
 The subject ontology, the bridge, `okf.json` v2, verdict records, the `about:` edge, claim ids, the write-surface
 rule by path family (D4), the one-base rule (D13): all wait for Juan's side. The harvester's pre-push base-move
