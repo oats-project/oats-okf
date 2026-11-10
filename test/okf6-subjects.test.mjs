@@ -9,6 +9,8 @@ import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS } f
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
+import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 // oats.okf 6.0, the subject layout (spec docs/design/2026-11-10-subject-layer-in-oats-okf.md):
 // a bridged version-1 base, validator v2, the regenerator, okf.json version 2,
 // the spawn brief, the subject verbs and the verdict lanes. The 5.8 fact: the
@@ -319,4 +321,27 @@ test('bases and inspect report the subject layout',t=>{
   const inspect=run(f,['inspect','--json']).out.result;
   assert.deepEqual(inspect.subjects,['system/okf','workstream/knowledge']);
   assert.match(inspect.summary,/^OKF: subjects system\/okf, workstream\/knowledge;/);
+});
+
+// ------------------------------------------------------------- readiness and the portable binding
+const checkReq=bindingsFile=>({schemaVersion:1,phase:'check',slot:'knowledge',capability:'oats.okf',settings:{'bindings-file':bindingsFile},input:{context:{kind:'standalone',key:'t'},action:{kind:'hook',name:'spawn'}}});
+function directoryDeployment(t,{plain=false,decl}) {
+  const dir=tmp(t,'okf6-binding-'),base=join(dir,'bases','project'),bindingsFile=join(dir,'deployment','okf-bindings.json'),soul=join(dir,'soul');
+  writePlainBase(base);if(!plain) bridge(base);
+  json(bindingsFile,{version:1,stateDir:join(dir,'state'),bases:{project:{id:'base-1',kind:'directory',path:base}}});
+  json(join(soul,'okf.json'),decl);
+  const saved=process.env.OATS_SOUL;process.env.OATS_SOUL=soul;t.after(()=>{if(saved===undefined) delete process.env.OATS_SOUL; else process.env.OATS_SOUL=saved;});
+  return bindingsFile;
+}
+test('readiness (binding check) resolves a version-2 soul\'s subjects; unresolved or no layout is declaration:unresolved',async t=>{
+  const ready=await handleBindingRequest('check',checkReq(directoryDeployment(t,{decl:{version:2,subjects:['system/okf']}})));
+  assert.deepEqual(ready,{status:'ready',problems:[]});
+  for(const [plain,subjects] of [[false,['system/nope']],[true,['system/okf']]]) {
+    const r=await handleBindingRequest('check',checkReq(directoryDeployment(t,{plain,decl:{version:2,subjects}})));
+    assert.deepEqual(r,{status:'needs-configuration',problems:[{code:'needs-configuration',message:'declared knowledge nodes do not resolve in the accepted bases'}]},JSON.stringify({plain,subjects}));
+  }
+});
+test('the portable binding keeps owner/stores/reads/owns and refuses a subjects payload with E_CONFIG naming the limit',()=>{
+  assert.throws(()=>normalizeKnowledgeDeclaration({contract:'oats.okf.locations',version:1,payload:{subjects:['system/okf']}}),
+    e=>e.code==='E_CONFIG' && /carries okf\.json version 1 owner\/owns\/reads only; a version-2 subjects declaration is read from the soul's okf\.json through the bindings-file setting/.test(e.message));
 });
