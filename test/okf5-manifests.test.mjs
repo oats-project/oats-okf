@@ -76,7 +76,7 @@ test('the package enumerates the slot, the maintainer, the harvester stub (until
 });
 
 // Spec §4 and acceptance condition 2: a bare unknown-soul error is not enough.
-const REMOVED_SPAWN='E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review, and keep oats.okf:harvest-review beside it while 5.x okf-harvest PRs may still open. See the 6.0 release note.';
+const REMOVED_SPAWN='E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review beside oats.okf:harvest-review, and remove the old one once no 5.x harvester can open an okf-harvest PR. See the 6.0 release note.';
 test('the harvester stub: no skills or instructions, a required spawn hook that always refuses with the spec\'s E_REMOVED text and writes nothing',()=>{
   const m=cap(STUB_CAP);
   assert.deepEqual(m.hooks,{spawn:{command:'bin/okf-harvest.mjs spawn',required:true}});
