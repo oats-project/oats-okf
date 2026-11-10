@@ -17,7 +17,7 @@ import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
 import { git as rawGit, gitEnv, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
-import { isBridgedMeta, writeInBase } from './okf-reindex.mjs';
+import { isBridgedMeta } from './okf-reindex.mjs';
 import { prepareSubjectProposal, checkWriteSurface, generatedPath, proposalFindings, proposalVerdicts, verdictSection } from './write-surface.mjs';
 // The proposer's own copy of the shared publication helper (okf-authoring),
 // byte-identical to the maintainer's: the SAME screen and publication calls
@@ -497,12 +497,13 @@ function preparedTree(clone, owned, treeId, prepare) {
     }
     git(clone, ['update-index', '-z', '--index-info'], { env, input: records.join('\0') + '\0' });
     const prepared = git(clone, ['write-tree'], { env });
+    // Back into the clone in its working-tree form: Git checks the prepared
+    // blobs out (smudge, encoding and its own path checks), so the next
+    // --check or --apply cleans them back to the same stored bytes.
     const cloneBase = owned.base.root === '.' ? clone : join(clone, owned.base.root);
-    for (const p of touched) {
-      const file = join(base, ...p.split('/'));
-      if (fs.existsSync(file)) writeInBase(cloneBase, p, fs.readFileSync(file));
-      else { const there = join(cloneBase, ...p.split('/')); if (fs.lstatSync(there, { throwIfNoEntry: false })?.isFile()) fs.rmSync(there); }
-    }
+    const kept = touched.filter(p => fs.existsSync(join(base, ...p.split('/'))));
+    if (kept.length) git(clone, ['checkout-index', '-f', '-z', '--stdin'], { env, input: kept.map(p => baseFile(owned.base, p)).join('\0') + '\0' });
+    for (const p of touched.filter(x => !kept.includes(x))) { const there = join(cloneBase, ...p.split('/')); if (fs.lstatSync(there, { throwIfNoEntry: false })?.isFile()) fs.rmSync(there); }
     return prepared;
   });
 }
@@ -600,10 +601,14 @@ function prepare(source, dir, plan) {
       allow = findings => proposalFindings(findings, changed);
     } else checkScope(owned, scope, list);
     validateTree(clone, owned, treeId, allow, inspect);
-    checked.push({ entry, owned, clone, accepted, treeId, list });
+    // What the clone's files stage to now: --apply refuses if they move
+    // before it stages the checked tree (which, prepared on stored bytes, may
+    // differ from it under a clean filter).
+    const staged = scope.subjects ? workingTree(clone, accepted) : treeId;
+    checked.push({ entry, owned, clone, accepted, treeId, list, staged });
   }
   const block = provenance(source, source.decl.version === 2 ? bases.filter(b => plan.bases.some(e => e.alias === b.alias)) : bases, ev), body = prBody(proposal, block, verdictSection(verdicts));
-  for (const { entry, owned, clone, accepted, treeId, list } of checked) {
+  for (const { entry, owned, clone, accepted, treeId, list, staged } of checked) {
     const commitFile = join(outgoing, `${entry.alias}-commit.txt`), bodyFile = join(outgoing, `${entry.alias}-pr.md`);
     atomic(commitFile, message); atomic(bodyFile, body);
     // A throwaway commit of exactly what would be pushed: the helper screens
@@ -611,7 +616,7 @@ function prepare(source, dir, plan) {
     const probe = git(clone, [...IDENTITY, 'commit-tree', treeId, '-p', accepted], { input: message });
     runHelper('screen', { repo: clone, base: accepted, head: probe, 'text-file': [commitFile, bodyFile], ...(terms ? { 'terms-file': terms } : {}) });
     const diff = git(clone, ['diff', '--no-color', '--no-renames', '--no-ext-diff', '--text', '--no-textconv', accepted, probe], { trim: false, maxBuffer: 64 * 1024 * 1024 });
-    results.push({ alias: entry.alias, clone, accepted, tree: treeId, owned, changed: list.map(c => `${c.status} ${c.path}`), diff, commitFile, bodyFile });
+    results.push({ alias: entry.alias, clone, accepted, tree: treeId, staged, owned, changed: list.map(c => `${c.status} ${c.path}`), diff, commitFile, bodyFile });
   }
   if (!results.some(r => r.changed.length)) fail('E_USAGE', 'nothing to propose: no owned base changed. If nothing passed the promotion test, record that in log.md and remove the proposal directory');
   // The digest binds every byte --apply publishes: the trees, the proposal,
@@ -691,9 +696,11 @@ export function apply(source, slug, expected) {
     try {
       git(r.clone, ['update-ref', `refs/heads/${branch}`, r.accepted, '']);
       git(r.clone, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
-      git(r.clone, ['read-tree', r.accepted]);
-      git(r.clone, ['add', '-A', '--', '.']);
-      if (git(r.clone, ['write-tree']) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the clone changed after the digest was checked; nothing was pushed`);
+      // The checked tree is staged as is (the helper commits the index); the
+      // clone's files must still stage to what --check saw.
+      if (workingTree(r.clone, r.accepted) !== r.staged) fail('E_DIGEST', `base ${r.alias}: the clone changed after the digest was checked; nothing was pushed`);
+      git(r.clone, ['read-tree', r.tree]);
+      if (git(r.clone, ['write-tree']) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the staged tree is not the checked one; nothing was pushed`);
       const terms = p.terms ? { 'terms-file': p.terms } : {};
       const committed = runHelper('commit', { repo: r.clone, base: r.accepted, head: r.accepted, branch, 'commit-file': r.commitFile, ...terms });
       const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
