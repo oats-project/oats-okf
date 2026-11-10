@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX, VALIDATE } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
+import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue, keyValue } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
@@ -390,6 +390,50 @@ test('a malformed flow list cannot stall validation (linear parser and scalar fa
     const out=JSON.parse(r.stdout);
     if(plain) assert.deepEqual(out.errors,[]); else assert.ok(out.errors.includes("peer/lesson.md: malformed flow list in 'tags' (flat [a, \"b\"] items only)"));
   }
+});
+
+test('the linear key/value reader matches exactly what 5.8\'s key regex matched, and a long whitespace run before a line terminator cannot stall the regenerator, the validator or verdicts --check',t=>{
+  const old=/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/,same=l=>{const a=l.match(old),b=keyValue(l);return (!a&&!b)||(!!a&&!!b&&a[1]===b[1]&&a[2]===b[2]);};
+  for(const l of ['tags: x','tags:x','tags:','tags:   ','tags: \r','tags: x\r','tags:\u2028 x','tags: x\u2028y','tags: \u00a0x','9k: x','a b: x','_k-1: [a, b] # c','tags: \t\u2029','tags: x \u2029']) assert.ok(same(l),JSON.stringify(l));
+  const evil='tags: '+' '.repeat(200000)+'x\u2028y';
+  let started=Date.now();assert.equal(keyValue(evil),null);parseFrontmatter(`---\n${evil}\n---\n`);assert.ok(Date.now()-started<1000,`parse took ${Date.now()-started} ms`);
+  const f=deployment(t);
+  edit(join(f.repo,'claims/insights/consult-reads-one-blob.md'),'about: [system/okf]\n',`about: [system/okf]\n${evil}\n`);
+  for(const args of [[REINDEX,f.repo,'--check'],[VALIDATE,f.repo,'--strict','--json']]) {
+    started=Date.now();const r=spawnSync(process.execPath,args,{encoding:'utf8',timeout:20000});
+    assert.equal(r.error,undefined,String(r.error));assert.ok(Date.now()-started<10000,`${args[0]} took ${Date.now()-started} ms`);
+  }
+  const claim=join(f.dir,'claim.md');write(claim,`---\ntype: Decision\ntitle: Something new\n${evil}\ndescription: x\nabout: [system/okf]\n---\n`);
+  started=Date.now();const v=run(f,['verdicts','--check',claim,'--json']);
+  assert.ok(Date.now()-started<10000,`verdicts --check took ${Date.now()-started} ms`);assert.equal(v.out.error.code,'E_USAGE',v.text.slice(0,300));
+});
+
+test('the shipped okf-soul schema (both copies) accepts exactly the declarations validateDeclaration accepts, the staged version 2 included',()=>{
+  const schema=JSON.parse(fs.readFileSync(join(ROOT,'oats-package/capabilities/oats-okf/schemas/okf-soul.schema.json'),'utf8'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(ROOT,'schemas/okf-soul.schema.json'),'utf8')),schema);
+  // the subset these schemas use: oneOf, type, const, required, properties, additionalProperties, items, pattern, minItems, uniqueItems
+  const ok=(v,sc)=>{
+    if(sc.oneOf) return sc.oneOf.filter(a=>ok(v,a)).length===1;
+    if('const' in sc && v!==sc.const) return false;
+    const type=Array.isArray(v)?'array':v===null?'null':typeof v;
+    if(sc.type && type!==sc.type) return false;
+    if(sc.pattern && !new RegExp(sc.pattern).test(v)) return false;
+    if(type==='array') { if(sc.minItems!==undefined && v.length<sc.minItems) return false; if(sc.uniqueItems && new Set(v.map(x=>JSON.stringify(x))).size!==v.length) return false; if(sc.items && !v.every(x=>ok(x,sc.items))) return false; }
+    if(type==='object') {
+      if((sc.required||[]).some(k=>!Object.hasOwn(v,k))) return false;
+      for(const [k,x] of Object.entries(v)) { if(sc.properties && Object.hasOwn(sc.properties,k)) { if(!ok(x,sc.properties[k])) return false; } else if(sc.additionalProperties===false) return false; }
+    }
+    return true;
+  };
+  const runtime=d=>{try{validateDeclaration(d);return true;}catch(e){if(/^E_/.test(e.code||''))return false;throw e;}};
+  const declarations=[
+    JSON.parse(fs.readFileSync(join(ROOT,'souls/oats-okf-expert/okf.json.v2'),'utf8')),JSON.parse(fs.readFileSync(join(ROOT,'souls/oats-okf-expert/okf.json'),'utf8')),
+    {version:2,subjects:['system/okf','workstream/knowledge','project/trial']},{version:2,subjects:['system/okf'],owns:[]},{version:2,subjects:[]},{version:2},{version:2,subjects:['okf']},
+    {version:2,subjects:['team/x']},{version:2,subjects:['system/A']},{version:2,subjects:['system/a','system/a']},{version:2,subjects:[1]},{version:2,subjects:['system/okf'],owner:'o'},{version:3},
+    {version:1,owner:'o',owns:['b/n'],reads:[]},{version:1,owner:'o',owns:[],reads:[],subjects:['system/okf']},{version:1,owns:[],reads:[]},
+  ];
+  assert.ok(runtime(declarations[0]) && runtime(declarations[1]));
+  for(const d of declarations) assert.equal(ok(d,schema),runtime(d),JSON.stringify(d));
 });
 
 test('the linear scalar reader gives exactly 5.8\'s value (its comment regex), CR and Unicode line terminators included',()=>{

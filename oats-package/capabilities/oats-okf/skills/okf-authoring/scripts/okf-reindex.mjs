@@ -106,6 +106,19 @@ function closesAt(value) {
   }
   return -1;
 }
+/** A `key: value` line as 5.8's `/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/` read
+ *  it, in linear time: the value is what follows the colon and its leading
+ *  whitespace (greedy `\s*`, which also takes \r, U+2028 and U+2029), and the
+ *  line does not match when that value still holds a terminator `.` does not
+ *  match. (The regex backtracks quadratically over long whitespace followed
+ *  by such a terminator.) */
+export function keyValue(line) {
+  const key = line.match(/^[A-Za-z_][A-Za-z0-9_-]*:/);
+  if (!key) return null;
+  const value = line.slice(key[0].length).trimStart();
+  if (/[\r\u2028\u2029]/.test(value)) return null;
+  return [line, key[0].slice(0, -1), value];
+}
 /** The OKF frontmatter subset: flat `key: scalar` lines and flow lists.
  *  `listErrors` names keys whose value looks like a list but is not one. */
 export function parseFrontmatter(text) {
@@ -115,7 +128,7 @@ export function parseFrontmatter(text) {
   const meta = {}, listErrors = [];
   for (const line of m[1].split("\n")) {
     if (/^\s*#/.test(line) || !line.trim()) continue;
-    const kv = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
+    const kv = keyValue(line);
     if (!kv) { if (!/^\s+/.test(line)) return { present: true, parsed: false }; continue; }
     // A value starting with `[` is a flow list: its comment is stripped outside
     // quotes, and an unclosed one (no `]` at all) is malformed. A bracketed
