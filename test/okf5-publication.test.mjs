@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { uncertaintyDiagnostic } from '../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-publication.mjs';
+import { uncertaintyDiagnostic } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 
 // Real Git owns objects, reachability, pushes and leases. gh is deliberately
 // only an argv-checked local adapter: these tests do NOT prove GitHub delivery,
 // deletion of GitHub pull refs, or purging unreachable objects from storage.
 // Every value below is synthetic; no credentials or external remotes are used.
-const SCRIPT = fileURLToPath(new URL('../oats-package/capabilities/oats-okf-harvest/skills/okf-authoring/scripts/okf-publication.mjs', import.meta.url));
+const SCRIPT = fileURLToPath(new URL('../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs', import.meta.url));
 const GITHUB = 'fixture-owner/fixture-knowledge';
 const BRANCH = 'okf-harvest/synthetic-publication';
 const REF = `refs/heads/${BRANCH}`;
@@ -26,7 +26,13 @@ const provenance = (version = 2) => ({
   source: { soul: 'fixture', ...(version === 1 ? { soulId: null } : {}), owner: 'fixture', instance: 'fixture-source', ownedNodes: ['kb/expert'], readNodes: [], bases: [{ alias: 'kb', id: 'fixture-base', kind: 'git', root: '.', repository: GITHUB }] },
   tasks: { provider: null, refs: [] }, harvester: { instance: 'fixture-harvester', alias: null },
 });
-const body = (p = provenance(), prose = 'A synthetic knowledge proposal.') => `${prose}\n\n\`\`\`okf-harvest\n${JSON.stringify(p, null, 2)}\n\`\`\`\n`;
+const body = (p = provenance(), prose = 'A synthetic knowledge proposal.', fence = p.version === 3 ? 'okf-proposal' : 'okf-harvest') => `${prose}\n\n\`\`\`${fence}\n${JSON.stringify(p, null, 2)}\n\`\`\`\n`;
+// oats.okf 6.0: the source proposes itself (okf-proposal/ branch, v3 block, okf-proposal label).
+const proposal3 = () => {
+  const { harvester, ...rest } = provenance(2);
+  return { ...rest, version: 3, source: { ...rest.source, incarnation: '2026-11-10T00:00:00.000Z' }, proposer: { form: 'live', instance: 'fixture-source', alias: null } };
+};
+const PROPOSAL_BRANCH = 'okf-proposal/20261110-12345678-1234-4123-8123-123456789abc';
 const verdict = (head, decision = 'merge') => `Reviewed this exact synthetic head.\n\n\`\`\`okf-review\n${JSON.stringify({ headSha: head, verdict: decision })}\n\`\`\`\n`;
 
 // The adapter rejects unknown argv rather than silently accepting imaginary gh
@@ -61,14 +67,17 @@ function hook(event) {
 let kind;
 try {
   if (a[0] === 'label' && a[1] === 'create') {
-    assert.deepEqual(a, ['label', 'create', 'okf-harvest', '--repo', repo, '--force', '--color', '0E8A16', '--description', 'OKF harvest PR (oats.okf)']); kind = 'label';
+    const labels = { 'okf-harvest': 'OKF harvest PR (oats.okf)', 'okf-proposal': 'OKF knowledge proposal PR (oats.okf)' };
+    assert.ok(Object.hasOwn(labels, a[2]));
+    assert.deepEqual(a, ['label', 'create', a[2], '--repo', repo, '--force', '--color', '0E8A16', '--description', labels[a[2]]]); kind = 'label';
   } else if (a[0] === 'pr' && a[1] === 'view') {
     assert.deepEqual(a, ['pr', 'view', pr, '--repo', repo, '--json', 'state,headRefOid,headRefName,baseRefName,isCrossRepository,title,body']); kind = 'view';
   } else if (a[0] === 'pr' && a[1] === 'create') {
     assert.equal(a.length, 14);
     assert.deepEqual(a.slice(0, 7), ['pr', 'create', '--repo', repo, '--base', 'main', '--head']);
-    assert.match(a[7], /^okf-harvest\//);
-    assert.deepEqual(a.slice(8), ['--label', 'okf-harvest', '--title', 'OKF knowledge proposal', '--body-file', '-']);
+    const prefix = /^(okf-harvest|okf-proposal)\//.exec(a[7]);
+    assert.ok(prefix);
+    assert.deepEqual(a.slice(8), ['--label', prefix[1], '--title', 'OKF knowledge proposal', '--body-file', '-']);
     kind = 'create';
   } else if (a[0] === 'pr' && a[1] === 'edit') {
     assert.deepEqual(a, ['pr', 'edit', pr, '--repo', repo, '--title', 'OKF knowledge proposal', '--body-file', '-']); kind = 'edit';
@@ -529,6 +538,64 @@ test('clean create publishes the supplied OID, screened stdin body and fixed tit
   assert.equal(calls[1].argv[calls[1].argv.indexOf('--body-file') + 1], '-');
 });
 
+test('create publishes an okf-proposal/ branch with a v3 body under the okf-proposal label', t => {
+  const f = fixture(t), head = f.change();
+  fs.writeFileSync(f.bodyFile, body(proposal3()));
+  const out = success(f.run('create', head, { branch: PROPOSAL_BRANCH }));
+  assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: PROPOSAL_BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, status: 'created' });
+  assert.equal(f.git(f.remote, 'rev-parse', `refs/heads/${PROPOSAL_BRANCH}`), head);
+  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['label', 'create', 'view']);
+  assert.equal(calls[0].argv[2], 'okf-proposal');
+  assert.equal(calls[1].argv[calls[1].argv.indexOf('--label') + 1], 'okf-proposal');
+  assert.equal(calls[1].input, fs.readFileSync(f.bodyFile, 'utf8'));
+});
+
+for (const [name, branch, text] of [
+  ['a v2 body on an okf-proposal/ branch', PROPOSAL_BRANCH, () => body(provenance())],
+  ['a v3 body on an okf-harvest/ branch', BRANCH, () => body(proposal3())],
+  ['a v3 block fenced okf-harvest', PROPOSAL_BRANCH, () => body(proposal3(), 'x', 'okf-harvest')],
+  ['a v2 block fenced okf-proposal', BRANCH, () => body(provenance(), 'x', 'okf-proposal')],
+  ['two blocks of different fences', PROPOSAL_BRANCH, () => body(proposal3()) + body(provenance())],
+]) test(`create refuses ${name} before any write`, t => {
+  const f = fixture(t), head = f.change(); fs.writeFileSync(f.bodyFile, text());
+  const before = f.snapshot(); refusal(f.run('create', head, { branch }), 'E_PROVENANCE'); unchanged(f, before);
+});
+
+test('create refuses a branch outside okf-proposal/ and okf-harvest/', t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot();
+  for (const branch of ['okf/legacy-x', 'okf-proposals/x', 'feature/x']) refusal(f.run('create', head, { branch }), 'E_BRANCH');
+  unchanged(f, before);
+});
+
+// oats.okf 6.0: setting screen-terms-file. The host's terms add refusals on
+// every outgoing surface and are never echoed.
+for (const surface of ['blob', 'filename', 'body', 'branch']) test(`a host term in the ${surface} refuses create (host-term) before any write`, t => {
+  const f = fixture(t), term = 'Nightjar-Plan';
+  const terms = f.artifact('terms.txt', `\n  other-term  \n${term}\n`);
+  if (surface === 'blob') f.put('expert/decision.md', 'about the nightjar-plan rollout\n');
+  if (surface === 'filename') f.put('expert/NIGHTJAR-PLAN.md', '# Neutral\n');
+  if (surface === 'body') fs.writeFileSync(f.bodyFile, body(proposal3(), 'See the NightJar-plan notes.'));
+  else fs.writeFileSync(f.bodyFile, body(proposal3()));
+  const head = surface === 'blob' || surface === 'filename' ? f.commit() : f.change();
+  const before = f.snapshot();
+  const r = f.run('create', head, { branch: surface === 'branch' ? 'okf-proposal/nightjar-plan-x' : PROPOSAL_BRANCH, 'terms-file': terms });
+  refusal(r); assert.ok(r.out.findings.some(x => x.rule === 'host-term'), JSON.stringify(r.out));
+  assert.ok(!r.stdout.toLowerCase().includes('nightjar'), 'a term is never echoed');
+  unchanged(f, before);
+  // The same publication without the term file goes through.
+  if (surface !== 'branch') success(f.run('create', head, { branch: PROPOSAL_BRANCH }));
+});
+
+test('an unreadable or malformed terms file refuses as input, never as no terms', t => {
+  const f = fixture(t), head = f.change(); fs.writeFileSync(f.bodyFile, body(proposal3()));
+  const before = f.snapshot();
+  for (const terms of [join(f.root, 'missing.txt'), 'relative.txt', f.artifact('long.txt', 'x'.repeat(300) + '\n')]) {
+    const r = f.run('create', head, { branch: PROPOSAL_BRANCH, 'terms-file': terms });
+    refusal(r, 'E_CONTENT_INPUT'); assert.deepEqual(r.out.findings, [{ location: 'host terms file', line: 1, rule: r.out.findings[0].rule }]);
+  }
+  unchanged(f, before);
+});
+
 test('an unsafe blob in an intermediate, subsequently deleted commit refuses before any publication', t => {
   const f = fixture(t); f.put('expert/removed-private-fixture.md', `${SECRET}\n`);
   const intermediate = f.commit(), blob = f.git(f.repo, 'rev-parse', `${intermediate}:expert/removed-private-fixture.md`);
@@ -713,6 +780,20 @@ test('a rewritten new-head receipt invalidates the old verdict and requires a fr
   success(f.run('merge', out.head));
   const merged = f.calls().find(c => c.kind === 'merge'); assert.ok(merged.effect);
   assert.equal(merged.argv[merged.argv.indexOf('--match-head-commit') + 1], out.head);
+});
+
+test('rewrite keeps a v3 PR v3 and refuses a v2 replacement body for it', t => {
+  const f = fixture(t); f.put('expert/removed-private-fixture.md', `${SECRET}\n`);
+  const old = f.commit('Original synthetic proposal');
+  f.open(old, { headRefName: PROPOSAL_BRANCH, body: body(proposal3(), SECRET) });
+  fs.unlinkSync(join(f.repo, 'expert/removed-private-fixture.md'));
+  f.put('expert/decision.md', '# Sanitized synthetic decision\n'); f.git(f.repo, 'add', '-A');
+  fs.writeFileSync(f.bodyFile, body(provenance()));
+  const before = f.snapshot(); refusal(f.run('rewrite', old), 'E_PROVENANCE'); unchanged(f, before);
+  fs.writeFileSync(f.bodyFile, body(proposal3()));
+  const out = success(f.run('rewrite', old));
+  assert.equal(out.status, 'rewritten-review-required'); assert.equal(out.branch, PROPOSAL_BRANCH);
+  assert.equal(f.git(f.remote, 'show', '-s', '--format=%P', `refs/heads/${PROPOSAL_BRANCH}`), f.base);
 });
 
 test('v1 removal cannot rewrite away the legacy completion ancestry', t => {

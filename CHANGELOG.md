@@ -2,6 +2,211 @@
 
 ## Unreleased
 
+### 6.0: no harvesters — the instance proposes its knowledge by PR, the maintainer gates
+
+Requires OATS >=0.69.2, unchanged. A major release: it removes the knowledge
+harvester (`oats.okf-harvest` and `oats.okf/knowledge-harvester` stay as a
+refusing stub until 7.0). The
+build record is `docs/design/2026-11-10-no-harvesters-propose-by-pr.md`; the
+rationale is the knowledge-base-by-subject design's §5. The version number is
+the release lane's.
+
+#### Added
+
+- **`oats okf propose`** (`--plan | --check | --apply --slug <slug>
+  [--digest <digest>]`, from the instance home). `--plan` clones every owned
+  Git base at its accepted branch into `proposals/<date>-<slug>/work/<alias>`,
+  writes the `proposal.md` skeleton and prints the write surface (the owned
+  nodes and the base root `index.md`) and the open `okf-proposal`/
+  `okf-harvest` PRs. `--check` validates the proposed tree
+  (`okf-validate --strict`, on the tree's stored bytes, never a filtered
+  checkout), checks every changed path against the surface
+  (`E_SCOPE`, `E_OWNER`), reads `proposal.md` (`E_PROPOSAL_FORMAT`, the 5.8
+  note-locator rules), hashes the named notes (a missing one is dropped with
+  an `E_NOTE` warning), runs the content screen over the full outgoing
+  content and prints the complete outgoing diff (raw text: `--text
+  --no-textconv`), the commit text, the PR body and a digest that binds the
+  tree, `proposal.md`, the note hashes and the generated commit text and PR
+  body (payload version 2). `--apply` refuses `E_DIGEST` if anything changed, commits,
+  pushes create-only to `okf-proposal/<UTC date>-<uuid>` through the
+  publication helper's `create` (which recovers a pre-push base move, #130,
+  unless the base's `okf-base.json` changed: `--guard-file`, below),
+  labels `okf-proposal` and opens one PR per changed base with a version 3
+  provenance block (`tasks.refs` always `[]`). One attempt per proposal: a
+  second `--apply` refuses `E_PROPOSAL_EXISTS`; a publication error retains
+  the clone and artefacts and is never retried. Refusals: `E_USAGE`
+  (including "nothing to propose"), `E_CONFIG`, `E_SOURCE`, `E_OPTED_OUT`,
+  `E_PROPOSAL_EXISTS`, `E_SCOPE`, `E_OWNER` (also a path inside another
+  soul's node), `E_VALIDATION`, `E_DIGEST`, `E_GIT` (a Git command on the
+  clone failed; its output withheld), `E_CONTENT_REFUSED`/`E_CONTENT_INPUT`,
+  `E_PROPOSAL_FORMAT`, `E_UNSUPPORTED` (directory bases), and the helper's
+  `E_BASE_MOVED`, `E_PUSH_UNCERTAIN`, `E_GH`, `E_PR_UNCERTAIN` unchanged.
+- **The operator form:** `oats okf propose --home <instance home | retirement
+  recovery directory> --soul <soul> ...` from the deployment, for a source
+  that retired without proposing. The proposal directory is made in the
+  recovery's copied home; the provenance names the form, and
+  `proposer.instance` is the caller's instance or `null` from the deployment.
+- **Provenance version 3** (fence `okf-proposal`): the source's incarnation
+  and the proposer (`live` or `recovery`), no harvester. The maintainer's
+  parser reads it beside versions 1 and 2 (fence `okf-harvest`), strictly;
+  the fence must match the version. `review-context` lists the evidence notes
+  and the proposer. Evidence note paths follow 5.8's note rules in the
+  proposer and the parser alike (any filename under `notes/` ending `.md`, a
+  space or parentheses included; no empty, `.`, `..` or hidden segment, no
+  backslash or control character); the parser previously refused a space.
+  Node references (`<base>/<node>`) and, in version 3, base aliases follow the
+  bindings' identifier grammar (letters of either case, digits, `.`, `_`, `-`;
+  up to 96 characters); the parser previously refused uppercase.
+- **The publication helper** accepts an `okf-proposal/` branch with a v3 body
+  under the `okf-proposal` label beside `okf-harvest/` with v2 (both through
+  6.x); `rewrite`, `merge` and `close` accept a v3 PR. `create` takes an
+  optional `--guard-file <repository path>`: its base-move recovery refuses
+  `E_BASE_MOVED` (reason `guarded-file-changed`) instead of replaying the
+  delta when that file differs on the moved accepted tip.
+- **Setting `screen-terms-file`** (optional host setting): one term per line;
+  the content screen refuses any outgoing content containing a term,
+  case-insensitively, as rule `host-term`, location only. It only adds
+  refusals.
+- **`oats okf bases` reports `protection: enforced | none | unknown`** per
+  Git base, answering "can anyone but a reviewer land a change on the
+  accepted branch?" (printed with it, `protectionMeaning` in `--json`), from the rulesets read (`gh api
+  repos/<owner>/<repo>/rules/branches/<branch>`) and the classic read (`gh api
+  repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when a
+  readable ruleset or classic protection requires a pull request or restricts
+  pushers; `none` only when both reads succeed and neither does
+  (status-check-only classic protection included); `unknown` when neither
+  shows such a rule and either cannot be read (a caller without admin read
+  gets 404 `Not Found` or 403). It does not check approval counts, bypass
+  lists or the maintainer's identity. Read-only, best-effort, bounded by
+  `git-timeout`, never a refusal.
+- **Trigger template `proposal-review`** (id `okf-proposal-review`, label
+  `okf-proposal`). `harvest-review` (id `okf-harvest-review`) stays through
+  6.x for 5.x `okf-harvest` PRs only: the kernel ANDs a trigger's labels, so
+  one template cannot watch both.
+- The soul opt-out gains the spelling `knowledge: { publish: off }`;
+  `oats okf status` adds `publish` with the same value as `harvest`.
+
+#### Changed
+
+- `okf-propose`, the inject and `okf-instance-knowledge` teach the three
+  steps; the instance judges by `knowledge-theory`, reads its outgoing diff
+  once as a reviewer would, records the PR and goes back to work.
+  `okf-authoring` moves into `oats.okf` as the proposer's copy (byte-identical
+  to the maintainer's).
+- `knowledge-review`, the maintainer inject and soul: the maintainer's main
+  job is knowledge theory (verify each claim against its cited source, judge
+  whether it is worth keeping long term); it is also the second reader for
+  personal or private data; it gates every merge and never parks.
+- `okf-trigger-setup` gains "Protect the accepted branch": every Git base's
+  accepted branch takes changes by PR only, merged by the knowledge
+  maintainer's account (a branch ruleset, or the classic equivalent).
+- A soul `knowledge.propose` key refuses at spawn: `E_CONFIG:
+  knowledge.propose is not a setting; instances propose directly in oats.okf
+  6; use harvest: off to opt out`. A host or spawn `publish`, or a soul
+  `publish` other than `off`, refuses `E_CONFIG`.
+
+#### Removed
+
+- The knowledge harvester: `oats.okf-harvest` loses its skills, scripts,
+  inject and source capture, and with `oats.okf/knowledge-harvester` becomes
+  a stub until 7.0 whose required spawn hook always refuses, before any home
+  is kept, with the `E_REMOVED` text below. `oats okf harvest`,
+  `oats okf-harvest complete|harvest-status` and
+  `oats okf-maintenance notify-harvester` answer `E_REMOVED` ("there is no
+  harvester; the proposer reads the PR" for the last).
+  A stub command answers only where it is composed: a home that does not
+  compose `oats.okf-harvest` (every working home) gets the kernel's own
+  `E_UNKNOWN_COMMAND` for `oats okf-harvest …`; the stub soul's spawn refusal
+  and `oats okf harvest` are what reach every caller.
+
+#### Upgrading to 6.0
+
+- New spawns get `oats okf propose`; harvester spawns stop.
+- Harvesters already running keep their 5.x modules and finish, or a person
+  retires them; a retained one is retired and its claims re-proposed by the
+  source with `oats okf propose`, or by the operator form on its retirement
+  recovery.
+- A recovery copy without the 5.2 spawn policy (a retired 4.x or 5.0/5.1
+  seat) is decided in the operator form as 5.8's harvest spawn hook decided
+  it: the #125 admission below survives the harvester's removal. A live home
+  without the policy stays `E_SOURCE` (respawn it).
+- Add `proposal-review`; keep `harvest-review` beside it only while 5.x
+  `okf-harvest` PRs may still open (step 4 below).
+- Protect every Git base's accepted branch; give proposing hosts
+  branch-create access on the knowledge repository (same-repository branches
+  only: a fork PR is refused by the maintainer's helper); optionally set
+  `screen-terms-file`.
+- No change to bindings, `okf.json`, `okf-base.json` or any handled error
+  code. Open `okf-harvest` PRs stay reviewable.
+
+#### What to delete, and what replaces the harvest
+
+A spawn of `oats.okf/knowledge-harvester` is refused by the stub soul's
+required spawn hook, before any home is kept:
+
+```text
+oats-okf-harvest E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review beside oats.okf:harvest-review, and remove the old one once no 5.x harvester can open an okf-harvest PR. See the 6.0 release note.
+```
+
+The hand steps, from the deployment directory:
+
+1. **What replaces the harvest:** at a checkpoint the instance runs, from its
+   home, `oats okf propose --plan --slug <slug>`, writes the knowledge in the
+   clone and fills `proposal.md`, then `oats okf propose --check --slug <slug>`
+   and `oats okf propose --apply --slug <slug> --digest <digest>`. For a
+   retired source, the operator runs
+   `oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>`
+   (then `--check` and `--apply` with the same `--home` and `--soul`).
+2. **Delete the harvester's launch preference**, if any, with the kernel's
+   own writer (it keeps every other entry and its comments):
+   `oats soul launch remove oats.okf/knowledge-harvester --plan`, then
+   without `--plan`. A key stored in another spelling is removed by its
+   exact text (`grep -n "knowledge-harvester" oats-local.yaml` shows it):
+   `oats soul launch remove '<exact key>'`. No such entry answers
+   `E_LAUNCH_PREFERENCE_UNKNOWN`: nothing to delete.
+3. **Delete every `--provider oats.okf harvest=…` spawn flag** from the
+   scripts and briefs that spawn instances:
+   `grep -rn -- "--provider oats.okf harvest" <your scripts>`. A leftover host
+   `harvest` key is removed with
+   `oats okf setup --remove-legacy-settings --soul <soul>` (`--plan` first).
+4. **Add the `proposal-review` trigger beside `harvest-review`, then
+   retire the old one.** The kernel requires *every* label of a trigger
+   (`on.labels` is AND), so each template watches one label:
+   `proposal-review` the 6.0 `okf-proposal` PRs, `harvest-review` the 5.x
+   `okf-harvest` PRs only (as in 5.8). Without `proposal-review` no new
+   proposal is reviewed automatically. Keep `harvest-review` while a 5.x
+   harvester may still open an `okf-harvest` PR, then remove it (the removal
+   error says the same).
+   - **A workspace automation file** (in a member repository) is
+     re-instantiated from the package template at the pinned commit, so the
+     old file keeps working for `okf-harvest` PRs. Copy it under the new
+     template and a new id (`oats trigger add --workspace` writes an explicit
+     `id:` line; two files with one id are `E_AUTOMATION_DUPLICATE`), keeping
+     its `set:`, `runsOn` and `owner`:
+     `sed -e 's/oats.okf:harvest-review/oats.okf:proposal-review/' -e 's/^id: okf-harvest-review$/id: okf-proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml`,
+     then commit and merge it. On the review host, if `oats-local.yaml` lists
+     named `automations: trust:` entries (not `"*"`), add the new one beside
+     the old: `- <member>/okf-proposal-review`. A new id is untrusted until
+     then and never runs. Run `oats automations refresh` and check that
+     `oats trigger show <member>/okf-proposal-review --json` answers
+     `result.trigger.runsHere: true` (not `reason: "untrusted"`). Later, `git rm oats-triggers/okf-harvest-review.yaml`
+     and drop its trust line.
+   - **A local trigger** (`oats trigger add`) stores the definition it was
+     given and is never re-instantiated: read its values first,
+     `oats trigger show okf-harvest-review --json` (`result.trigger.on.repo`,
+     `on.base`, `spawn.harness`, `spawn.model`), then add the new one with
+     the same values,
+     `oats trigger add --from oats.okf:proposal-review --set repo=<on.repo> --set base=<on.base> --set harness=<spawn.harness> --set model=<spawn.model>`
+     (the template's defaults, `main`, `claude` and `opus`, would replace
+     yours); later `oats trigger remove okf-harvest-review`.
+5. **Retire harvesters still listed** once they have handed over:
+   `oats status`, then `oats retire <harvester instance>`; re-propose a
+   retained one's claims by step 1 (the source, or the operator form on the
+   harvester's source's recovery).
+
+
+### Retired 4.x sources (unreleased on 5.x; superseded by 6.0's removal of the harvester)
+
 Requires OATS >=0.69.2, unchanged. Toward awebai/oats-okf#125: a retired seat
 spawned on oats.okf 4.x can be a 5.x proposal's source. Unit tests prove the
 hook against a fixture of the 4.x record and the kernel's retirement event;
@@ -9,7 +214,7 @@ the issue is closed only after a rehearsal on a real retired 4.x seat in the
 reporting deployment, on the released version. This is a minor release: the
 harvester admits a source it refused before.
 
-### Changed
+#### Changed
 
 - **The harvester's spawn hook admits a retired 4.x source whose removed
   keys the deployment set.** On a source resolved through the retirement
@@ -59,7 +264,7 @@ harvester admits a source it refused before.
   need no action. A harvester retained on 5.8.0 keeps its modules: retire it
   and relaunch its proposal on the new version.
 
-### Diagnostics
+#### Diagnostics
 
 - Add a bounded `diagnostic` field to `E_PUSH_UNCERTAIN` and
   `E_DELETE_UNCERTAIN`: fixed publication/readback phase, child exit status,

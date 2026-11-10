@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { hostname, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash } from './io.mjs';
+import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash, exec } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes } from './config.mjs';
 import { git, gitEnv, validateBase, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
 
@@ -419,18 +419,55 @@ function onePath(positionals, label) {
   return positionals[0];
 }
 
+// ---------------------------------------------------------------- protection
+// oats.okf 6.0: every Git base's accepted branch should take changes by PR
+// only, merged by the knowledge maintainer. Two read-only, best-effort GitHub
+// reads per base report it; they never refuse anything. The branch rules
+// endpoint shows rulesets only, so classic branch protection is read too:
+// GitHub answers 404 "Branch not protected" when the caller may read it and
+// there is none, and 404 "Not Found" (or 403) when the caller may not.
+// enforced: a ruleset, or classic protection, requires a PR or restricts
+// pushes; none: both reads succeeded and neither does (classic protection with
+// status checks only included); unknown otherwise.
+/** What `protection` answers, printed with every Git base by `oats okf bases`. */
+export const PROTECTION_MEANING = 'protection answers "can anyone but a reviewer land a change on the accepted branch?": enforced = a readable ruleset or classic rule requires a pull request or restricts who may push; none = both reads succeeded and neither does (classic protection with status checks only included: it gates nothing); unknown = neither read shows such a rule and at least one read failed, or the base is not on GitHub. It does not check approval counts, bypass lists or who the maintainer is';
+const GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
+export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout }) } = {}) {
+  if (base.kind !== 'git' || !GITHUB_REMOTE.test(base.repository)) return 'unknown';
+  const repo = `repos/${base.pr.repository}`, branch = base.acceptedBranch;
+  let rules = null;
+  try { const v = JSON.parse(run(['api', `${repo}/rules/branches/${branch}`], gitTimeoutMs())); if (Array.isArray(v)) rules = v; } catch { /* unreadable */ }
+  // A rule that forbids updates outside a PR, or restricts who may push.
+  if (rules?.some(r => r && ['pull_request', 'update'].includes(r.type))) return 'enforced';
+  let classic = 'unreadable';
+  try {
+    const v = JSON.parse(run(['api', `${repo}/branches/${branch}/protection`], gitTimeoutMs()));
+    // The same predicate as the rulesets': a required PR review, or restricted
+    // pushers. Classic protection without either (status checks only) does
+    // not gate direct pushes, so it establishes nothing.
+    const obj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+    if (obj(v) && typeof v.url === 'string') classic = obj(v.required_pull_request_reviews) || obj(v.restrictions) ? 'gated' : 'absent';
+  } catch (e) {
+    let body = null; try { body = JSON.parse(String(e?.stdout ?? '')); } catch { /* not GitHub's answer */ }
+    if (body?.message === 'Branch not protected') classic = 'absent';
+  }
+  if (classic === 'gated') return 'enforced';
+  return rules && classic === 'absent' ? 'none' : 'unknown';
+}
+
 // ---------------------------------------------------------------- commands
 export function bases(source, flags) {
   const rows = [], receipts = [];
   for (const [alias, base] of Object.entries(source.bindings.bases)) withBase(source.bindings, alias, { fresh: !!flags.fresh }, ctx => {
     const v = verdict(ctx), mine = relation => source.decl[relation].filter(ref => splitRef(ref)[0] === alias).map(ref => splitRef(ref)[1]);
-    rows.push({ alias, id: base.id, kind: base.kind, ...(base.kind === 'git' ? { repository: displayRepo(base.repository), acceptedBranch: base.acceptedBranch, root: base.root, commit: ctx.commit } : { path: base.path, digest: ctx.receipt.digest }),
+    rows.push({ alias, id: base.id, kind: base.kind, ...(base.kind === 'git' ? { repository: displayRepo(base.repository), acceptedBranch: base.acceptedBranch, root: base.root, commit: ctx.commit, protection: protection(base) } : { path: base.path, digest: ctx.receipt.digest }),
       fetchedAt: ctx.receipt.fetchedAt, stale: ctx.receipt.stale, ...(ctx.receipt.reason ? { reason: ctx.receipt.reason } : {}),
       validated: v.ok ? { ok: true } : { ok: false, error: v.error }, nodes: v.ok ? Object.keys(v.nodes) : null, owns: mine('owns'), reads: mine('reads'), receipt: ctx.receipt });
     receipts.push(ctx.receipt);
   });
-  const text = rows.map(r => `${r.alias} (${r.kind}) ${r.kind === 'git' ? `${r.repository} ${r.acceptedBranch} root=${r.root}` : r.path}\n  accepted ${short(r.receipt)} fetched ${age(r.fetchedAt)}${r.stale ? ` STALE: ${r.reason}` : ''}; ${r.validated.ok ? 'valid OKF base' : `INVALID: ${r.validated.error.message}`}\n  owns: ${r.owns.join(', ') || '-'}; reads: ${r.reads.join(', ') || '-'}${r.nodes ? `; nodes: ${r.nodes.join(', ')}` : ''}`).join('\n');
-  return { result: { bases: rows }, text: `${text}\n${footer(receipts)}` };
+  const text = rows.map(r => `${r.alias} (${r.kind}) ${r.kind === 'git' ? `${r.repository} ${r.acceptedBranch} root=${r.root} protection: ${r.protection}` : r.path}\n  accepted ${short(r.receipt)} fetched ${age(r.fetchedAt)}${r.stale ? ` STALE: ${r.reason}` : ''}; ${r.validated.ok ? 'valid OKF base' : `INVALID: ${r.validated.error.message}`}\n  owns: ${r.owns.join(', ') || '-'}; reads: ${r.reads.join(', ') || '-'}${r.nodes ? `; nodes: ${r.nodes.join(', ')}` : ''}`).join('\n');
+  const git = rows.some(r => r.kind === 'git');
+  return { result: { bases: rows, ...(git ? { protectionMeaning: PROTECTION_MEANING } : {}) }, text: `${text}\n${git ? `${PROTECTION_MEANING}\n` : ''}${footer(receipts)}` };
 }
 export function index(source, flags, positionals) {
   if (positionals.length > 1) fail('E_USAGE', 'index takes at most one node');

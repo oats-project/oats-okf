@@ -30,10 +30,9 @@ const CLI=join(ROOT,'oats-package/capabilities/oats-okf/bin/oats-okf.mjs');
 const {legacySettings,refuseLegacySettings,soulOptOut,LEGACY_KEYS}=await import(new URL('../oats-package/capabilities/oats-okf/lib/legacy-settings.mjs',import.meta.url));
 const SECRET='SECRET-VALUE-x';
 const HOST={kind:'host',at:'oats-local.yaml#/settings/oats.okf'};
-const NEW='agents now propose knowledge and spawn oats.okf/knowledge-harvester at checkpoints';
-const KERNEL="the harvester now launches with the kernel's own harness and model selection";
+const NEW='agents now propose their own knowledge by PR at checkpoints (oats okf propose)';
 const CLEANUP='oats okf setup --remove-legacy-settings --soul <soul> --json';
-const why=k=>k==='harvest'?NEW:KERNEL;
+const why=k=>k==='harvest'?NEW:`there is no ${k==='harvest-runtime'?'harvest runtime':'harvest model'}: agents propose their own knowledge by PR (oats okf propose)`;
 const envFor=(keys,origin=HOST,extra={})=>({OATS_SETTINGS:JSON.stringify({...extra,...Object.fromEntries(keys.map(k=>[k,SECRET]))}),OATS_SETTINGS_ORIGINS:JSON.stringify(Object.fromEntries(keys.filter(()=>origin).map(k=>[`/${k}`,typeof origin==='function'?origin(k):origin])))});
 function tmp(t,prefix='okf5-legacy-') {const d=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),prefix)));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));return d;}
 function run(args,env={},cwd=tmpdir()) {
@@ -74,7 +73,7 @@ test('host and soul origins render the exact removal sentence for each legacy ke
       ?`knowledge.harvest other than off from soul (soul.yaml#/knowledge) was removed in oats.okf 5.0; only the soul's opt-out, knowledge: { harvest: off }, remains; remove the key in the soul's reviewed source (or set it off) and sync/respawn; ${NEW}. Host cleanup cannot change a soul setting.`
       :`knowledge.${key} from soul (soul.yaml#/knowledge) was removed in oats.okf 5.0; remove that key in the soul's reviewed source and sync/respawn; ${why(key)}. Host cleanup cannot remove a soul setting.`);
   }
-  assert.equal(legacySettings(envFor(['harvest'])).at(0).message,`settings.oats.okf.harvest from host (oats-local.yaml#/settings/oats.okf) was removed in oats.okf 5.0; agents now propose knowledge and spawn oats.okf/knowledge-harvester at checkpoints; run oats okf setup --remove-legacy-settings --soul <soul> --json from this deployment.`);
+  assert.equal(legacySettings(envFor(['harvest'])).at(0).message,`settings.oats.okf.harvest from host (oats-local.yaml#/settings/oats.okf) was removed in oats.okf 5.0; agents now propose their own knowledge by PR at checkpoints (oats okf propose); run oats okf setup --remove-legacy-settings --soul <soul> --json from this deployment.`);
 });
 
 test('spawn, workspace and unknown origins name the layer and the fix',()=>{

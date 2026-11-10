@@ -5,11 +5,14 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-// oats.okf 5.8.0 package shape: versions, kernel floor, the slot's settings and
-// hooks, the shipped skills (shared copies identical) and both package souls.
+// oats.okf package shape (6.0: no harvester): versions, kernel floor, the
+// slot's settings and hooks, the shipped skills (shared copies identical), the
+// maintainer soul and both trigger templates.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PKG=join(ROOT,'oats-package');
-const CAPS=['oats-okf','oats-okf-harvest','oats-okf-maintenance'];
+const CAPS=['oats-okf','oats-okf-maintenance'];
+// oats.okf 6.0: the removed harvester's stub (until 7.0): no skills, one refusing hook.
+const STUB_CAP='oats-okf-harvest',STUB_SOUL='knowledge-harvester';
 const readJson=p=>JSON.parse(fs.readFileSync(p,'utf8'));
 const cap=name=>readJson(join(PKG,'capabilities',name,'oats.json'));
 /** relative path → bytes, for every file under dir. */
@@ -38,9 +41,9 @@ test('every manifest is version 5.8.0 with the >=0.69.2 kernel floor',()=>{
   }
 });
 
-test('oats.okf declares exactly bindings-file, state-dir, git-timeout and consult-max-age',()=>{
-  assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','state-dir']);
-  assert.equal(cap('oats-okf-harvest').settings,undefined);
+test('oats.okf declares exactly bindings-file, state-dir, git-timeout, consult-max-age and screen-terms-file',()=>{
+  assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','screen-terms-file','state-dir']);
+  assert.equal(cap('oats-okf').commands.propose,'bin/oats-okf.mjs propose');
 });
 
 test('the vendored manifest schema is oats v0.27.1 plus the OATS v0.68.1 upgrade hook, byte for byte',()=>{
@@ -58,23 +61,122 @@ test('oats.okf hooks are exactly soul-scaffold, a required spawn with no inputs 
 });
 
 test('oats.okf ships consultation, capture, compulsory proposing and theory skills plus its status command',()=>{
-  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities','oats-okf','skills')).sort(),['knowledge-theory','okf-consultation','okf-instance-knowledge','okf-propose']);
+  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities','oats-okf','skills')).sort(),['knowledge-theory','okf-authoring','okf-consultation','okf-instance-knowledge','okf-propose']);
   assert.equal(cap('oats-okf').commands.status,'bin/oats-okf.mjs status');
 });
 
-test('the three knowledge-theory copies are byte-identical',()=>{
+test('the package enumerates the slot, the maintainer, the harvester stub (until 7.0), two souls and both trigger templates',()=>{
+  const pkg=readJson(join(PKG,'oats-package.json'));
+  assert.deepEqual(pkg.capabilities,['capabilities/oats-okf','capabilities/oats-okf-harvest','capabilities/oats-okf-maintenance']);
+  assert.deepEqual(pkg.souls,['souls/knowledge-harvester','souls/knowledge-maintainer']);
+  assert.match(pkg.description,/until 7\.0, the removed knowledge harvester's stub soul and capability, whose spawn always refuses with E_REMOVED/);
+  assert.deepEqual(pkg.triggers,[{id:'proposal-review',file:'triggers/proposal-review.json'},{id:'harvest-review',file:'triggers/harvest-review.json'}]);
+  assert.deepEqual(fs.readdirSync(join(PKG,'capabilities')).sort(),[...CAPS,STUB_CAP].sort());
+  assert.deepEqual(fs.readdirSync(join(PKG,'souls')).sort(),[STUB_SOUL,'knowledge-maintainer']);
+});
+
+// Spec §4 and acceptance condition 2: a bare unknown-soul error is not enough.
+const REMOVED_SPAWN='E_REMOVED: oats.okf 6.0 removed the knowledge harvester. The instance proposes its knowledge itself: run `oats okf propose --plan` from its home (or `oats okf propose --home <retirement recovery> --soul <soul>` from the deployment for a retired source). Delete any souls.launch key for oats.okf/knowledge-harvester and any --provider oats.okf harvest=... spawn flag; add the trigger template oats.okf:proposal-review beside oats.okf:harvest-review, and remove the old one once no 5.x harvester can open an okf-harvest PR. See the 6.0 release note.';
+test('the harvester stub: no skills or instructions, a required spawn hook that always refuses with the spec\'s E_REMOVED text and writes nothing',()=>{
+  const m=cap(STUB_CAP);
+  assert.deepEqual(m.hooks,{spawn:{command:'bin/okf-harvest.mjs spawn',required:true}});
+  assert.deepEqual(Object.keys(m.commands).sort(),['complete','harvest-status']);
+  for(const k of ['skills','inject','settings']) assert.equal(Object.hasOwn(m,k),false,k);
+  assert.deepEqual(files(join(PKG,'capabilities',STUB_CAP)),{'oats.json':files(join(PKG,'capabilities',STUB_CAP))['oats.json'],'bin/okf-harvest.mjs':files(join(PKG,'capabilities',STUB_CAP))['bin/okf-harvest.mjs']},'no skills, scripts or inject');
+  const soul=fs.readFileSync(join(PKG,'souls',STUB_SOUL,'soul.yaml'),'utf8');
+  assert.match(soul,/^knowledge: none$/m);assert.ok(soul.includes(`  oats.okf-harvest: { from: here }`));
+  const bin=join(PKG,'capabilities',STUB_CAP,'bin/okf-harvest.mjs');
+  for(const proposal of ['# OKF proposal: x\n\nSource: instance src, home /d/agents/s/instances/src, soul s\n','anything']) {
+    const cwd=fs.mkdtempSync(join(ROOT,'.stub-')),home=fs.mkdtempSync(join(ROOT,'.stub-home-'));
+    try {
+      const r=spawnSync(process.execPath,[bin,'spawn'],{cwd,env:{PATH:process.env.PATH,OATS_EVENT:'spawn',OATS_INSTANCE_HOME:home,OATS_TASK:proposal},encoding:'utf8'});
+      assert.equal(r.status,1);assert.deepEqual(JSON.parse(r.stdout),{warning:`oats-okf-harvest ${REMOVED_SPAWN}`},'no meta, the exact text');
+      assert.deepEqual(fs.readdirSync(home),[]);assert.deepEqual(fs.readdirSync(cwd),[]);
+    } finally {fs.rmSync(cwd,{recursive:true,force:true});fs.rmSync(home,{recursive:true,force:true});}
+  }
+  for(const command of ['complete','harvest-status']) {
+    const r=spawnSync(process.execPath,[bin,command,'--json'],{encoding:'utf8'});
+    assert.equal(r.status,1);const e=JSON.parse(r.stdout).error;assert.equal(e.code,'E_REMOVED');assert.match(e.message,/oats okf propose/);
+  }
+  // The release note and the README carry the same fix, with the hand steps.
+  for(const doc of ['README.md','CHANGELOG.md']) {
+    const text=prose(doc);
+    assert.ok(text.includes(REMOVED_SPAWN),`${doc} quotes the refusal`);
+    // The trigger steps' kernel behaviour (each template fires on its one label; a local trigger keeps its
+    // values; a workspace file's copy gets its own id and needs its trust line) is pinned against the
+    // released kernel in okf5-real-kernel h), i) and j); these are the texts.
+    for(const step of ['oats soul launch remove oats.okf/knowledge-harvester --plan',"oats soul launch remove '<exact key>'",'E_LAUNCH_PREFERENCE_UNKNOWN',
+      'oats trigger show okf-harvest-review --json','oats trigger add --from oats.okf:proposal-review --set repo=<on.repo> --set base=<on.base> --set harness=<spawn.harness> --set model=<spawn.model>','oats trigger remove okf-harvest-review',
+      "sed -e 's/oats.okf:harvest-review/oats.okf:proposal-review/' -e 's/^id: okf-harvest-review$/id: okf-proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml",'`- <member>/okf-proposal-review`','oats automations refresh','git rm oats-triggers/okf-harvest-review.yaml',
+      'oats okf propose --plan --slug <slug>','oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>']) assert.ok(text.includes(step),`${doc}: ${step}`);
+  }
+});
+
+// Acceptance condition 3: every instance's knowledge instructions change in
+// 6.0, and the shipped capabilities name a harvester only in a migration
+// section (Markdown) or in the legacy code that reads 5.x/4.x PRs.
+test('every shipped knowledge instruction changed since v5.8.0',()=>{
+  for(const p of ['oats-package/capabilities/oats-okf/injects/okf.md','oats-package/capabilities/oats-okf/skills/okf-propose/SKILL.md',
+    'oats-package/capabilities/oats-okf/skills/okf-instance-knowledge/SKILL.md','oats-package/capabilities/oats-okf/skills/knowledge-theory/SKILL.md',
+    'oats-package/souls/knowledge-maintainer/AGENTS.md','oats-package/capabilities/oats-okf-maintenance/skills/knowledge-review/SKILL.md',
+    'oats-package/capabilities/oats-okf-maintenance/injects/maintainer.md','README.md']) {
+    const old=spawnSync('git',['show',`v5.8.0:${p}`],{cwd:ROOT,encoding:'utf8'});
+    assert.equal(old.status,0,`${p} existed in v5.8.0`);
+    assert.notEqual(fs.readFileSync(join(ROOT,p),'utf8'),old.stdout,`${p} changed in this release`);
+  }
+});
+
+const LEGACY_CODE={
+  'oats-okf-maintenance/lib/provenance.mjs':'parses version 2 blocks, whose key is `harvester`',
+  'oats-okf-maintenance/bin/okf-maintenance.mjs':'review-context for version 2 PRs; notify-harvester answering E_REMOVED',
+  'oats-okf-maintenance/oats.json':'the removed command notify-harvester stays declared so it answers E_REMOVED',
+};
+test('the shipped capabilities say "harvester" only in a migration section or in legacy 5.x/4.x code',()=>{
+  const found=[];
+  const walk=(dir,rel='')=>{for(const e of fs.readdirSync(dir,{withFileTypes:true})) {const r=rel?`${rel}/${e.name}`:e.name;if(e.isDirectory()) walk(join(dir,e.name),r);else found.push(r);}};
+  for(const c of CAPS) walk(join(PKG,'capabilities',c),c);
+  walk(join(PKG,'souls','knowledge-maintainer'),'souls/knowledge-maintainer');
+  const offenders=[];
+  for(const rel of found) {
+    const text=fs.readFileSync(join(PKG,rel.startsWith('souls/')?'':'capabilities',rel),'utf8');
+    if(!/harvester/i.test(text)) continue;
+    if(!rel.endsWith('.md')) {if(!Object.hasOwn(LEGACY_CODE,rel)) offenders.push(`${rel} (code)`);continue;}
+    let section='';
+    text.split('\n').forEach((line,i)=>{
+      const h=/^#{1,6}\s+(.*)$/.exec(line);if(h) section=h[1];
+      if(/harvester/i.test(line) && !/^Migration\b/.test(section)) offenders.push(`${rel}:${i+1}`);
+    });
+  }
+  assert.deepEqual(offenders,[],'a harvester may be named only under a "Migration…" heading, or in the listed legacy code');
+  // And no instruction says a harvester decides what is promoted, or that an agent waits for one.
+  for(const rel of found.filter(r=>r.endsWith('.md'))) assert.doesNotMatch(fs.readFileSync(join(PKG,rel.startsWith('souls/')?'':'capabilities',rel),'utf8'),/harvester (?:promotes|decides|judges)|wait (?:on|for) (?:the|a|its) harvester/i,rel);
+});
+
+// The kernel ANDs on.labels, so each template names exactly one label (the matcher itself is
+// exercised against the released kernel in okf5-real-kernel h).
+test('proposal-review watches okf-proposal and harvest-review okf-harvest, one label each, otherwise the same',()=>{
+  const p=readJson(join(PKG,'triggers','proposal-review.json')),h=readJson(join(PKG,'triggers','harvest-review.json'));
+  assert.equal(p.definition.id,'okf-proposal-review');assert.deepEqual(p.definition.on.labels,['okf-proposal']);
+  assert.equal(h.definition.id,'okf-harvest-review');assert.deepEqual(h.definition.on.labels,['okf-harvest']);
+  assert.equal(p.definition.spawn.soul,'oats.okf/knowledge-maintainer');
+  assert.match(p.definition.spawn.task,/Load the knowledge-review skill first/);
+  const same=t=>({...t,definition:{...t.definition,id:null,on:{...t.definition.on,labels:null}}});
+  assert.deepEqual(same(h),same(p),'the same parameters, events, spawn and concurrency');
+});
+
+test('the two knowledge-theory copies are byte-identical',()=>{
   const [first,...rest]=CAPS.map(name=>files(join(PKG,'capabilities',name,'skills','knowledge-theory')));
   assert.ok(Object.keys(first).length);
   for(const copy of rest) assert.deepEqual(copy,first);
 });
 
-test('the two okf-authoring copies are byte-identical',()=>{
-  const [a,b]=['oats-okf-harvest','oats-okf-maintenance'].map(name=>files(join(PKG,'capabilities',name,'skills','okf-authoring')));
+test('every okf-authoring copy is byte-identical (the proposer\'s in oats.okf, the maintainer\'s)',()=>{
+  const [a,...rest]=CAPS.map(name=>files(join(PKG,'capabilities',name,'skills','okf-authoring')));
   assert.ok(Object.keys(a).length);
-  assert.deepEqual(b,a);
+  for(const b of rest) assert.deepEqual(b,a);
 });
 
-for (const [name, capability] of [['knowledge-harvester', 'oats.okf-harvest'], ['knowledge-maintainer', 'oats.okf-maintenance']]) {
+for (const [name, capability] of [['knowledge-maintainer', 'oats.okf-maintenance']]) {
   test(`the ${name} soul keeps no knowledge and defaults to background`,()=>{
     const soul=fs.readFileSync(join(PKG,'souls',name,'soul.yaml'),'utf8');
     assert.match(soul,/^knowledge: none$/m);
@@ -86,7 +188,7 @@ for (const [name, capability] of [['knowledge-harvester', 'oats.okf-harvest'], [
 // oats.okf 5.0.2 (#64): personal data is excluded by ONE sentence, the same
 // wherever an agent is told what to leave out. An instruction, never a check.
 const PERSONAL_DATA='Never include personal data about people outside the team (clients, correspondents, any other third party): a name, a contact detail, or anything else that identifies a person, including detail derived from correspondence. Keep the lesson and leave the person out. Naming the author of a published source you cite is fine.';
-const NAMES='That covers the names you choose as well: a note\'s file name, a task ref and an instance\'s name are published as provenance when knowledge is harvested.';
+const NAMES='That covers the names you choose as well: a note\'s file name, a task ref and an instance\'s name are published as provenance when knowledge is proposed.';
 // Markdown quoting, emphasis and line wrapping removed, so a sentence matches across lines.
 const prose=p=>fs.readFileSync(join(ROOT,p),'utf8').replace(/^> ?/gm,'').replace(/\*\*/g,'').replace(/\s+/g,' ');
 const count=(text,s)=>text.split(s).length-1;
@@ -120,8 +222,7 @@ test('okf-trigger-setup hands host timer installation to the operator',()=>{
 test('the personal-data exclusion is one sentence, the same at every place an agent is told what to exclude',()=>{
   const places={
     'oats-okf/skills/okf-instance-knowledge/SKILL.md':1,'oats-okf/injects/okf.md':1,'oats-okf/skills/okf-propose/SKILL.md':1,
-    // The harvester reads it twice: when it edits, and when it reads its diff.
-    'oats-okf-harvest/skills/knowledge-harvest/SKILL.md':2,'oats-okf-maintenance/skills/knowledge-review/SKILL.md':1,
+    'oats-okf-maintenance/skills/knowledge-review/SKILL.md':1,
     ...Object.fromEntries(CAPS.map(name=>[`${name}/skills/knowledge-theory/SKILL.md`,1]))
   };
   for(const [file,times] of Object.entries(places)) {
@@ -136,15 +237,14 @@ test('the names a working instance chooses are covered: capture skill, inject an
   for(const file of ['oats-okf/skills/okf-instance-knowledge/SKILL.md','oats-okf/injects/okf.md','oats-okf/skills/okf-propose/SKILL.md']) assert.equal(count(prose(CAPDIR+file),NAMES),1,file);
 });
 
-test('the harvester and the reviewer apply it to what is published, provenance names included',()=>{
-  const harvest=prose(CAPDIR+'oats-okf-harvest/skills/knowledge-harvest/SKILL.md');
-  for(const s of ['A claim that cannot be stated without the person is dropped, with that reason.','Read the same diff once more for people.',
-    'holds for everything you publish, not only the concepts: the commit message, the PR body and the provenance block.',
-    'Note file names, task refs and the source instance\'s name are published there as written.',
-    'drop the claims that rest on it and leave it out of the PR','If the source instance\'s name carries it, publish nothing and report.']) assert.ok(harvest.includes(s),s);
+test('the proposer and the reviewer apply it to what is published, provenance names included',()=>{
+  const propose=prose(CAPDIR+'oats-okf/skills/okf-propose/SKILL.md');
+  for(const s of ['Read the printed diff once, in full, as a reviewer would','against the personal-data sentence above (note file names, task refs and your instance name included)',
+    'runs the content screen over everything that would leave this host']) assert.ok(propose.includes(s),s);
   const review=prose(CAPDIR+'oats-okf-maintenance/skills/knowledge-review/SKILL.md');
   for(const s of ['the names in the provenance block (note file names, task refs, instance names)',
-    'Your review comes after the push: rewriting can remove branch-only content from the PR branch\'s reachable history, but cannot undo the initial exposure.']) assert.ok(review.includes(s),s);
+    'Your review comes after the push: rewriting can remove branch-only content from the PR branch\'s reachable history, but cannot undo the initial exposure.',
+    'Your main job is knowledge theory:','verify each claim against the source it cites','second reader','You gate every merge']) assert.ok(review.includes(s),s);
 });
 
 // oats.okf 5.7.0 (awebai/oats-okf#118): a supersession of a human-accepted
@@ -202,7 +302,13 @@ test('the parked-PR re-review step closes, waits for a poll, then reopens, the s
 test('the README says what is an instruction and what is enforced, with the opt-out\'s two limits',()=>{
   const readme=prose('README.md');
   for(const s of ['Personal data is excluded by instruction and a bounded publication screen; neither is a universal privacy guarantee.',
-    'The capture program copies evidence but does not judge its content.','not the initial exposure or GitHub\'s retained pull refs/caches/clones.',
-    'The soul\'s opt-out and source capture checks are enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
-    'It covers that soul\'s own proposals. The spawn hook checks the source a proposal names. What an instance of that soul writes to other seats in messages is theirs to capture and propose.']) assert.ok(readme.includes(s),s);
+    'The propose command copies evidence hashes but does not judge content.','not the initial exposure or GitHub\'s retained pull refs/caches/clones.',
+    'The soul\'s opt-out is enforced in code.','It is per soul. No instance, note, host or spawn setting opts out.',
+    'It covers that soul\'s own proposals. The command checks the home it is given. What an instance of that soul writes to other seats in messages is theirs to capture and propose.',
+    // oats.okf 6.0 (spec §7): the five steps, the operator form, the gate, protection and the upgrade.
+    'oats okf propose --plan --slug <slug>','oats okf propose --check --slug <slug>','oats okf propose --apply --slug <slug> --digest <digest>',
+    'The operator form.','gates every merge','Protect the accepted branch.','protection: enforced | none | unknown',
+    'Harvesters already running keep their 5.x modules and finish, or a person retires them; a retained one is retired and its claims re-proposed by the source with `oats okf propose`, or by the operator form on its retirement recovery.',
+    '`oats.okf:harvest-review` is its old name and now watches only the 5.x label','screen-terms-file']) assert.ok(readme.includes(s),s);
+  for(const code of ['E_USAGE','E_SOURCE','E_OPTED_OUT','E_PROPOSAL_EXISTS','E_SCOPE','E_OWNER','E_DIGEST','E_CONTENT_REFUSED','E_CONTENT_INPUT','E_PROPOSAL_FORMAT','E_NOTE','E_BASE_MOVED','E_PUSH_UNCERTAIN','E_GH','E_PR_UNCERTAIN']) assert.ok(readme.includes(`\`${code}\``),code);
 });

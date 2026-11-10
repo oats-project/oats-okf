@@ -62,6 +62,49 @@ test('git base: bases primes the host cache and reports the accepted commit',t=>
   assert.ok(fs.existsSync(join(f.stateDir,'cache','base-1.git')));
   const text=run(f,['bases']);
   assert.ok(text.stdout.includes(`project@${head.slice(0,12)}`),text.stdout);
+  // oats.okf 6.0: a base that is not on GitHub reports unknown protection, with no gh call.
+  assert.equal(row.protection,'unknown');assert.match(text.stdout,/protection: unknown/);
+  // The field's question and its three answers travel with it (text and JSON).
+  const meaning='protection answers "can anyone but a reviewer land a change on the accepted branch?": enforced = a readable ruleset or classic rule requires a pull request or restricts who may push; none = both reads succeeded and neither does (classic protection with status checks only included: it gates nothing); unknown = neither read shows such a rule and at least one read failed, or the base is not on GitHub. It does not check approval counts, bypass lists or who the maintainer is';
+  assert.ok(text.stdout.includes(meaning),text.stdout);assert.equal(r.out.result.protectionMeaning,meaning);
+});
+
+test('bases reports accepted-branch protection from the rules and classic reads: enforced, none or unknown, never a refusal',async()=>{
+  const {protection}=await import('../oats-package/capabilities/oats-okf/lib/consult.mjs');
+  const base={kind:'git',repository:'https://github.com/acme/kb.git',acceptedBranch:'main',pr:{repository:'acme/kb'}};
+  // GitHub's answers as observed (gh api prints the body on stdout and exits 1 on a 404).
+  const NOT_PROTECTED=Object.assign(new Error('gh: Branch not protected (HTTP 404)'),{stdout:'{"message":"Branch not protected","status":"404"}'});
+  const NO_ACCESS=Object.assign(new Error('gh: Not Found (HTTP 404)'),{stdout:'{"message":"Not Found","status":"404"}'});
+  const FORBIDDEN=Object.assign(new Error('gh: Must have admin rights to Repository. (HTTP 403)'),{stdout:'{"message":"Must have admin rights to Repository.","status":"403"}'});
+  const CLASSIC={url:'https://api.github.com/repos/acme/kb/branches/main/protection',required_pull_request_reviews:{required_approving_review_count:1}};
+  const calls=[],answer=(rules,classic=NOT_PROTECTED)=>({run:(args,timeout)=>{calls.push([args,timeout]);const out=args[1].endsWith('/protection')?classic:rules;if(out instanceof Error) throw out;return JSON.stringify(out);}});
+  const prev=process.env.OATS_SETTINGS;process.env.OATS_SETTINGS=JSON.stringify({'git-timeout':7});
+  try {
+    assert.equal(protection(base,answer([{type:'pull_request',parameters:{}},{type:'deletion'}])),'enforced');
+    assert.deepEqual(calls,[[['api','repos/acme/kb/rules/branches/main'],7000]],'a ruleset that enforces needs no second read');
+    assert.equal(protection(base,answer([{type:'update'}])),'enforced','restricting who may push enforces it');
+    calls.length=0;
+    assert.equal(protection(base,answer([{type:'deletion'},{type:'non_fast_forward'}])),'none');
+    assert.deepEqual(calls.map(c=>c[0][1]),['repos/acme/kb/rules/branches/main','repos/acme/kb/branches/main/protection'],'both reads, bounded by the Git timeout');
+    assert.equal(protection(base,answer([])),'none','both readable and empty');
+    // Classic branch protection, which the rules endpoint never shows.
+    assert.equal(protection(base,answer([],CLASSIC)),'enforced','a classic required PR review enforces it');
+    assert.equal(protection(base,answer([],{url:CLASSIC.url,required_pull_request_reviews:null,restrictions:{users:[],teams:[{slug:'kb-maintainers'}]}})),'enforced','classic restricted pushers enforce it');
+    assert.equal(protection(base,answer(NO_ACCESS,CLASSIC)),'enforced');
+    // Status checks alone gate nothing: a direct push that passes them lands.
+    const CHECKS_ONLY={url:CLASSIC.url,required_status_checks:{strict:true,contexts:['ci']},required_pull_request_reviews:null,restrictions:null,enforce_admins:{enabled:false},allow_force_pushes:{enabled:true},allow_deletions:{enabled:true}};
+    assert.equal(protection(base,answer([],CHECKS_ONLY)),'none');
+    assert.equal(protection(base,answer(NO_ACCESS,CHECKS_ONLY)),'unknown','rules unreadable: never none');
+    // Unreadable: never none.
+    for(const classic of [NO_ACCESS,FORBIDDEN,new Error('gh: not found'),{message:'odd'}]) assert.equal(protection(base,answer([],classic)),'unknown',JSON.stringify(classic.stdout??classic));
+    assert.equal(protection(base,answer(NO_ACCESS)),'unknown','rules unreadable');
+    assert.equal(protection(base,answer({message:'Not Found'})),'unknown');
+    assert.equal(protection(base,answer(new Error('gh: not found'),new Error('gh: not found'))),'unknown','gh absent or failing');
+    for(const repository of ['git@github.com:acme/kb.git','ssh://git@github.com/acme/kb.git']) assert.equal(protection({...base,repository},answer([{type:'pull_request'}])),'enforced',repository);
+    const before=calls.length;
+    for(const repository of ['/srv/kb.git','https://gitlab.example/acme/kb.git']) assert.equal(protection({...base,repository},answer([{type:'pull_request'}])),'unknown',repository);
+    assert.equal(calls.length,before,'not on GitHub: no call');
+  } finally {if(prev===undefined) delete process.env.OATS_SETTINGS; else process.env.OATS_SETTINGS=prev;}
 });
 
 test('git base: cat and ls read the accepted state',t=>{
@@ -186,7 +229,7 @@ test('spawn primes only owns/reads bases, once each; consultation can still expl
   assert.equal(trace.calls().filter(a=>a.includes('clone')).length,1);
   assert.equal(trace.calls().some(a=>a.includes(bindings.bases.unused.repository)),false);
   assert.equal(fs.existsSync(join(f.stateDir,'cache','unused.git')),false);
-  assert.deepEqual(run(f,['status','--json']).out.result,{harvest:'on',reason:'default'});
+  assert.deepEqual(run(f,['status','--json']).out.result,{harvest:'on',reason:'default',publish:'on'});
   const explicit=run(f,['cat','--base','unused','/expert/index.md','--json']);
   assert.equal(explicit.out.error.code,'E_BASE_UNAVAILABLE');
   // The root declaration is still checked, even though unknown aliases cannot prime.

@@ -106,18 +106,18 @@ function tree(repo, head) {
     return { mode: m[1], type: m[2], id: oid(m[3]), path: m[4], ordinal: i + 1 };
   });
 }
-function inspectEntries(repo, head, entries, introduced, scanned) {
+function inspectEntries(repo, head, entries, introduced, scanned, terms = []) {
   const findings = [];
   for (const entry of entries) {
     const location = `commit ${head} tree-entry ${entry.ordinal}`;
-    findings.push(...screenText(entry.path, location));
+    findings.push(...screenText(entry.path, location, { terms }));
     if (entry.type === 'tree' && entry.mode === '040000') continue;
     if (entry.type !== 'blob' || !['100644', '100755'].includes(entry.mode)) invalid(location, 'input-tree-mode', 'E_TREE');
     if (introduced && !introduced.has(entry.id)) continue;
     if (scanned.has(entry.id)) continue;
     scanned.add(entry.id);
     // Opaque commit/blob labels cannot echo a sensitive filename.
-    findings.push(...inspectBytes(object(repo, entry.id, 'blob'), `commit ${head} blob ${entry.id}`));
+    findings.push(...inspectBytes(object(repo, entry.id, 'blob'), `commit ${head} blob ${entry.id}`, { terms }));
   }
   return findings;
 }
@@ -130,7 +130,7 @@ function forkPoint(repo, base, head) {
   git(repo, ['merge-base', '--is-ancestor', fork, base]);
   return fork;
 }
-export function screenRange(repo, base, head) {
+export function screenRange(repo, base, head, terms = []) {
   guardRepo(repo); oid(base); oid(head);
   object(repo, base, 'commit'); object(repo, head, 'commit');
   // The accepted tip may advance independently after the PR was opened. Scan
@@ -145,25 +145,28 @@ export function screenRange(repo, base, head) {
   for (const id of commits) {
     const raw = object(repo, id, 'commit');
     // Include headers, not only the message: an identity can disclose too.
-    findings.push(...inspectBytes(raw, `commit ${id}`, { commit: true }));
+    findings.push(...inspectBytes(raw, `commit ${id}`, { commit: true, terms }));
     const changed = tree(repo, id).filter(e => !baseline.has(`${e.mode}\0${e.id}\0${e.path}`));
     // Reused accepted blobs at a new path/mode are checked too. Unchanged
     // repository code outside a KB root need not be a text-only OKF bundle.
-    findings.push(...inspectEntries(repo, id, changed, null, scanned));
+    findings.push(...inspectEntries(repo, id, changed, null, scanned, terms));
   }
   return findings;
 }
-export function screenTree(repo, head, root = '.') {
+export function screenTree(repo, head, root = '.', terms = []) {
   guardRepo(repo); oid(head); object(repo, head, 'commit');
   if (root !== '.' && (!/^[A-Za-z0-9_./-]+$/.test(root) || root.split('/').some(s => !s || s === '.' || s === '..'))) fail('E_ROOT');
   const entries = tree(repo, head).filter(e => root === '.' || e.path.startsWith(root + '/'));
   if (!entries.length) fail('E_EMPTY');
-  return inspectEntries(repo, head, entries, null, new Set());
+  return inspectEntries(repo, head, entries, null, new Set(), terms);
 }
 function checked(findings) {
   if (findings.length) throw Object.assign(new Error('E_CONTENT_REFUSED'), { code: 'E_CONTENT_REFUSED', findings });
 }
 function readText(file, label, options) {
+  return readBytes(file, label, bytes => checked(inspectBytes(bytes, label, options)));
+}
+function readBytes(file, label, check) {
   let bytes;
   try {
     const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -173,13 +176,32 @@ function readText(file, label, options) {
       bytes = fs.readFileSync(fd);
     } finally { fs.closeSync(fd); }
   } catch { invalid(label, 'input-file'); }
-  checked(inspectBytes(bytes, label, options));
+  check(bytes);
   return bytes; // Immutable snapshot sent to gh on stdin, never reread by gh.
 }
-function ref(branch, publishing = true) {
-  if (typeof branch !== 'string' || !/^(?:okf-harvest|okf)\//.test(branch)) fail('E_BRANCH');
+// oats.okf 6.0: the host's own deny list (setting screen-terms-file), one term
+// per line, matched case-insensitively. It only adds refusals; a term is never
+// echoed. An unreadable or malformed file refuses as input, never as no terms.
+function loadTerms(file) {
+  if (file === undefined) return [];
+  if (!file.startsWith('/')) invalid('host terms file', 'input-file');
+  const bytes = readBytes(file, 'host terms file', () => {});
+  let terms;
+  try {
+    terms = text(bytes).split(/\r\n|\r|\n/).map(line => line.trim()).filter(Boolean);
+    screenText('', 'host terms file', { terms });
+  } catch { invalid('host terms file'); }
+  return terms;
+}
+const PREFIXES = ['okf-proposal', 'okf-harvest'];
+const LABELS = {
+  'okf-proposal': { version: 3, description: 'OKF knowledge proposal PR (oats.okf)' },
+  'okf-harvest': { version: 2, description: 'OKF harvest PR (oats.okf)' },
+};
+function ref(branch, publishing = true, terms = []) {
+  if (typeof branch !== 'string' || !/^(?:okf-proposal|okf-harvest|okf)\//.test(branch)) fail('E_BRANCH');
   // An existing unsafe name is a cleanup target, not permission to publish it.
-  if (publishing) checked(screenText(branch, 'publication ref'));
+  if (publishing) checked(screenText(branch, 'publication ref', { terms }));
   run('git', ['check-ref-format', `refs/heads/${branch}`]);
   return `refs/heads/${branch}`;
 }
@@ -210,11 +232,11 @@ function verifyBase(o, movedCode = 'E_BASE_MOVED') {
 }
 export function screenedPush(o, head, expected, branch) {
   oid(head); if (expected !== '') oid(expected);
-  const reference = ref(branch);
+  const reference = ref(branch, true, o.terms);
   if (reference === baseRef(o['base-branch'])) fail('E_BRANCH');
   verifyBase(o);
   if (tip(o, reference) !== (expected || null)) fail('E_HEAD_MOVED');
-  checked(screenRange(o.repo, o.base, head));
+  checked(screenRange(o.repo, o.base, head, o.terms));
   // Recheck after screening; the exact lease arbitrates the remote head race.
   verifyBase(o);
   let output;
@@ -248,10 +270,15 @@ function confirmPr(o, state, branch) {
     if (p.headRefName !== branch) fail('E_PR_STATE');
   } catch { fail('E_PR_UNCERTAIN'); }
 }
+// One provenance block per body: ```okf-harvest (versions 1 and 2) or, from
+// oats.okf 6.0, ```okf-proposal (version 3). The fence and version must agree.
 function provenance(body) {
-  const blocks = [...body.matchAll(/^```okf-harvest\s*\n([\s\S]*?)^```\s*$/gm)];
+  const blocks = [...body.matchAll(/^```(okf-harvest|okf-proposal)\s*\n([\s\S]*?)^```\s*$/gm)];
   if (blocks.length !== 1) fail('E_PROVENANCE');
-  try { return JSON.parse(blocks[0][1]); } catch { fail('E_PROVENANCE'); }
+  let value;
+  try { value = JSON.parse(blocks[0][2]); } catch { fail('E_PROVENANCE'); }
+  if (!value || typeof value !== 'object' || (blocks[0][1] === 'okf-proposal') !== (value.version === 3)) fail('E_PROVENANCE');
+  return value;
 }
 function prText(p) {
   checked([...screenText(p.title, 'PR title'), ...screenText(p.body, 'PR body')]);
@@ -384,6 +411,13 @@ function recoverBase(o, attempts) {
   object(o.repo, tipId, 'commit');
   // A rewritten accepted branch is not something to replay onto.
   if (git(o.repo, ['merge-base', '--is-ancestor', old.base, tipId], { optional: true }) === null) unrecovered(attempts, 'not-fast-forward');
+  // oats.okf 6.0: a guarded file (the base's okf-base.json: node ownership and
+  // paths) that changed on the accepted branch invalidates the scope the
+  // proposer checked; the delta is never replayed past it.
+  if (o['guard-file']) {
+    const blob = at => { const id = git(o.repo, ['rev-parse', '--verify', '--quiet', `${at}:${o['guard-file']}`], { optional: true }); return id === null ? null : text(id).trim(); };
+    if (blob(old.base) !== blob(tipId)) unrecovered(attempts, 'guarded-file-changed');
+  }
   const staged = oid(text(git(o.repo, ['rev-parse', `${old.head}^{tree}`])).trim());
   let treeId;
   try { treeId = reconcileTree({ ...o, base: tipId, head: old.head }, staged); }
@@ -409,34 +443,43 @@ function comment(o, bytes) {
   gh(o, ['pr', 'comment', o.pr, '--repo', o.github, '--body-file', '-'], bytes);
 }
 export function execute(command, o) {
+  o.terms = loadTerms(o['terms-file']);
   if (command === 'screen-text') {
     if (!o['text-file']?.length) fail('E_USAGE');
-    for (const [i, file] of o['text-file'].entries()) readText(file, `outward file ${i + 1}`);
+    for (const [i, file] of o['text-file'].entries()) readText(file, `outward file ${i + 1}`, { terms: o.terms });
     return { files: o['text-file'].length };
   }
   if (command === 'screen-tree') {
-    checked(screenTree(o.repo, o.head, o.root)); return { head: o.head };
+    checked(screenTree(o.repo, o.head, o.root, o.terms)); return { head: o.head };
   }
   if (command === 'screen') {
-    checked(screenRange(o.repo, o.base, o.head));
-    for (const [i, file] of (o['text-file'] || []).entries()) readText(file, `outward file ${i + 1}`);
+    checked(screenRange(o.repo, o.base, o.head, o.terms));
+    for (const [i, file] of (o['text-file'] || []).entries()) readText(file, `outward file ${i + 1}`, { terms: o.terms });
     return { head: o.head };
   }
   if (command === 'commit') {
     if (oid(o.head) !== oid(o.base)) fail('E_HISTORY');
-    const reference = ref(o.branch);
+    const reference = ref(o.branch, true, o.terms);
     if (text(git(o.repo, ['symbolic-ref', 'HEAD'])).trim() !== reference) fail('E_BRANCH');
-    const message = readText(o['commit-file'], 'commit text', { commit: true });
+    const message = readText(o['commit-file'], 'commit text', { commit: true, terms: o.terms });
     const head = commitFromIndex(o, message);
-    checked(screenRange(o.repo, o.base, head));
+    checked(screenRange(o.repo, o.base, head, o.terms));
     git(o.repo, ['update-ref', reference, head, o.head]);
     return { head, status: 'committed' };
   }
   if (command === 'create') {
     github(o);
-    if (!o.branch?.startsWith('okf-harvest/')) fail('E_BRANCH');
-    const body = readText(o['body-file'], 'PR body');
-    const p = provenance(text(body)); if (p.version !== 2) fail('E_PROVENANCE');
+    // A canonical repository-relative path, as a base root is bound (any
+    // legal segment, a space included); never absolute, parent, .git or NUL.
+    const g = o['guard-file'];
+    if (g !== undefined && (typeof g !== 'string' || !g || g.startsWith('/') || g.includes('\\') || g.includes('\0')
+      || g.split('/').some(x => !x || x === '.' || x === '..' || x.toLowerCase() === '.git'))) fail('E_USAGE');
+    // okf-proposal/ (6.0, v3 body) or okf-harvest/ (5.x, v2 body), through 6.x.
+    const prefix = PREFIXES.find(name => o.branch?.startsWith(`${name}/`));
+    if (!prefix) fail('E_BRANCH');
+    const label = prefix, kind = LABELS[prefix];
+    const body = readText(o['body-file'], 'PR body', { terms: o.terms });
+    const p = provenance(text(body)); if (p.version !== kind.version) fail('E_PROVENANCE');
     let head, recovered = 0;
     for (;;) {
       // Every E_BASE_MOVED from screenedPush is decided before its push.
@@ -445,13 +488,13 @@ export function execute(command, o) {
       if (recovered === RECOVERIES) unrecovered(recovered, 'retries-exhausted');
       recoverBase(o, ++recovered);
     }
-    gh(o, ['label', 'create', 'okf-harvest', '--repo', o.github, '--force', '--color', '0E8A16', '--description', 'OKF harvest PR (oats.okf)']);
+    gh(o, ['label', 'create', label, '--repo', o.github, '--force', '--color', '0E8A16', '--description', kind.description]);
     try {
       verifyBase(o);
       if (tip(o, ref(o.branch)) !== head) fail('E_HEAD_MOVED');
     } catch { fail('E_PR_UNCERTAIN'); }
     const url = text(gh(o, ['pr', 'create', '--repo', o.github, '--base', o['base-branch'], '--head', o.branch,
-      '--label', 'okf-harvest', '--title', 'OKF knowledge proposal', '--body-file', '-'], body)).trim();
+      '--label', label, '--title', 'OKF knowledge proposal', '--body-file', '-'], body)).trim();
     if (!url.startsWith(`https://github.com/${o.github}/pull/`) || !/\/pull\/[1-9][0-9]*$/.test(url)) fail('E_PR_UNCERTAIN');
     confirmPr({ ...o, pr: url.split('/').at(-1) }, 'OPEN', o.branch);
     return { head, base: o.base, recovered, branch: o.branch, url, status: 'created' };
@@ -460,8 +503,10 @@ export function execute(command, o) {
   const closing = command === 'close' || command === 'close-unsafe';
   const p = view(o, { publishing: !closing });
   if (command === 'rewrite' || command === 'amend-legacy') {
-    const version = command === 'rewrite' ? 2 : 1;
-    if (provenance(p.body).version !== version) fail('E_LEGACY_REMOVAL');
+    // A rewrite keeps the PR's own provenance version: v2 (a 5.x harvest) or v3 (6.0).
+    const existing = provenance(p.body).version;
+    const version = command === 'rewrite' ? ([2, 3].includes(existing) ? existing : 2) : 1;
+    if (existing !== version) fail('E_LEGACY_REMOVAL');
     const body = readText(o['body-file'], 'PR body');
     if (provenance(text(body)).version !== version) fail('E_PROVENANCE');
     const message = readText(o['commit-file'], 'replacement commit text', { commit: true });
@@ -470,8 +515,8 @@ export function execute(command, o) {
     // A legacy amendment cannot reparent the delivered head, and appending
     // accepted changes is not an authorized substitute for v2 replacement.
     if (version === 1 && forkPoint(o.repo, o.base, o.head) !== o.base) fail('E_REWRITE_REQUIRED');
-    if (version === 2 && git(o.repo, ['merge-base', '--is-ancestor', o.head, o.base], { optional: true }) !== null) fail('E_HISTORY');
-    const head = commitFromIndex(o, message, version === 1 ? o.head : o.base, version === 2);
+    if (version !== 1 && git(o.repo, ['merge-base', '--is-ancestor', o.head, o.base], { optional: true }) !== null) fail('E_HISTORY');
+    const head = commitFromIndex(o, message, version === 1 ? o.head : o.base, version !== 1);
     if (version === 1) {
       // Preserve 4.x completion ancestry, but never offer an append-only
       // removal: even a one-line deletion requires close-and-route instead.
@@ -535,11 +580,11 @@ export function execute(command, o) {
   fail('E_USAGE');
 }
 const FLAGS = {
-  'screen-text': ['text-file'],
-  'screen-tree': ['repo', 'head', 'root'],
-  screen: ['repo', 'base', 'head', 'text-file'],
-  commit: ['repo', 'base', 'head', 'branch', 'commit-file'],
-  create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file'],
+  'screen-text': ['text-file', 'terms-file'],
+  'screen-tree': ['repo', 'head', 'root', 'terms-file'],
+  screen: ['repo', 'base', 'head', 'text-file', 'terms-file'],
+  commit: ['repo', 'base', 'head', 'branch', 'commit-file', 'terms-file'],
+  create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file', 'guard-file'],
   rewrite: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
   'amend-legacy': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
   merge: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file'],
@@ -555,7 +600,7 @@ function parse(args) {
     if (key === 'text-file') (o[key] ??= []).push(value);
     else { if (Object.hasOwn(o, key)) fail('E_USAGE'); o[key] = value; }
   }
-  for (const key of allowed) if (!['root', 'text-file'].includes(key) && !o[key]) fail('E_USAGE');
+  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file'].includes(key) && !o[key]) fail('E_USAGE');
   if (o.repo) o.repo = resolve(o.repo); return { command, o };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

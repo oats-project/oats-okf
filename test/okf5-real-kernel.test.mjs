@@ -8,10 +8,11 @@
 // retire; this checkout's oats-package, pinned by commit from a file:// Git
 // remote; a real Git knowledge base (a bare repository on disk). What is NOT
 // exercised: no model (pi/claude/codex on PATH are fakes that record being
-// asked and exit 98, and every spawn is --no-launch), no GitHub (the harvest
-// PR is not opened; its v2 provenance block is built from the records and
-// checked with this checkout's parser), no messaging (messaging: none, tasks:
-// none, oats.core off), no network, host timer or production setting. HOME,
+// asked and exit 98, and every spawn is --no-launch), no GitHub (`oats okf
+// propose` runs --plan and --check through the kernel's in-home and operator
+// dispatch; --apply's push and PR are the unit suite's, against a local
+// remote and a fake gh), no messaging (messaging: none, tasks: none,
+// oats.core off), no network, host timer or production setting. HOME,
 // OATS_HOME_DIR and every repository live in one temporary directory.
 //
 // One fixture, ordered steps (a)-(g): each subtest is one concern and builds
@@ -23,9 +24,8 @@ import { dirname, join, isAbsolute, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseProvenance } from '../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs';
-import { generateHarvesterName } from './fixtures/harvester-name.mjs';
 import { machine } from './fixtures/real-machine.mjs';
 
 const cli = process.env.OATS_OKF_REAL_CLI;
@@ -43,10 +43,10 @@ const listing = dir => {
 /** Every string value in a JSON document. */
 const strings = (v, out = []) => { if (typeof v === 'string') out.push(v); else if (v && typeof v === 'object') for (const x of Object.values(v)) strings(x, out); return out; };
 
-const HARVESTER_DIR = 'oats-okf--knowledge-harvester'; // packageSoulAgentName('oats.okf', 'knowledge-harvester')
-const SPAWN_LINE = 'oats spawn oats.okf/knowledge-harvester --name <harvester-name> --task-file <proposal> --relation unrelated';
+const HARVESTER_DIR = 'oats-okf--knowledge-harvester'; // packageSoulAgentName('oats.okf', 'knowledge-harvester'): no home is ever kept
+const { REMOVED_SPAWN } = await import('../oats-package/capabilities/oats-okf-harvest/bin/okf-harvest.mjs');
 
-test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-key cleanup, a source spawn, its checkpoint proposal spawning a top-level harvester, the harvester's source records, removed surfaces, the source retired, and both package souls' background defaults`, { skip: !cli }, async t => {
+test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-key cleanup, a source spawn proposing by PR (plan, check), the retired source's recovery form, no harvester, knowledge.propose and opt-out refusals, and the maintainer soul`, { skip: !cli }, async t => {
   const base = real(fs.mkdtempSync(join(tmpdir(), 'okf5-real-kernel-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   assert.doesNotMatch(base, /harvest/, 'the cleanup reader looks for the word harvest in oats-local.yaml; the fixture path must not carry it');
@@ -63,11 +63,18 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
   write(join(soul, 'soul.yaml'), 'schemaVersion: 2\nname: source\ndescription: Domain expert fixture.\nwork: directory\n');
   write(join(soul, 'AGENTS.md'), '# Source\nNo model or production operations in this fixture.\n');
   write(join(soul, 'okf.json'), JSON.stringify({ version: 1, owner: 'source-owner', owns: ['project/expert'], reads: ['project/peer'] }));
-  // A soul whose author opts out of harvest: it consults, but is never harvested.
-  const quietSoul = join(ws, 'souls/quiet');
-  write(join(quietSoul, 'soul.yaml'), 'schemaVersion: 2\nname: quiet\ndescription: Public fixture soul that opts out.\nwork: directory\nknowledge: { harvest: off }\n');
-  write(join(quietSoul, 'AGENTS.md'), '# Quiet\nNo model or production operations in this fixture.\n');
-  write(join(quietSoul, 'okf.json'), JSON.stringify({ version: 1, owner: 'source-owner', owns: [], reads: ['project/peer'] }));
+  // Souls whose authors opt out (both spellings): they consult, but never publish knowledge.
+  for (const [name, optOut] of [['quiet', 'harvest'], ['hushed', 'publish']]) {
+    const dir = join(ws, 'souls', name);
+    write(join(dir, 'soul.yaml'), `schemaVersion: 2\nname: ${name}\ndescription: Public fixture soul that opts out.\nwork: directory\nknowledge: { ${optOut}: off }\n`);
+    write(join(dir, 'AGENTS.md'), `# ${name}\nNo model or production operations in this fixture.\n`);
+    write(join(dir, 'okf.json'), JSON.stringify({ version: 1, owner: 'source-owner', owns: ['project/expert'], reads: ['project/peer'] }));
+  }
+  // A soul that still asks for the removed proposer setting: its spawn is refused.
+  const pushySoul = join(ws, 'souls/pushy');
+  write(join(pushySoul, 'soul.yaml'), 'schemaVersion: 2\nname: pushy\ndescription: Fixture soul with knowledge.propose.\nwork: directory\nknowledge: { propose: on }\n');
+  write(join(pushySoul, 'AGENTS.md'), '# Pushy\nNo model or production operations in this fixture.\n');
+  write(join(pushySoul, 'okf.json'), JSON.stringify({ version: 1, owner: 'source-owner', owns: [], reads: ['project/peer'] }));
   repo(ws, join(base, 'ws.git'));
 
   // ---- the deployment: one Git knowledge base, and a 4.x harvest key left in its host settings ----
@@ -88,7 +95,6 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
   };
   const ok = (args, opts) => { const r = run(args, opts); assert.equal(r.status, 0, r.text); assert.ok(r.out && r.out.ok !== false, r.text); return r.out; };
   const refused = (args, code, opts) => { const r = run(args, opts); assert.notEqual(r.status, 0, r.text); assert.equal(r.out?.ok, false, r.text); assert.equal(r.out.error.code, code, r.text); return r.out.error; };
-  const harvesterHomes = () => { const d = join(dep, 'agents', HARVESTER_DIR, 'instances'); return fs.existsSync(d) ? fs.readdirSync(d).filter(n => !n.startsWith('.')) : []; };
 
   // The kernel this file qualifies, exactly (bin/oats.mjs versionCmd: top-level `version`).
   const version = run(['version']);
@@ -129,12 +135,12 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.deepEqual(bases[0].owns, ['expert']); assert.deepEqual(bases[0].reads, ['peer']);
   });
 
-  await t.test('b) a source spawned from the package checkpoints: its proposal spawns oats.okf/knowledge-harvester top-level (relation unrelated), with OKF vs none composition', () => {
+  await t.test('b) a source spawned from the package proposes by PR: --plan clones its owned base and prints the write surface; --check prints the outgoing diff and a v3 block', () => {
     // The working source: directory work, the real oats.okf spawn hook (required) seeds instance knowledge.
     const spawned = ok(['spawn', 'source', '--name', 'src', '--no-launch']).result;
     assert.equal(spawned.launched, false);
     const src = spawned.home;
-    // Only the package's service souls are background: a working soul composing oats.okf is not.
+    // Only the package's service soul is background: a working soul composing oats.okf is not.
     assert.equal(spawned.background, false);
     assert.equal(fs.existsSync(join(src, '.oats-background.json')), false);
     assert.equal(real(src), real(join(dep, 'agents/source/instances/src')));
@@ -142,277 +148,201 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.ok(fs.statSync(join(src, 'notes')).isDirectory());
     const srcRecord = json(join(src, 'instance.json'));
     assert.equal(srcRecord.capabilityMeta?.['oats.okf'], undefined, 'no meta: the hook creates no external state for the kernel to keep');
-    assert.doesNotMatch(fs.readFileSync(join(src, 'TASK.md'), 'utf8'), /harvest|propos|okf-propose/i, 'no harvest direction in TASK.md');
+    assert.doesNotMatch(fs.readFileSync(join(src, 'TASK.md'), 'utf8'), /harvest|propos|okf-propose/i, 'no proposing direction in TASK.md');
     const srcAgents = fs.readFileSync(join(src, 'AGENTS.md'), 'utf8');
     assert.ok(srcAgents.includes('## Knowledge: OKF'), 'the okf inject is composed');
-    assert.match(srcAgents, /IMPORTANT/);
     assert.match(srcAgents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
-    assert.match(srcAgents, /oats okf status/);
-    assert.deepEqual(ok(['okf', 'status'], { cwd: src, as: { instance: 'src', home: src } }).result, { harvest: 'on', reason: 'default' });
-    assert.ok(fs.readFileSync(join(src, '.agents/skills/okf-propose/SKILL.md'), 'utf8').includes(SPAWN_LINE));
+    assert.match(srcAgents, /oats okf propose --plan --slug <slug>/);
+    assert.doesNotMatch(srcAgents, /harvester/i, 'no harvester in the composed instructions');
+    const as = { instance: 'src', home: src };
+    assert.deepEqual(ok(['okf', 'status'], { cwd: src, as }).result, { harvest: 'on', reason: 'default', publish: 'on' });
     const srcSkills = srcRecord.skills.map(s => s.name);
-    for (const s of ['okf-consultation', 'okf-instance-knowledge', 'okf-propose', 'knowledge-theory']) {
+    for (const s of ['okf-consultation', 'okf-instance-knowledge', 'okf-propose', 'knowledge-theory', 'okf-authoring']) {
       assert.ok(srcSkills.includes(s), `source composes ${s}: ${srcSkills}`);
       assert.ok(fs.existsSync(join(src, '.agents/skills', s, 'SKILL.md')), `${s} materialized`);
     }
-    assert.ok(!srcSkills.includes('knowledge-harvest'), 'a working source is not a harvester');
+    assert.ok(fs.existsSync(join(src, '.agents/skills/okf-authoring/scripts/okf-publication.mjs')), 'the proposer has its own copy of the publication helper');
 
-    // The checkpoint, as okf-instance-knowledge says: a backing note and a self-contained proposal in the home.
+    // --plan through the kernel's in-home dispatch: the clone at the accepted branch, the skeleton, the write surface.
+    const plan = ok(['okf', 'propose', '--plan', '--slug', 'retry-budget'], { cwd: src, as }).result;
+    assert.ok(real(plan.proposal).startsWith(real(join(src, 'proposals')) + sep), plan.proposal);
+    assert.equal(plan.form, 'live');
+    const [b] = plan.bases;
+    assert.equal(b.alias, 'project'); assert.deepEqual(b.surface, ['knowledge/expert/', 'knowledge/index.md']); assert.deepEqual(b.nodes, ['project/expert']);
+    assert.equal(b.accepted, git(kbRemote, ['rev-parse', 'refs/heads/main']));
+    assert.ok(b.duplicates.unavailable, 'no gh on this machine: the duplicate list is reported unavailable, never a refusal');
+    assert.ok(fs.statSync(join(b.clone, 'knowledge/okf-base.json')).isFile());
+
+    // The instance writes one concept and fills the proposal; --check prints the diff and the digest.
     write(join(src, 'notes/decision.md'), '---\ntype: Decision\ntitle: Retry budget is per request\ndescription: The retry budget is counted per request, not per connection.\ngenerality: soul\n---\n\nPer-connection budgets let one slow request starve the others.\n');
-    const proposal = `# OKF proposal: Retry budget is per request\n\nSource: instance src, home ${src}, soul source\n\n## What\nThe retry budget is counted per request, not per connection.\n\n## Why\nA per-connection budget let one slow request starve the others.\n\n## Evidence\nObserved in the fixture load test.\n\n### Backing notes\n- notes/decision.md\n`;
-    write(join(src, 'proposals/2026-10-07-retry-budget.md'), proposal);
-    const srcBefore = fs.readFileSync(join(src, 'instance.json'));
-    const as = { instance: 'src', home: src };
-
-    // Why the procedure never passes --relative-to: the kernel refuses it with unrelated (bin/oats.mjs), nothing spawned.
-    const bad = refused(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/2026-10-07-retry-budget.md', '--relation', 'unrelated', '--relative-to', 'src', '--no-launch'], 'E_BAD_ARGS', { cwd: src, as });
-    assert.match(bad.message, /--relation unrelated takes no --relative-to/);
-    assert.deepEqual(harvesterHomes(), []);
-
-    // The required oats.okf-harvest spawn hook enforces in code: a task that is not a proposal is refused and no home is kept.
-    write(join(src, 'proposals/not-a-proposal.md'), '# Notes\n\nNo Source line.\n');
-    const nap = run(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/not-a-proposal.md', '--relation', 'unrelated', '--no-launch'], { cwd: src, as });
-    assert.notEqual(nap.status, 0, nap.text);
-    assert.match(nap.text, /oats-okf-harvest E_SOURCE/, nap.text);
-    assert.deepEqual(harvesterHomes(), [], 'a refused harvester spawn keeps no home (the hook reported no meta to quarantine)');
-
-    // Execute the composed skill's recipe once; use the SAME explicit name in preview and apply.
-    const generated = generateHarvesterName(join(src, '.agents/skills/okf-propose/SKILL.md'), src, env);
-    assert.equal(generated.status, 0, generated.stderr);
-    const name = generated.stdout.trim();
-    assert.match(name, /^src-[0-9a-f]{32}-harvester$/);
-    write(join(src, 'log.md'), `# Instance log\n\nCheckpoint: fixture proposal; chosen harvester: ${name}\n`);
-    const launch = ['spawn', 'oats.okf/knowledge-harvester', '--name', name, '--task-file', 'proposals/2026-10-07-retry-budget.md', '--relation', 'unrelated', '--no-launch'];
-    ok([...launch, '--preview'], { cwd: src, as });
-    assert.deepEqual(harvesterHomes(), [], 'preview does not reserve or spawn the name');
-    // Real kernel spawn, with --no-launch only to keep the fixture model-free.
-    const h = ok(launch, { cwd: src, as }).result;
-    assert.equal(h.instance, name, '--name is exact: no soul prefix or numeric suffix');
-    assert.equal(h.launched, false);
-    const namedBefore = listing(h.home);
-    refused(launch, 'E_INSTANCE_NAME_TAKEN', { cwd: src, as });
-    assert.deepEqual(listing(h.home), namedBefore, 'a collision does not touch the existing harvester');
-    assert.deepEqual(harvesterHomes(), [h.instance]);
-    const hHome = join(dep, 'agents', HARVESTER_DIR, 'instances', h.instance);
-    assert.equal(real(h.home), real(hHome), 'the harvester lives in the deployment, under the package soul\'s agent dir');
-    assert.ok(fs.readFileSync(join(hHome, 'TASK.md'), 'utf8').includes(proposal.trim()), 'TASK.md carries the proposal (the kernel copies --task-file)');
-    // The soul's background: true (awebai/oats#1579, the reason for the 0.69.2 floor): the spawn answers it and the home records it.
-    assert.equal(h.background, true, 'the harvester soul places new harvesters in the background');
-    assert.equal(h.backgroundFrom, 'soul');
-    assert.ok(fs.existsSync(join(hHome, '.oats-background.json')), 'the home records background');
-
-    // Top-level: "unrelated" is normalized away before recording (lib/core.mjs), so no lineage field is written.
-    const hRecord = json(join(hHome, 'instance.json'));
-    for (const k of ['parentInstance', 'siblingInstance', 'relation', 'relativeTo']) assert.equal(hRecord[k], undefined, `${k}: ${JSON.stringify(hRecord[k])}`);
-    // spawnOrigin says who ran the spawn (an instance home, since #1372), not parentage: the lineage fields above stay absent.
-    assert.equal(hRecord.spawnOrigin, 'instance', 'spawned from the source home; still no lineage');
-    assert.ok(!strings(hRecord).some(v => v === 'src' || v.includes(src)), 'nothing in the harvester record names the source');
-    assert.equal(hRecord.capabilityMeta?.['oats.okf-harvest'], undefined, 'the source check reports no external-state meta; its home-local capture rolls back with spawn');
-    assert.deepEqual(fs.readFileSync(join(src, 'instance.json')), srcBefore, 'the source record gained no child or lineage');
-
-    // Composition: oats.okf-harvest only, knowledge: none (no oats.okf, its hook, skills or instance knowledge).
-    const hCaps = hRecord.capabilities.map(c => c.id);
-    assert.ok(hCaps.includes('oats.okf-harvest') && !hCaps.includes('oats.okf'), hCaps.join(','));
-    assert.equal(hRecord.capabilityMeta?.['oats.okf'], undefined);
-    const hSkills = hRecord.skills.map(s => s.name);
-    for (const s of ['knowledge-harvest', 'knowledge-theory', 'okf-authoring']) {
-      assert.ok(hSkills.includes(s), `harvester composes ${s}: ${hSkills}`);
-      assert.ok(fs.existsSync(join(hHome, '.agents/skills', s, 'SKILL.md')), `${s} materialized`);
-    }
-    for (const s of ['okf-consultation', 'okf-instance-knowledge', 'okf-propose']) assert.ok(!hSkills.includes(s), `harvester must not compose ${s}`);
-    for (const p of ['STATE.md', 'log.md', 'notes']) assert.equal(fs.existsSync(join(hHome, p)), false, `${p}: the kernel seeds no instance knowledge; only the oats.okf hook does`);
-    const hAgents = fs.readFileSync(join(hHome, 'AGENTS.md'), 'utf8');
-    assert.ok(hAgents.includes('## Knowledge harvester (oats.okf-harvest)') && !hAgents.includes('## Knowledge: OKF'));
-    assert.equal(fs.existsSync(asked), false, 'no harness was asked to start');
-    assert.equal(json(join(hHome,'harvest-source/source.json')).from,'live');
-    assert.equal(fs.readFileSync(join(hHome,'harvest-source/proposal.md'),'utf8'),proposal);
-    assert.deepEqual(fs.readFileSync(join(hHome,'harvest-source/notes/decision.md')),fs.readFileSync(join(src,'notes/decision.md')));
-    Object.assign(state, { src, hHome, harvester: h.instance });
-  });
-
-  await t.test('c) from the harvester home, the records the knowledge-harvest skill reads exist, agree, and yield a valid v2 provenance block', () => {
-    const { hHome, harvester } = state;
-    assert.ok(hHome, 'needs (b)');
-    // The proposal, as the harvester has it: its TASK.md. Its Source line is a pointer, not authority.
-    const task = fs.readFileSync(join(hHome, 'TASK.md'), 'utf8');
-    const [, claimed, claimedHome, claimedSoul] = /^Source: instance (\S+), home (\S+), soul (\S+)$/m.exec(task) ?? [];
-    assert.ok(claimed, task);
-    const named = [...task.matchAll(/^- (notes\/\S+\.md)\b/gm)].map(m => m[1]);
-    assert.deepEqual(named, ['notes/decision.md']);
-
-    // Step 2.1: D is the directory holding the harvester's agents/ root; exactly one record of that instance.
-    const D = dirname(dirname(dirname(dirname(hHome))));
-    assert.equal(real(D), real(dep));
-    const records = fs.readdirSync(join(D, 'agents')).filter(a => !a.startsWith('.')).map(a => join(D, 'agents', a, 'instances', claimed, 'instance.json')).filter(f => fs.existsSync(f));
-    assert.equal(records.length, 1, records.join('\n'));
-    const record = json(records[0]);
-    assert.equal(record.instance, claimed);
-    assert.equal(real(record.home), real(dirname(records[0])), 'the record is its own home\'s');
-    assert.equal(real(record.home), real(claimedHome), 'and the proposal\'s home');
-
-    // Step 2.2: the soul, from the record's soulDir (a per-commit copy outside the home).
-    assert.ok(isAbsolute(record.soulDir) && !real(record.soulDir).startsWith(real(record.home) + sep), record.soulDir);
-    assert.match(fs.readFileSync(join(record.soulDir, 'soul.yaml'), 'utf8'), new RegExp(`^name: ${claimedSoul}$`, 'm'));
-    const okf = json(join(record.soulDir, 'okf.json'));
-    assert.equal(okf.owner, 'source-owner'); assert.deepEqual(okf.owns, ['project/expert']); assert.deepEqual(okf.reads, ['project/peer']);
-
-    // Step 2.3: the bindings. 0.44 records the soul's merged provider payloads as instance.json
-    // `providers` (lib/materialize.mjs, carried by lib/core.mjs spawn); `decision` (with
-    // effective.providers) is written only for a decision-bound spawn (--expect-decision), never by
-    // the plain spawn the skill tells agents to run. The capability row's settings agree.
-    assert.equal(record.decision, undefined, 'a plain spawn records no decision: the harvester must read providers["oats.okf"]');
-    const provider = record.providers?.['oats.okf'];
-    assert.ok(provider, JSON.stringify(Object.keys(record.providers ?? {})));
-    assert.equal(provider['bindings-file'], bindingsFile);
-    assert.equal(record.capabilities.find(c => c.id === 'oats.okf')?.settings?.['bindings-file'], bindingsFile);
-    const bindings = json(provider['bindings-file']);
-    const kb = bindings.bases.project;
-    assert.deepEqual(kb, bindingsDoc.bases.project);
-
-    // Step 3: only the named notes, each a regular in-home file, hashed.
-    const notesRoot = real(join(record.home, 'notes')) + sep;
-    const evidence = named.map(n => {
-      assert.ok(/^notes\/[A-Za-z0-9._/-]+\.md$/.test(n) && n.split('/').every(s => s && s !== '.' && s !== '..'), n);
-      const file = join(record.home, n), st = fs.lstatSync(file);
-      assert.ok(st.isFile() && !st.isSymbolicLink() && real(file).startsWith(notesRoot), n);
-      return { note: n, sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex') };
-    });
-
-    // Step 4: clone the accepted Git base into the harvester's work; owned = okf-base.json owner AND okf.json owns.
-    const clone = join(hHome, 'work/project');
-    git(hHome, ['clone', '-q', '--branch', kb.acceptedBranch, kb.repository, clone]);
-    const meta = json(join(clone, kb.root, 'okf-base.json'));
-    const ownedNodes = Object.entries(meta.nodes).filter(([node, spec]) => spec.owner === okf.owner && okf.owns.includes(`project/${node}`)).map(([node]) => `project/${node}`);
-    assert.deepEqual(ownedNodes, ['project/expert']);
-
-    // Step 8: the v2 block, from records only; the maintainer's parser accepts it.
-    const block = {
-      version: 2,
-      source: { soul: claimedSoul, owner: okf.owner, instance: record.instance, ownedNodes, readNodes: okf.reads, bases: [{ alias: 'project', id: kb.id, kind: kb.kind, root: kb.root, repository: kb.pr.repository }] },
-      evidence,
-      tasks: { provider: record.capabilities.find(c => c.layer === 'tasks')?.id ?? null, refs: [] },
-      harvester: { instance: harvester, alias: null },
-    };
-    const body = `okf-harvest: retry budget is per request\n\nPromoted: project/expert (decision).\n\n\`\`\`okf-harvest\n${JSON.stringify(block, null, 2)}\n\`\`\`\n`;
-    assert.ok(!body.includes(record.home) && !body.includes(kb.repository), 'no source home or clone path in the PR body');
-    const parsed = parseProvenance(body);
+    write(join(b.clone, 'knowledge/expert/retry-budget.md'), '---\ntype: Decision\ntitle: Retry budget is per request\ndescription: The retry budget is counted per request, not per connection.\n---\n\nPer-connection budgets let one slow request starve the others.\n');
+    fs.appendFileSync(join(b.clone, 'knowledge/expert/index.md'), '\n* [Retry budget is per request](retry-budget.md) - The retry budget is counted per request, not per connection.\n');
+    write(join(plan.proposal, 'proposal.md'), '# OKF proposal: retry budget is per request\n\n## What\nA decision in project/expert.\n\n## Why\nA per-connection budget let one slow request starve the others.\n\n## Evidence\nObserved in the fixture load test.\n\n## Backing notes\n- notes/decision.md\n');
+    const check = ok(['okf', 'propose', '--check', '--slug', 'retry-budget'], { cwd: src, as }).result;
+    assert.match(check.digest, /^[0-9a-f]{64}$/);
+    assert.deepEqual(check.bases[0].changed.sort(), ['A knowledge/expert/retry-budget.md', 'M knowledge/expert/index.md']);
+    const parsed = parseProvenance(check.prBody);
     assert.equal(parsed.valid, true, parsed.problems.join('; '));
-    assert.deepEqual(parsed.value, block);
+    assert.equal(parsed.value.source.incarnation, srcRecord.createdAt);
+    assert.deepEqual(parsed.value.proposer, { form: 'live', instance: 'src', alias: null }, 'messaging: none, so no alias');
+    assert.deepEqual(parsed.value.evidence, [{ note: 'notes/decision.md', sha256: createHash('sha256').update(fs.readFileSync(join(src, 'notes/decision.md'))).digest('hex') }]);
+    assert.ok(!check.prBody.includes(src) && !check.prBody.includes(kbRemote), 'no home or clone path in the PR body');
+    // An out-of-surface edit is refused by the same dispatch.
+    write(join(b.clone, 'knowledge/peer/claim.md'), '---\ntype: Note\n---\nx\n');
+    refused(['okf', 'propose', '--check', '--slug', 'retry-budget'], 'E_OWNER', { cwd: src, as });
+    fs.rmSync(join(b.clone, 'knowledge/peer/claim.md'));
+    assert.equal(git(kbRemote, ['for-each-ref', '--format=%(refname)']), 'refs/heads/main', 'nothing was pushed');
+    assert.equal(fs.existsSync(join(dep, 'agents', HARVESTER_DIR)), false, 'no harvester was spawned');
+    Object.assign(state, { src, slug: 'retry-budget' });
   });
 
-  await t.test('d) the removed 4.x surfaces refuse E_REMOVED on the real kernel and create nothing', () => {
-    const { src, hHome } = state;
-    assert.ok(src && hHome, 'needs (b)');
-    const harvestersBefore = harvesterHomes();
+  await t.test('c) oats spawn oats.okf/knowledge-harvester is refused by the stub\'s spawn hook with the E_REMOVED fix, and keeps no home', () => {
+    const { src } = state;
+    write(join(src, 'proposals/old-style.md'), `# OKF proposal: x\n\nSource: instance src, home ${src}, soul source\n\n## What\nA claim.\n`);
+    const r = run(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/old-style.md', '--relation', 'unrelated', '--no-launch'], { cwd: src, as: { instance: 'src', home: src } });
+    assert.notEqual(r.status, 0, r.text);
+    assert.ok(r.text.replace(/\s+/g, ' ').includes(REMOVED_SPAWN), r.text);
+    const instances = join(dep, 'agents', HARVESTER_DIR, 'instances');
+    assert.deepEqual(fs.existsSync(instances) ? fs.readdirSync(instances).filter(n => !n.startsWith('.')) : [], [], 'no harvester home is kept');
+  });
+
+  await t.test('d) the removed surfaces refuse on the real kernel, naming oats okf propose, and create nothing', () => {
+    const { src } = state;
+    const before = listing(src);
     const e1 = refused(['okf', 'harvest'], 'E_REMOVED', { cwd: src, as: { instance: 'src', home: src } });
-    assert.match(e1.message, /oats okf harvest was removed in oats\.okf 5\.0/);
-    assert.deepEqual(harvesterHomes(), harvestersBefore, 'the old checkpoint spawns nothing');
-
-    const judgment = join(base, 'judgment.json'), before = listing(hHome);
-    const e2 = refused(['okf-harvest', 'complete', '--source', 'x', '--run', 'y', '--judgment', judgment], 'E_REMOVED', { cwd: hHome, as: { instance: state.harvester, home: hHome } });
-    assert.match(e2.message, /oats okf-harvest complete was removed in oats\.okf 5\.0/);
-    assert.equal(fs.existsSync(judgment), false);
-    assert.deepEqual(listing(hHome), before, 'a legacy 4.x TASK\'s complete writes nothing in the harvester home');
+    assert.match(e1.message, /oats okf harvest was removed in oats\.okf 5\.0: run `oats okf propose` from the instance home/);
+    // A working home does not compose the stub capability, so the kernel itself
+    // refuses its commands there (the stub answers E_REMOVED only where composed).
+    refused(['okf-harvest', 'complete', '--source', 'x', '--run', 'y'], 'E_UNKNOWN_COMMAND', { cwd: src, as: { instance: 'src', home: src } });
+    const e3 = refused(['okf-maintenance', 'notify-harvester', '--pr', 'https://github.com/fixture/knowledge/pull/1', '--state', 'merged'], 'E_REMOVED');
+    assert.match(e3.message, /there is no harvester; the proposer reads the PR/);
+    assert.deepEqual(listing(src), before);
   });
 
-  await t.test('e) real retirement/reuse: legacy and stale proposals refuse; the current explicit incarnation captures only its own evidence', () => {
-    const { src, hHome } = state;
-    assert.ok(src && hHome, 'needs (b)');
-    const hBefore = fs.readFileSync(join(hHome, 'instance.json'));
+  await t.test('e) a retired source: the operator form reads its retirement recovery copy and proposes from it', () => {
+    const { src } = state;
     const r = run(['retire', 'src']);
     assert.equal(r.status, 0, r.text);
-    assert.equal(r.out?.retired, 'src', r.text); assert.equal(r.out.removedDir, true, r.text);
-    assert.equal(r.out.relinked, undefined, 'no instance pointed at the source: nothing to relink');
     assert.equal(fs.existsSync(src), false);
-    const recovery=r.out.workRecovery.path;
-    const events=ok(['instance','events','src','--home',src,'--limit','2000']).result;
-    assert.equal(events.eventsApi,2);
-    assert.equal(events.events.filter(e=>e.kind==='retired').at(-1).data.workRecovery,recovery);
-    const manifest=json(join(recovery,'recovery.json'));
-    const sourceCopy=join(recovery,...(manifest.afterHooks?.home?['after-hooks','home']:['home']));
-    const recoveredProposal=join(sourceCopy,'proposals/2026-10-07-retry-budget.md');
-    const retiredHarvester=ok(['spawn','oats.okf/knowledge-harvester','--name','src-recovery-harvester','--task-file',recoveredProposal,'--relation','unrelated','--no-launch']).result;
-    const snapshot=join(retiredHarvester.home,'harvest-source');
-    const captured=json(join(snapshot,'source.json'));
-    assert.equal(captured.from,'recovery');assert.equal(captured.source.home,src);assert.equal(captured.recovery,recovery);
-    assert.deepEqual(fs.readFileSync(join(snapshot,'notes/decision.md')),fs.readFileSync(join(sourceCopy,'notes/decision.md')));
-    // Only this test's disposable source/recovery is ever removed.
-    fs.rmSync(recovery,{recursive:true});
-    for(const home of [hHome,retiredHarvester.home]) {
-      assert.ok(fs.existsSync(join(home,'harvest-source/notes/decision.md')));
-      assert.ok(fs.existsSync(join(home,'harvest-source/okf.json')));
-    }
-    const absent=run(['spawn','oats.okf/knowledge-harvester','--task-file',join(snapshot,'proposal.md'),'--relation','unrelated','--no-launch']);
-    assert.notEqual(absent.status,0,absent.text);
-    // Reuse the retired address with a real new incarnation. The old proposal
-    // must not capture the replacement's notes merely because its home exists.
-    const replacement=ok(['spawn','source','--name','src','--no-launch']).result;
-    assert.equal(replacement.home,src);
-    const currentIncarnation=json(join(src,'instance.json')).createdAt;
-    assert.notEqual(currentIncarnation,captured.source.incarnation);
-    const currentEvidence='Replacement incarnation: unrelated evidence.\n';
-    write(join(src,'notes/decision.md'),currentEvidence);
-    const beforeReuse=harvesterHomes();
-    const reused=run(['spawn','oats.okf/knowledge-harvester','--task-file',join(snapshot,'proposal.md'),'--relation','unrelated','--no-launch']);
-    assert.notEqual(reused.status,0,reused.text);assert.match(reused.text,/re-propose.*incarnation.*fresh name/);
-    assert.deepEqual(harvesterHomes(),beforeReuse,'no harvester exists for an ambiguous live incarnation');
-    const oldTask=fs.readFileSync(join(snapshot,'proposal.md'),'utf8');
-    write(join(src,'proposals/stale.md'),oldTask.replace(/^(Source:.*)$/m,`$1, incarnation ${captured.source.incarnation}`));
-    const stale=run(['spawn','oats.okf/knowledge-harvester','--name','stale-harvester','--task-file',join(src,'proposals/stale.md'),'--relation','unrelated','--no-launch']);
-    assert.notEqual(stale.status,0,stale.text);assert.match(stale.text,/proposal incarnation does not match/);
-    assert.deepEqual(harvesterHomes(),beforeReuse,'a stale explicit proposal neither falls back nor captures the live replacement');
-
-    // Write a NEW proposal using the new source's composed template. The
-    // actual kernel record supplies createdAt; never edit a source record.
-    const skill=fs.readFileSync(join(src,'.agents/skills/okf-propose/SKILL.md'),'utf8');
-    const sourceLine=/^Source:.*$/m.exec(skill)[0]
-      .replace('<your instance name>','src').replace('<your instance home>',src)
-      .replace("<your soul's name>",'source').replace('<your instance.json createdAt>',currentIncarnation);
-    assert.ok(sourceLine.endsWith(`, incarnation ${currentIncarnation}`));
-    const currentTask=`# OKF proposal: Replacement's own lesson\n\n${sourceLine}\n\n## What\nA separate current claim.\n\n## Why\nCurrent evidence, not the retired source's claim.\n\n## Evidence\nDisposable fixture.\n\n## Backing notes\n- notes/decision.md\n`;
-    write(join(src,'proposals/current.md'),currentTask);
-    const as={instance:'src',home:src};
-    const current=ok(['spawn','oats.okf/knowledge-harvester','--name','current-harvester','--task-file','proposals/current.md','--relation','unrelated','--no-launch'],{cwd:src,as}).result;
-    const currentSnapshot=join(current.home,'harvest-source'),summary=json(join(currentSnapshot,'source.json'));
-    assert.equal(summary.from,'live');assert.equal(summary.source.incarnation,currentIncarnation);
-    assert.equal(summary.source.instance,'src');assert.equal(summary.source.home,src);
-    assert.deepEqual(summary.evidence,[{note:'notes/decision.md',status:'copied',sha256:createHash('sha256').update(currentEvidence).digest('hex')}]);
-    assert.equal(fs.readFileSync(join(currentSnapshot,'notes/decision.md'),'utf8'),currentEvidence);
-    assert.equal(fs.readFileSync(join(currentSnapshot,'proposal.md'),'utf8'),currentTask);
-    assert.notEqual(summary.evidence[0].sha256,captured.evidence[0].sha256);
-    assert.deepEqual(fs.readFileSync(join(hHome, 'instance.json')), hBefore, 'retiring the source does not touch the harvester record');
+    const recovery = r.out.workRecovery.path;
+    assert.ok(fs.existsSync(join(recovery, 'recovery.json')), recovery);
+    // The live-home form now has nothing to read.
+    refused(['okf', 'propose', '--plan', '--slug', 'gone', '--soul', 'source', '--home', src], 'E_SOURCE');
+    const plan = ok(['okf', 'propose', '--plan', '--slug', 'recovered', '--soul', 'source', '--home', recovery]).result;
+    assert.equal(plan.form, 'recovery');
+    const manifest = json(join(recovery, 'recovery.json'));
+    const copy = join(recovery, ...(manifest.afterHooks?.home ? ['after-hooks', 'home'] : ['home']));
+    assert.ok(real(plan.proposal).startsWith(real(join(copy, 'proposals')) + sep), plan.proposal);
+    const clone = plan.bases[0].clone;
+    write(join(clone, 'knowledge/expert/recovered.md'), '---\ntype: Lesson\ntitle: Recovered lesson\ndescription: A lesson proposed from a retired seat.\n---\n\nProposed from the recovery copy.\n');
+    fs.appendFileSync(join(clone, 'knowledge/expert/index.md'), '\n* [Recovered lesson](recovered.md) - A lesson proposed from a retired seat.\n');
+    write(join(plan.proposal, 'proposal.md'), '# OKF proposal: recovered lesson\n\n## What\nA lesson in project/expert.\n\n## Why\nIt outlives the retired seat.\n\n## Evidence\nThe retired seat\'s decision note.\n\n## Backing notes\n- notes/decision.md\n');
+    const check = ok(['okf', 'propose', '--check', '--slug', 'recovered', '--soul', 'source', '--home', recovery]).result;
+    const block = parseProvenance(check.prBody).value;
+    assert.deepEqual(block.proposer, { form: 'recovery', instance: null, alias: null });
+    assert.equal(block.source.instance, 'src');
+    assert.ok(block.evidence[0].sha256, 'the recovered note is read and hashed');
     assert.equal(fs.existsSync(asked), false, 'no harness was ever asked to start a model');
   });
 
-  await t.test('f) an opted-out soul gets the shared conditional inject, status off, no TASK direction, and a refused harvester spawn', () => {
-    const quiet = ok(['spawn', 'quiet', '--name', 'quiet-1', '--no-launch']).result.home;
-    const record = json(join(quiet, 'instance.json'));
-    assert.equal(record.capabilityMeta?.['oats.okf'], undefined, 'the soul opt-out is accepted (the spawn succeeded); the hook reports no meta');
-    const task = fs.readFileSync(join(quiet, 'TASK.md'), 'utf8');
-    assert.doesNotMatch(task, /harvest|propos|okf-propose/i, 'even opt-out direction is absent from TASK.md');
-    const agents = fs.readFileSync(join(quiet, 'AGENTS.md'), 'utf8');
-    assert.match(agents, /IMPORTANT/);
-    assert.match(agents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
-    assert.match(agents, /knowledge: \{ harvest: off \}.*has no harvest duty/);
-    assert.deepEqual(ok(['okf', 'status'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } }).result, { harvest: 'off', reason: 'soul-opt-out' });
-    assert.ok(fs.statSync(join(quiet, 'STATE.md')).isFile());
-    ok(['okf', 'bases'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } });
-    // Even if it proposed, the harvester's required spawn hook reads the RECORDED soul and refuses.
-    write(join(quiet, 'proposals/p.md'), `# OKF proposal: x\n\nSource: instance quiet-1, home ${quiet}, soul quiet\n\n## What\nA claim.\n`);
-    const before = harvesterHomes();
-    const r = run(['spawn', 'oats.okf/knowledge-harvester', '--task-file', 'proposals/p.md', '--relation', 'unrelated', '--no-launch'], { cwd: quiet, as: { instance: 'quiet-1', home: quiet } });
-    assert.notEqual(r.status, 0, r.text);
-    assert.match(r.text, /E_OPTED_OUT/, r.text);
-    assert.deepEqual(harvesterHomes(), before, 'no harvester exists for an opted-out source');
+  await t.test('f) opted-out souls (harvest: off, publish: off) consult, read status off and are refused by propose; knowledge.propose refuses the spawn', () => {
+    for (const [name, home] of [['quiet', 'quiet-1'], ['hushed', 'hushed-1']]) {
+      const h = ok(['spawn', name, '--name', home, '--no-launch']).result.home;
+      const as = { instance: home, home: h };
+      const agents = fs.readFileSync(join(h, 'AGENTS.md'), 'utf8');
+      assert.match(agents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
+      assert.match(agents.replace(/\n> /g, ' '), /knowledge: \{ harvest: off \}` \(or `publish: off`\) has no duty to propose/);
+      assert.doesNotMatch(fs.readFileSync(join(h, 'TASK.md'), 'utf8'), /harvest|propos|okf-propose/i);
+      assert.deepEqual(ok(['okf', 'status'], { cwd: h, as }).result, { harvest: 'off', reason: 'soul-opt-out', publish: 'off' });
+      ok(['okf', 'bases'], { cwd: h, as });
+      refused(['okf', 'propose', '--plan', '--slug', 'x'], 'E_OPTED_OUT', { cwd: h, as });
+      assert.equal(fs.existsSync(join(h, 'proposals')), false, 'nothing cloned');
+    }
+    const pushy = run(['spawn', 'pushy', '--name', 'pushy-1', '--no-launch']);
+    assert.notEqual(pushy.status, 0, pushy.text);
+    assert.match(pushy.text, /E_CONFIG: knowledge\.propose is not a setting; instances propose directly in oats\.okf 6; use harvest: off to opt out/);
+    assert.equal(fs.existsSync(join(dep, 'agents/pushy/instances/pushy-1/instance.json')), false, 'the refused spawn keeps no home');
     assert.equal(fs.existsSync(asked), false);
   });
 
-  await t.test('g) a knowledge maintainer defaults to background from its soul, just like the harvester', () => {
+  await t.test('g) the knowledge maintainer soul still previews and defaults to background from its soul', () => {
+    const preview = ok(['spawn', 'oats.okf/knowledge-maintainer', '--preview']);
+    assert.ok(JSON.stringify(preview).includes('oats.okf-maintenance'), JSON.stringify(preview).slice(0, 400));
     const m = ok(['spawn', 'oats.okf/knowledge-maintainer', '--name', 'reviewer', '--no-launch']).result;
     assert.equal(m.launched, false);
     assert.equal(m.background, true, 'the maintainer soul places new maintainers in the background');
     assert.equal(m.backgroundFrom, 'soul');
     assert.ok(fs.existsSync(join(m.home, '.oats-background.json')), 'the maintainer home records background');
+    const skills = json(join(m.home, 'instance.json')).skills.map(s => s.name);
+    for (const s of ['knowledge-review', 'knowledge-theory', 'okf-authoring', 'okf-trigger-setup']) assert.ok(skills.includes(s), `maintainer composes ${s}: ${skills}`);
     assert.equal(fs.existsSync(asked), false, 'no harness was asked to start a model');
+  });
+
+  await t.test('h) the kernel\'s own trigger matcher: proposal-review fires on an okf-proposal PR, harvest-review on an okf-harvest PR, each alone', async () => {
+    // The kernel ANDs on.labels (docs/schedules.md: all must be present), so each template carries one label.
+    const { instantiateTemplate, eventsFor } = await import(pathToFileURL(join(dirname(dirname(cli)), 'lib', 'triggers.mjs')).href);
+    const pr = labels => ({ number: 7, url: 'https://github.com/acme/kb/pull/7', headSha: 'a'.repeat(40), base: 'main', draft: false, labels, createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z' });
+    const fires = (template, labels) => eventsFor(instantiateTemplate(json(join(root, 'oats-package/triggers', `${template}.json`)), { repo: 'github.com/acme/kb' }), undefined, pr(labels)).map(e => e.event);
+    assert.deepEqual(fires('proposal-review', ['okf-proposal']), ['opened']);
+    assert.deepEqual(fires('harvest-review', ['okf-harvest']), ['opened']);
+    assert.deepEqual(fires('proposal-review', ['okf-harvest']), []);
+    assert.deepEqual(fires('harvest-review', ['okf-proposal']), []);
+    assert.deepEqual(fires('proposal-review', []), [], 'an unlabelled PR is not a proposal');
+    // A PR carrying both labels fires both (the docs warn never to add both while both are installed).
+    assert.deepEqual([fires('proposal-review', ['okf-harvest', 'okf-proposal']), fires('harvest-review', ['okf-harvest', 'okf-proposal'])], [['opened'], ['opened']]);
+  });
+
+  await t.test('i) migrating a local harvest-review trigger: show it, add proposal-review with its own values, keep or remove the old one', () => {
+    const show = id => { const out = ok(['trigger', 'show', id]); const row = out.result?.trigger; assert.ok(row?.on, JSON.stringify(out).slice(0, 600)); return row; };
+    // A 5.x installation with non-default values (the release note's hand steps must keep them).
+    ok(['trigger', 'add', '--from', 'oats.okf:harvest-review', '--set', 'repo=github.com/acme/kb', '--set', 'base=accepted', '--set', 'harness=pi', '--set', 'model=custom-model']);
+    const old = show('okf-harvest-review');
+    const values = { repo: old.on.repo, base: old.on.base, harness: old.spawn.harness, model: old.spawn.model };
+    assert.deepEqual(values, { repo: 'github.com/acme/kb', base: 'accepted', harness: 'pi', model: 'custom-model' }, JSON.stringify(old));
+    ok(['trigger', 'add', '--from', 'oats.okf:proposal-review', ...Object.entries(values).flatMap(([k, v]) => ['--set', `${k}=${v}`])]);
+    const added = show('okf-proposal-review');
+    assert.deepEqual([added.on.labels, added.on.repo, added.on.base, added.spawn.harness, added.spawn.model, added.spawn.soul], [['okf-proposal'], 'github.com/acme/kb', 'accepted', 'pi', 'custom-model', 'oats.okf/knowledge-maintainer']);
+    assert.deepEqual(show('okf-harvest-review').on.labels, ['okf-harvest'], 'the old trigger keeps serving 5.x okf-harvest PRs');
+    ok(['trigger', 'remove', 'okf-harvest-review']);
+    ok(['trigger', 'remove', 'okf-proposal-review']);
+  });
+
+  await t.test('j) migrating a workspace harvest-review file: the release note\'s copy command and trust line give a second trigger that runs on the review host', async () => {
+    const lib = name => import(pathToFileURL(join(dirname(dirname(cli)), 'lib', name)).href);
+    const { automationFileText, discoverAutomations, hostOf, placementOf } = await lib('automations.mjs');
+    const { triggerKind } = await lib('triggers.mjs');
+    // The README's commands, verbatim (the CHANGELOG carries the same).
+    const readme = fs.readFileSync(join(root, 'README.md'), 'utf8').replace(/\n\s+/g, ' ');
+    const copy = "sed -e 's/oats.okf:harvest-review/oats.okf:proposal-review/' -e 's/^id: okf-harvest-review$/id: okf-proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml";
+    assert.ok(readme.includes(copy), 'the README names this exact copy command');
+    assert.ok(readme.includes('`- <member>/okf-proposal-review`'), 'and the trust line');
+    // The file `oats trigger add --workspace` writes (explicit id, non-default values), then the copy command run by a shell.
+    const member = join(base, 'automation-member'); fs.mkdirSync(join(member, 'oats-triggers'), { recursive: true });
+    const old = automationFileText(triggerKind(), { id: 'okf-harvest-review', runsOn: 'review-host', owner: 'github.com/kb-bot', body: { from: 'oats.okf:harvest-review', set: { repo: 'github.com/acme/kb', base: 'accepted', harness: 'pi', model: 'custom-model' } } });
+    assert.match(old, /^id: okf-harvest-review$/m, 'the kernel writes an explicit id');
+    write(join(member, 'oats-triggers/okf-harvest-review.yaml'), old);
+    const sh = spawnSync('sh', ['-c', copy], { cwd: member, encoding: 'utf8' });
+    assert.equal(sh.status, 0, sh.stderr);
+    // The kernel's own discovery, parsing and template expansion, against this package's templates.
+    const files = Object.fromEntries(['okf-harvest-review', 'okf-proposal-review'].map(n => [`oats-triggers/${n}.yaml`, fs.readFileSync(join(member, `oats-triggers/${n}.yaml`))]));
+    const pkgTemplates = Object.fromEntries(['harvest-review', 'proposal-review'].map(n => [`oats-package/triggers/${n}.json`, fs.readFileSync(join(root, 'oats-package/triggers', `${n}.json`))]));
+    pkgTemplates['oats-package/oats-package.json'] = fs.readFileSync(join(root, 'oats-package/oats-package.json'));
+    const all = { ...files, ...pkgTemplates };
+    const remote = { listRemoteTree: async () => Object.keys(all).map(path => ({ path, type: 'blob' })), readRemoteFile: async (_r, _c, path) => ({ bytes: Buffer.from(all[path]) }) };
+    const lock = { packages: { 'oats.okf': { version: '6.0.0', commit: 'a'.repeat(40), path: 'oats-package', source: 'git:file:///pkg.git', repository: 'file:///pkg.git' } } };
+    const found = await discoverAutomations({ members: [{ confirmed: true, commit: 'b'.repeat(40), key: 'github.com/acme/workspace' }] }, { remote, memberName: () => 'workspace', kinds: [triggerKind({ lock, remote })] });
+    assert.deepEqual(found.problems, [], JSON.stringify(found.problems));
+    const byId = Object.fromEntries(found.byKind.trigger.map(a => [a.id, a]));
+    assert.deepEqual(Object.keys(byId).sort(), ['workspace/okf-harvest-review', 'workspace/okf-proposal-review']);
+    const fresh = byId['workspace/okf-proposal-review'];
+    assert.equal(fresh.invalid, undefined, JSON.stringify(fresh.invalid));
+    assert.deepEqual([fresh.definition.on.labels, fresh.definition.on.repo, fresh.definition.on.base, fresh.definition.spawn.harness, fresh.definition.spawn.model, fresh.runsOn, fresh.owner],
+      [['okf-proposal'], 'github.com/acme/kb', 'accepted', 'pi', 'custom-model', 'review-host', 'github.com/kb-bot']);
+    // Trust: a named list without the new id leaves it untrusted; the documented line makes it run.
+    const io = { gh: () => ({ status: 0, stdout: 'kb-bot\n', stderr: '' }) };
+    const place = trust => placementOf(fresh, { host: hostOf({ host: { name: 'review-host' }, automations: { trust } }), io });
+    assert.equal(place(['workspace/okf-harvest-review']).reason, 'untrusted');
+    assert.equal(place(['workspace/okf-harvest-review', 'workspace/okf-proposal-review']).runsHere, true);
+    assert.equal(place('*').runsHere, true);
   });
 });
