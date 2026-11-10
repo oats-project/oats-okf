@@ -4,7 +4,7 @@ Status: build spec. Direction: Pepe, 10 November 2026 (via the coordination lead
 planned nodes by subject now, with the harvester removal. Design: `2026-11-09-knowledge-base-by-subject.md`
 (branch `agents/kb-by-subject-okf-expert`, §2, §3, §4, §6, §7). This PR is the package half; the base half is the
 bridge PR on `oats-knowledge` (spec `2026-11-10-bridge-pr-oats-knowledge.md`). Both sides have said yes to the
-design; D4's gate wording and D13 are still Juan's, so §3 below is built as the design says and flagged.
+design, D4 and D13 included (Juan's yes, 10 Nov), so §3 below is built as the design says.
 
 Depends on PR A (`2026-11-10-no-harvesters-propose-by-pr.md`): the write surface plugs into `propose`. Build on a
 branch from A's head and merge A's updates before hand-over.
