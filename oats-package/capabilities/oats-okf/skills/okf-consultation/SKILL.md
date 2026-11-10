@@ -96,7 +96,10 @@ The start-of-task read is not enough. Consult again:
 
 All take `--json`. The subject verbs read one committed generated index
 each and answer `E_USAGE: base <alias> has no subject layout` on a plain
-base; with several bound bases pass `--base`. `read` (the okf 2.x spelling of `cat`) is removed in 4.0.0
+base; with several bound bases pass `--base`. A `W_INDEX_STALE` warning
+means the base's generated indexes lag its claims: the answer is the
+committed index as it is; say so when it matters (the maintainer
+regenerates). `read` (the okf 2.x spelling of `cat`) is removed in 4.0.0
 (`E_REMOVED`): use `cat`.
 
 ## Navigating

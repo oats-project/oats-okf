@@ -330,10 +330,16 @@ error exit with `OKF_STRICT_EXIT=1`). A plain version-1 base gets exactly
 5.8's findings.
 
 A spawn and `oats okf bases` validate the accepted base with `--strict` and
-refuse any warning, as before. So a stale generated index, or a claim
-without `id`, on the accepted branch makes the base invalid for 6.0 readers
-until it is fixed: the knowledge maintainer stamps ids and regenerates
-before every merge.
+refuse any warning, as before, except two on a base with the subject layout:
+a stale (missing, orphaned) generated index and an old-node claim without
+`id`. Readers read the committed indexes as they are and warn: the spawn
+brief ends with `W_INDEX_STALE: N generated files stale at <alias@commit>;
+the maintainer regenerates (okf-reindex.mjs)`, and each subject verb writes
+that line to stderr (and `warnings` in `--json`). `propose --check`, the
+maintainer's `--strict` gate and `okf-reindex.mjs --check` still refuse
+them: the knowledge maintainer stamps ids and regenerates before every
+merge. The 6.0 view format is final: any later change to the regenerator's
+output costs every bridged base a regeneration PR.
 
 ### okf.json version 2
 

@@ -516,7 +516,7 @@ function validateTree(clone, owned, treeId, allow, inspect) {
     fs.mkdirSync(out);
     rawTree(clone, treeId, out);
     if (inspect) inspect(owned.base.root === '.' ? out : join(out, owned.base.root));
-    try { validateBase(owned.base.root === '.' ? out : join(out, owned.base.root), owned.base, allow ? { allow } : {}); }
+    try { validateBase(owned.base.root === '.' ? out : join(out, owned.base.root), owned.base, { strict: true, ...(allow ? { allow } : {}) }); }
     catch (e) { fail('E_VALIDATION', `base ${owned.alias}: the proposed tree is not a valid OKF base (okf-validate --strict): ${e.message.replaceAll(out, '<clone>')}`); }
   });
 }

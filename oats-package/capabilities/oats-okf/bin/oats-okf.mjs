@@ -2,7 +2,7 @@
 import { resolve, fail, unlock, redactUrls } from '../lib/io.mjs';
 import { loadBindings } from '../lib/config.mjs';
 import { service, ensureInstanceKnowledge, consultSource, checkSeat } from '../lib/sources.mjs';
-import { CONSULT, subjectBriefLines } from '../lib/consult.mjs';
+import { CONSULT, subjectBriefLines, takeWarnings } from '../lib/consult.mjs';
 import { initBase, migrate, deliverMigration, cutoverMigration, forgetMigration } from '../lib/migration.mjs';
 import { inspect } from '../lib/inspection.mjs';
 import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
@@ -110,7 +110,12 @@ else {
     // oats.okf 6: `publish` is the same spawn-recorded value under its new name.
     if(event==='status') {const p=harvestPolicy(home);result={...p,publish:p.harvest};}
     else if(event==='read') fail('E_REMOVED','okf 4.0.0 removed read: use `oats okf cat --base ALIAS PATH` (same path, text and receipt)');
-    else if(consult) {const answer=CONSULT[event](consultSource(home),flags,positionals);result=answer.result;text=answer.text;}
+    else if(consult) {
+      const answer=CONSULT[event](consultSource(home),flags,positionals);result=answer.result;text=answer.text;
+      // okf 6.0: a stale generated index is read as committed, with a warning.
+      const warnings=takeWarnings();
+      if(warnings.length) {for(const w of warnings) process.stderr.write(`${w}\n`);result={...result,warnings};}
+    }
     else if(event==='propose') {const answer=propose(home,flags);result=answer.result;text=answer.text;}
     else if(event==='refresh') fail('E_REMOVED','okf 3.0.0 has no per-instance views; index/cat always read the accepted state: run `oats okf index`, then `oats okf cat --base ALIAS PATH`');
     else if(event==='soul-scaffold') {
@@ -119,13 +124,14 @@ else {
     } else if(event==='spawn') {
       if(service(home)) result={brief:'Service agent: follow your own task; no working-memory upkeep.'};
       else {
-        const {decl,bindings,accepted,warnings}=checkSeat(home);ensureInstanceKnowledge(home);writeHarvestPolicy(home);
+        const seat=checkSeat(home),{decl,bindings,accepted,warnings}=seat;ensureInstanceKnowledge(home);writeHarvestPolicy(home);
         const nodes=(list)=>list.join(', ') || 'none';
         // okf 6.0: a version-2 soul gets one line per declared subject (at most eight).
         const start=decl.version===2
           ?`\`oats okf index\` for your subjects:\n${subjectBriefLines(bindings,decl,accepted).map(l=>`- ${l}`).join('\n')}\nthen \`oats okf subject KIND/SLUG\`, \`oats okf claims --about KIND/SLUG\``
           :`\`oats okf index\` (owns: ${nodes(decl.owns)}; reads: ${nodes(decl.reads.filter(r=>!decl.owns.includes(r)))})`;
-        result={brief:`Your soul knowledge is read remotely at its accepted state; there is no local copy. Start every task with your instance knowledge (STATE.md, log.md, notes/), then ${start} and \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load okf-consultation and okf-instance-knowledge. Never edit accepted knowledge.`,
+        const {stale=[]}=seat;
+        result={brief:`Your soul knowledge is read remotely at its accepted state; there is no local copy. Start every task with your instance knowledge (STATE.md, log.md, notes/), then ${start} and \`oats okf cat --base ALIAS PATH\` for the concepts the task needs; \`oats okf search\` before re-deriving a decision. Load okf-consultation and okf-instance-knowledge. Never edit accepted knowledge.${stale.length?`\n${stale.join('\n')}`:''}`,
           ...(warnings.length?{warning:`oats-okf: ${warnings.join('; ')}`}:{})};
       }
     } else if(event==='inspect') result=inspect(consultSource(home));

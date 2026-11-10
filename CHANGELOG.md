@@ -217,7 +217,10 @@ base is.
 - **Validator v2** (`okf-validate.mjs`, every shipped copy identical): flow
   lists, and on a bridged base the `about`, subject, verdict and `id` checks
   and, with `--strict`, generated-index freshness. A plain base gets exactly
-  5.8's findings.
+  5.8's findings. Readers (spawn, `bases`, the subject verbs) tolerate a stale
+  generated index and an old-node claim without `id` on a bridged base and
+  warn `W_INDEX_STALE`; `propose --check` and the maintainer's `--strict`
+  gate still refuse them. The 6.0 view format is final.
 - **The regenerator** `okf-reindex.mjs` (new, no dependencies, shipped beside
   the validator; refuses a base holding a symlink, a non-regular or a
   multiply-linked file, and writes through temporary files renamed in place): writes each subject's index, `subjects/index.md`,

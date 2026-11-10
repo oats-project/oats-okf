@@ -7,7 +7,7 @@ import { hostname, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash, exec } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes, resolveSubjects } from './config.mjs';
-import { git, gitEnv, validateBase, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
+import { git, gitEnv, validateBase, staleWarning, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
 import { isBridgedMeta, METADATA_LIMIT, metadataTooLarge, parseFrontmatter, parseView, plainText, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
 import { verdictLanes } from './verdicts.mjs';
 
@@ -325,14 +325,15 @@ const VALIDATION_CODES = new Set(['E_VALIDATION', 'E_BASE', 'E_PATH', 'E_ID', 'E
 function validationFile(ctx) { return join(ctx.cache, 'okf-validation', `${ctx.commit}-${hash({ root: ctx.base.root }).slice(0, 16)}.json`); }
 export function verdict(ctx, { fetchMissing = true, saveResult = true } = {}) {
   const judge = run => {
-    // okf 6.0: version 2 adds `subjects` (null on a plain base); a cached
-    // version-1 verdict is judged again rather than read without it.
-    try { const v = run(); return { version: 2, ok: true, digest: v.digest, nodes: v.meta.nodes, subjects: v.subjects }; }
-    catch (e) { if (!VALIDATION_CODES.has(e.code)) throw e; return { version: 2, ok: false, error: { code: e.code, message: e.message } }; }
+    // okf 6.0: version 3 adds `subjects` (null on a plain base) and `stale`
+    // (generated files a reader tolerates); an older cached verdict is judged
+    // again rather than read without them (a 6.0 pre-release refused staleness).
+    try { const v = run(); return { version: 3, ok: true, digest: v.digest, nodes: v.meta.nodes, subjects: v.subjects, stale: v.stale ?? 0 }; }
+    catch (e) { if (!VALIDATION_CODES.has(e.code)) throw e; return { version: 3, ok: false, error: { code: e.code, message: e.message } }; }
   };
   if (ctx.kind === 'directory') return judge(() => validateBase(ctx.base.path, ctx.base));
   const file = validationFile(ctx);
-  if (fs.existsSync(file)) { const cached = readJSON(file); if (cached?.version === 2 && cached.commit === ctx.commit && cached.root === ctx.base.root) return cached; }
+  if (fs.existsSync(file)) { const cached = readJSON(file); if (cached?.version === 3 && cached.commit === ctx.commit && cached.root === ctx.base.root) return cached; }
   const scratch = fs.mkdtempSync(join(saveResult ? dirname(ctx.cache) : fs.realpathSync(tmpdir()), saveResult ? '.validate-' : 'okf-validate-'));
   const root = join(scratch, 'tree');
   // Also used by offline inspection: never lazy-fetch while checking objects.
@@ -639,12 +640,30 @@ export function withLayout(source, flags, fn) {
   const aliases = Object.keys(source.bindings.bases), opts = { fresh: !!flags.fresh };
   if (flags.base || aliases.length === 1) {
     const alias = flags.base ?? aliases[0];
-    return withBase(source.bindings, alias, opts, ctx => hasSubjectLayout(ctx) ? fn(ctx) : fail('E_USAGE', `base ${alias} has no subject layout`));
+    return withBase(source.bindings, alias, opts, ctx => hasSubjectLayout(ctx) ? (noteStale(ctx), fn(ctx)) : fail('E_USAGE', `base ${alias} has no subject layout`));
   }
   const found = aliases.filter(alias => withBase(source.bindings, alias, opts, hasSubjectLayout));
   if (found.length > 1) fail('E_USAGE', `several bases have the subject layout (${found.join(', ')}); pass --base ALIAS`);
   if (!found.length) fail('E_USAGE', `bases ${aliases.join(', ')} have no subject layout`);
-  return withBase(source.bindings, found[0], opts, fn);
+  return withBase(source.bindings, found[0], opts, ctx => (noteStale(ctx), fn(ctx)));
+}
+// okf 6.0: the subject verbs read the committed generated indexes as they are.
+// A base whose indexes are stale is not refused: each verb warns once per base
+// (stderr, and `warnings` in --json) when the base's validation says so (the
+// validation a spawn or `oats okf bases` cached for this commit; a directory
+// base is judged now). Never a fetch or a whole-base read for the warning.
+const warned = [];
+export const takeWarnings = () => warned.splice(0);
+function noteStale(ctx) {
+  let n = 0;
+  if (ctx.kind === 'directory') { try { n = validateBase(ctx.base.path, ctx.base).stale; } catch { return; } }
+  else {
+    const file = validationFile(ctx);
+    if (!fs.existsSync(file)) return;
+    const c = readJSON(file);
+    if (c?.version === 3 && c.ok && c.commit === ctx.commit && c.root === ctx.base.root) n = c.stale ?? 0;
+  }
+  if (n > 0) { const w = staleWarning(n, short(ctx.receipt)); if (!warned.includes(w)) warned.push(w); }
 }
 /** Where each subject ref lives: the one bound base with the subject layout
  *  holding its file (--base narrows the search to one). → Map ref → alias.
@@ -672,6 +691,7 @@ function subjectEntry(ctx, ref) {
   return { file, e };
 }
 function readView(ctx, ref) {
+  noteStale(ctx);
   subjectEntry(ctx, ref);
   const path = viewFile(ref), e = entry(ctx, path);
   if (!e || e.type !== 'file') fail('E_NOT_FOUND', `${ctx.alias}${shown(path)}: subject ${ref} has no generated index at ${short(ctx.receipt)}; the base's maintainer runs okf-reindex.mjs`);

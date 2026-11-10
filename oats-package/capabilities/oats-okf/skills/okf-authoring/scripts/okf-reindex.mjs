@@ -260,6 +260,11 @@ export function trimNewlines(text, { start = true, end = true } = {}) {
   return text.slice(a, b);
 }
 const lastLine = (lines) => trimNewlines(lines.join("\n"), { start: false }) + "\n";
+// THE 6.0 VIEW FORMAT IS FINAL. Every byte this renders is committed on every
+// bridged base, and readers compare nothing but the maintainer's --strict gate
+// does: any change to the output (headings, ordering, escaping, the type map)
+// makes every bridged base stale and costs each one a regeneration PR. Change
+// it only with a release note and that cost accepted.
 export function generate(concepts, rootIndex = "") {
   const subjects = new Map();
   for (const [p, meta] of concepts) {

@@ -306,6 +306,34 @@ function run(f,args,{extra={},cwd=f.home}={}) {
 }
 const hook=(f,event)=>run(f,[event],{extra:{OATS_EVENT:event}});
 
+test('readers tolerate stale generated indexes (an older view format, a missing old-node id): spawn warns W_INDEX_STALE in the brief, the verbs answer and warn; --strict and propose --check still refuse',t=>{
+  const f=deployment(t);
+  // views rendered by an older format: a legacy type heading, as before the type map
+  for(const ref of ['system/okf','workstream/knowledge']) edit(join(f.repo,`subjects/${ref}/index.md`),'## Insight','## Lesson');
+  edit(join(f.repo,'peer/lesson.md'),'id: ins-000000000002\n','');
+  f.git('add','-A');f.git('commit','-q','-m','older views');
+  const strict=validate(f.repo,{env:{OKF_STRICT_EXIT:'1'}});
+  assert.equal(strict.status,1);
+  assert.deepEqual(strict.out.warnings.filter(w=>/generated index is stale/.test(w)).sort(),['subjects/system/okf/index.md: generated index is stale; run okf-reindex.mjs','subjects/workstream/knowledge/index.md: generated index is stale; run okf-reindex.mjs']);
+  assert.ok(strict.out.warnings.includes("peer/lesson.md: missing 'id' (stamped by the maintainer at acceptance)"));
+  assert.equal(spawnSync(process.execPath,[REINDEX,f.repo,'--check'],{encoding:'utf8'}).status,1,'okf-reindex --check still reports them');
+  const at=f.git('rev-parse','HEAD').slice(0,12);
+  const spawned=hook(f,'spawn');
+  assert.equal(spawned.status,0,spawned.text);
+  assert.match(spawned.out.brief,new RegExp(`\\nW_INDEX_STALE: 2 generated files stale at project@${at}[0-9a-f]*; the maintainer regenerates \\(okf-reindex\\.mjs\\)$`),spawned.out.brief);
+  assert.match(spawned.out.brief,/- system\/okf — The knowledge provider package\. \(1 decision, 1 lesson\)/,'the committed index, as it is');
+  for(const args of [['subjects'],['subject','system/okf'],['claims','--about','system/okf'],['index'],['index','system/okf']]) {
+    const r=run(f,[...args,'--json']);
+    assert.equal(r.status,0,r.text);assert.equal(r.out.result.warnings.length,1,args.join(' '));
+    assert.match(r.out.result.warnings[0],/^W_INDEX_STALE: 2 generated files stale at project@/);assert.match(r.stderr,/^W_INDEX_STALE: /m);
+  }
+  const claim=join(f.dir,'claim.md');write(claim,'---\ntype: Decision\ntitle: New\ndescription: x\nabout: [system/okf]\n---\n');
+  assert.equal(run(f,['verdicts','--check',claim,'--json']).out.result.warnings.length,1);
+  const bases=run(f,['bases','--json']);assert.equal(bases.status,0);assert.equal(bases.out.result.bases?.[0]?.validated?.ok ?? bases.out.result[0]?.validated?.ok,true,bases.text);
+  assert.throws(()=>validateBase(f.repo,{id:'base-1',kind:'git',root:'.'},{strict:true}),e=>e.code==='E_VALIDATION' && /generated index is stale/.test(e.message));
+  assert.equal(validateBase(f.repo,{id:'base-1',kind:'git',root:'.'}).stale,2);
+});
+
 test('spawn: a version-2 soul\'s brief lists one line per subject with counts from its generated index',t=>{
   const f=deployment(t),r=hook(f,'spawn');
   assert.equal(r.status,0,r.text);
