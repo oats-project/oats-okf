@@ -102,8 +102,12 @@ test('the harvester stub: no skills or instructions, a required spawn hook that 
   for(const doc of ['README.md','CHANGELOG.md']) {
     const text=prose(doc);
     assert.ok(text.includes(REMOVED_SPAWN),`${doc} quotes the refusal`);
-    for(const step of ['grep -n "knowledge-harvester" oats-local.yaml','oats trigger remove okf-harvest-review','oats trigger add --from oats.okf:proposal-review --set repo=github.com/<owner>/<kb-repo>',
-      "sed -i 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml",'oats okf propose --plan --slug <slug>','oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>']) assert.ok(text.includes(step),`${doc}: ${step}`);
+    // The trigger steps' kernel behaviour (a local trigger keeps its values; each template fires on its one
+    // label) is pinned against the released kernel in okf5-real-kernel h) and i); these are the texts.
+    for(const step of ['oats soul launch remove oats.okf/knowledge-harvester --plan',"oats soul launch remove '<exact key>'",'E_LAUNCH_PREFERENCE_UNKNOWN',
+      'oats trigger show okf-harvest-review --json','oats trigger add --from oats.okf:proposal-review --set repo=<on.repo> --set base=<on.base> --set harness=<spawn.harness> --set model=<spawn.model>','oats trigger remove okf-harvest-review',
+      "sed 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml",'git rm oats-triggers/okf-harvest-review.yaml',
+      'oats okf propose --plan --slug <slug>','oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>']) assert.ok(text.includes(step),`${doc}: ${step}`);
   }
 });
 
@@ -147,13 +151,16 @@ test('the shipped capabilities say "harvester" only in a migration section or in
   for(const rel of found.filter(r=>r.endsWith('.md'))) assert.doesNotMatch(fs.readFileSync(join(PKG,rel.startsWith('souls/')?'':'capabilities',rel),'utf8'),/harvester (?:promotes|decides|judges)|wait (?:on|for) (?:the|a|its) harvester/i,rel);
 });
 
-test('proposal-review fires on okf-proposal and okf-harvest; harvest-review is its byte-identical alias',()=>{
-  const t=readJson(join(PKG,'triggers','proposal-review.json'));
-  assert.equal(t.definition.id,'okf-proposal-review');
-  assert.deepEqual(t.definition.on.labels,['okf-proposal','okf-harvest']);
-  assert.equal(t.definition.spawn.soul,'oats.okf/knowledge-maintainer');
-  assert.match(t.definition.spawn.task,/Load the knowledge-review skill first/);
-  assert.deepEqual(fs.readFileSync(join(PKG,'triggers','harvest-review.json')),fs.readFileSync(join(PKG,'triggers','proposal-review.json')));
+// The kernel ANDs on.labels, so each template names exactly one label (the matcher itself is
+// exercised against the released kernel in okf5-real-kernel h).
+test('proposal-review watches okf-proposal and harvest-review okf-harvest, one label each, otherwise the same',()=>{
+  const p=readJson(join(PKG,'triggers','proposal-review.json')),h=readJson(join(PKG,'triggers','harvest-review.json'));
+  assert.equal(p.definition.id,'okf-proposal-review');assert.deepEqual(p.definition.on.labels,['okf-proposal']);
+  assert.equal(h.definition.id,'okf-harvest-review');assert.deepEqual(h.definition.on.labels,['okf-harvest']);
+  assert.equal(p.definition.spawn.soul,'oats.okf/knowledge-maintainer');
+  assert.match(p.definition.spawn.task,/Load the knowledge-review skill first/);
+  const same=t=>({...t,definition:{...t.definition,id:null,on:{...t.definition.on,labels:null}}});
+  assert.deepEqual(same(h),same(p),'the same parameters, events, spawn and concurrency');
 });
 
 test('the two knowledge-theory copies are byte-identical',()=>{
@@ -301,6 +308,6 @@ test('the README says what is an instruction and what is enforced, with the opt-
     'oats okf propose --plan --slug <slug>','oats okf propose --check --slug <slug>','oats okf propose --apply --slug <slug> --digest <digest>',
     'The operator form.','gates every merge','Protect the accepted branch.','protection: enforced | none | unknown',
     'Harvesters already running keep their 5.x modules and finish, or a person retires them; a retained one is retired and its claims re-proposed by the source with `oats okf propose`, or by the operator form on its retirement recovery.',
-    '`oats.okf:harvest-review` is its old name','screen-terms-file']) assert.ok(readme.includes(s),s);
+    '`oats.okf:harvest-review` is its old name and now watches only the 5.x label','screen-terms-file']) assert.ok(readme.includes(s),s);
   for(const code of ['E_USAGE','E_SOURCE','E_OPTED_OUT','E_PROPOSAL_EXISTS','E_SCOPE','E_OWNER','E_DIGEST','E_CONTENT_REFUSED','E_CONTENT_INPUT','E_PROPOSAL_FORMAT','E_NOTE','E_BASE_MOVED','E_PUSH_UNCERTAIN','E_GH','E_PR_UNCERTAIN']) assert.ok(readme.includes(`\`${code}\``),code);
 });

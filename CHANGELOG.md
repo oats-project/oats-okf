@@ -68,9 +68,10 @@ the release lane's.
   neither protects; `unknown` when either cannot be read (a caller without
   admin read gets 404 `Not Found` or 403). Read-only, best-effort, bounded by
   `git-timeout`, never a refusal.
-- **Trigger template `proposal-review`** (id `okf-proposal-review`, labels
-  `okf-proposal` and `okf-harvest`). `harvest-review` stays as a
-  byte-identical alias through 6.x.
+- **Trigger template `proposal-review`** (id `okf-proposal-review`, label
+  `okf-proposal`). `harvest-review` (id `okf-harvest-review`) stays through
+  6.x for 5.x `okf-harvest` PRs only: the kernel ANDs a trigger's labels, so
+  one template cannot watch both.
 - The soul opt-out gains the spelling `knowledge: { publish: off }`;
   `oats okf status` adds `publish` with the same value as `harvest`.
 
@@ -118,7 +119,8 @@ the release lane's.
   seat) is decided in the operator form as 5.8's harvest spawn hook decided
   it: the #125 admission below survives the harvester's removal. A live home
   without the policy stays `E_SOURCE` (respawn it).
-- Declare `proposal-review` (or keep `harvest-review`, its alias), never both.
+- Add `proposal-review`; keep `harvest-review` beside it only while 5.x
+  `okf-harvest` PRs may still open (step 4 below).
 - Protect every Git base's accepted branch; give proposing hosts
   branch-create access or use the fork flow; optionally set
   `screen-terms-file`.
@@ -143,23 +145,40 @@ The hand steps, from the deployment directory:
    retired source, the operator runs
    `oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>`
    (then `--check` and `--apply` with the same `--home` and `--soul`).
-2. **Delete the harvester's launch preference** from `oats-local.yaml`, if
-   any: `grep -n "knowledge-harvester" oats-local.yaml` shows it (under
-   `souls:` → `launch:`, the line `oats.okf/knowledge-harvester: …` or
-   `knowledge-harvester: …`); delete that line by hand, and the `launch:` or
-   `souls:` key with it if it is left empty.
+2. **Delete the harvester's launch preference**, if any, with the kernel's
+   own writer (it keeps every other entry and its comments):
+   `oats soul launch remove oats.okf/knowledge-harvester --plan`, then
+   without `--plan`. A key stored in another spelling is removed by its
+   exact text (`grep -n "knowledge-harvester" oats-local.yaml` shows it):
+   `oats soul launch remove '<exact key>'`. No such entry answers
+   `E_LAUNCH_PREFERENCE_UNKNOWN`: nothing to delete.
 3. **Delete every `--provider oats.okf harvest=…` spawn flag** from the
    scripts and briefs that spawn instances:
    `grep -rn -- "--provider oats.okf harvest" <your scripts>`. A leftover host
    `harvest` key is removed with
    `oats okf setup --remove-legacy-settings --soul <soul>` (`--plan` first).
-4. **Rename the trigger template.** A workspace automation file (in a
-   member repository) keeps its id and changes only its template:
-   `sed -i 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml`,
-   then commit and merge it. A local trigger:
-   `oats trigger remove okf-harvest-review`, then
-   `oats trigger add --from oats.okf:proposal-review --set repo=github.com/<owner>/<kb-repo>`.
-   Until you do, `harvest-review` is an identical alias and keeps working.
+4. **Add the `proposal-review` trigger beside `harvest-review`, then
+   retire the old one.** The kernel requires *every* label of a trigger
+   (`on.labels` is AND), so each template watches one label:
+   `proposal-review` the 6.0 `okf-proposal` PRs, `harvest-review` the 5.x
+   `okf-harvest` PRs only (as in 5.8). Without `proposal-review` no new
+   proposal is reviewed automatically. Keep `harvest-review` while a 5.x
+   harvester may still open an `okf-harvest` PR, then remove it; that
+   completes the rename the removal error asks for.
+   - **A workspace automation file** (in a member repository) is
+     re-instantiated from the package template at the pinned commit, so the
+     old file keeps working for `okf-harvest` PRs. Copy it under the new
+     template, keeping its `set:`, `runsOn` and `owner`:
+     `sed 's/oats.okf:harvest-review/oats.okf:proposal-review/' oats-triggers/okf-harvest-review.yaml > oats-triggers/okf-proposal-review.yaml`,
+     then commit and merge it; later `git rm oats-triggers/okf-harvest-review.yaml`.
+   - **A local trigger** (`oats trigger add`) stores the definition it was
+     given and is never re-instantiated: read its values first,
+     `oats trigger show okf-harvest-review --json` (`result.trigger.on.repo`,
+     `on.base`, `spawn.harness`, `spawn.model`), then add the new one with
+     the same values,
+     `oats trigger add --from oats.okf:proposal-review --set repo=<on.repo> --set base=<on.base> --set harness=<spawn.harness> --set model=<spawn.model>`
+     (the template's defaults, `main`, `claude` and `opus`, would replace
+     yours); later `oats trigger remove okf-harvest-review`.
 5. **Retire harvesters still listed** once they have handed over:
    `oats status`, then `oats retire <harvester instance>`; re-propose a
    retained one's claims by step 1 (the source, or the operator form on the

@@ -1,9 +1,9 @@
 ---
 name: okf-trigger-setup
 description: >-
-  Set up and verify the OKF proposal-review trigger (harvest-review is its
-  old name), which spawns a knowledge maintainer for each knowledge PR
-  (labels okf-proposal and okf-harvest): declare it as a workspace automation
+  Set up and verify the OKF proposal-review trigger, which spawns a
+  knowledge maintainer for each knowledge PR (label okf-proposal; the
+  harvest-review template watches 5.x okf-harvest PRs): declare it as a workspace automation
   (`oats-triggers/okf-proposal-review.yaml` in a member repo, `from:
   oats.okf:proposal-review`, with `runsOn` naming the one host and `owner`
   the GitHub account that can merge on the knowledge-base repo), or locally
@@ -18,15 +18,21 @@ description: >-
 # Setting up the proposal-review trigger
 
 The trigger makes a knowledge PR get reviewed: when a PR labelled
-`okf-proposal` (an instance's own proposal, oats.okf 6) or `okf-harvest` (a
-5.x harvest PR) opens on the knowledge-base (KB) repository, the host tick
+`okf-proposal` (an instance's own proposal, oats.okf 6) opens on the
+knowledge-base (KB) repository, the host tick
 spawns a new `oats.okf/knowledge-maintainer` to review it and gate its merge.
 It runs on one machine, acting as one GitHub account, and that account must
 be able to **merge** on the KB repository.
 
-`harvest-review` is the template's old name: through oats.okf 6.x it is an
-identical alias (`from: oats.okf:harvest-review` keeps working and fires on
-both labels). Never declare both: that reviews every PR twice.
+The kernel requires **every** label a trigger names (`on.labels` is AND), so
+one trigger cannot watch two labels. `harvest-review` (the old name, through
+6.x) watches only `okf-harvest`, the 5.x harvest PRs. Keep it
+beside `proposal-review` only while a 5.x harvest PR may still open, then
+remove it; the two never fire on the same PR. An existing `harvest-review`
+alone never reviews a 6.0 proposal: add `proposal-review` (the README's
+"Upgrading to 6.0", step 4). A **local** trigger keeps the definition it was
+added with: read it with `oats trigger show <id> --json` and repeat its
+`repo`, `base`, `harness` and `model` as `--set` values on the new one.
 
 ## 1. Choose the host and the account
 

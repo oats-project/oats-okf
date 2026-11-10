@@ -54,8 +54,9 @@ used; their presence answers `E_REMOVED`.
   events and no kernel identity lookup.
 - **Package soul** `oats.okf/knowledge-maintainer`, and until 7.0 the stub
   `oats.okf/knowledge-harvester` (every spawn refused).
-- **Trigger template** `oats.okf:proposal-review` (`oats.okf:harvest-review`
-  is its identical alias), installed by the operator as a workspace automation
+- **Trigger templates** `oats.okf:proposal-review` (label `okf-proposal`) and,
+  through 6.x, `oats.okf:harvest-review` (label `okf-harvest`; the kernel ANDs
+  `on.labels`, so one template per label), installed by the operator as a workspace automation
   or with `oats trigger add`.
 
 The proposing instance and the maintainer use `git` and `gh` with the host's

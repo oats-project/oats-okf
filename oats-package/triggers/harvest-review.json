@@ -6,13 +6,13 @@
     "model": { "path": "spawn.model", "default": "opus", "description": "the maintainer's model" }
   },
   "definition": {
-    "id": "okf-proposal-review",
+    "id": "okf-harvest-review",
     "enabled": true,
     "kind": "trigger",
     "on": {
       "source": "github.pull_request",
       "events": ["opened", "reopened", "ready_for_review"],
-      "labels": ["okf-proposal", "okf-harvest"],
+      "labels": ["okf-harvest"],
       "poll": "2m"
     },
     "spawn": {
