@@ -1,0 +1,329 @@
+#!/usr/bin/env node
+// The bridge conversion for a version-1 OKF base (spec: docs/design/2026-11-10-bridge-pr-oats-knowledge.md §1).
+//
+//   node scripts/bridge/bridge.mjs <checkout> [--check] [--date YYYY-MM-DD] [--pr REF] [--report FILE]
+//
+// <checkout> is a clone of the knowledge repository; the base is its `knowledge/` directory.
+// In place, no moves: it adds the three reserved nodes to okf-base.json, writes the subject files and the
+// generated views, inserts `about:`, `kind:` (and `status:` for Roadmap) and `id:` after each concept's
+// `description:` line, appends a "Subjects" section to the root index.md and one line to the root log.md.
+// It changes no other line and no concept body (asserted per file). It is deterministic (no clock, no
+// locale) and idempotent: a second run writes nothing. `--check` writes nothing and exits 1 if a run
+// would change any file. No dependencies.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
+
+const argv = process.argv.slice(2);
+const flag = name => argv.includes(name);
+const option = (name, fallback) => {
+  const at = argv.indexOf(name);
+  if (at < 0) return fallback;
+  assert(argv[at + 1] && !argv[at + 1].startsWith('--'), `${name} needs a value`);
+  return argv[at + 1];
+};
+const positional = argv.filter((a, i) => !a.startsWith('--') && !['--date', '--pr', '--report'].includes(argv[i - 1]));
+if (positional.length !== 1) {
+  console.error('usage: bridge.mjs <checkout> [--check] [--date YYYY-MM-DD] [--pr REF] [--report FILE]');
+  process.exit(2);
+}
+const CHECK = flag('--check');
+const DATE = option('--date', '2026-11-10');
+assert(/^\d{4}-\d{2}-\d{2}$/.test(DATE), '--date must be YYYY-MM-DD');
+const PR = option('--pr', 'the bridge PR (branch `okf-bridge/2026-11-10`)');
+const REPORT = option('--report', null);
+const BASE = path.join(path.resolve(positional[0]), 'knowledge');
+assert(fs.existsSync(path.join(BASE, 'okf-base.json')), `no knowledge/okf-base.json under ${positional[0]}`);
+
+const SENTINEL = '00000000-0000-0000-0000-000000000000';
+const RESERVED = ['claims', 'subjects', 'verdicts'];
+
+// ---------------------------------------------------------------------------------------------------------
+// The subjects (spec §1.2). Descriptions are OATS's own words; `depends-on` is omitted everywhere because
+// the layer allows it only where the body cites code, and these bodies do not.
+const GH = 'https://github.com/';
+const SUBJECTS = [
+  ['system', 'oats-kernel', 'OATS kernel and CLI', `${GH}oats-project/oats`, ['oats-direction'], ['oats-kernel-expert'],
+    'The OATS kernel and the `oats` CLI: souls, instances, capabilities and the hook contracts between them, spawn, launch and retirement.'],
+  ['system', 'oats-desktop', 'OATS Desktop', `${GH}oats-project/oats/tree/main/packages/desktop`, ['oats-direction'], ['oats-desktop-expert'],
+    'The OATS Desktop app: it renders the kernel\'s model and drives it through the kernel\'s JSON verbs.'],
+  ['system', 'oats-okf', 'oats.okf knowledge package', `${GH}oats-project/oats-okf`, ['knowledge', 'provider-integration'], ['oats-okf-expert'],
+    'The knowledge provider: OKF bases and bindings, consultation of accepted knowledge, and how knowledge is proposed and reviewed.'],
+  ['system', 'oats-aweb', 'oats.aweb messaging package', `${GH}awebai/oats-aweb`, ['messaging', 'provider-integration'], ['oats-aweb-expert'],
+    'The messaging provider on aweb: per-instance identities, teams, and mail and chat delivered into sessions.'],
+  ['system', 'oats-jira', 'oats.jira tasks package', `${GH}awebai/oats-jira`, ['coordination', 'provider-integration'], ['oats-jira-expert'],
+    'The Jira tasks-layer integration: the `jira-tasks` skill and an advisory spawn hook.'],
+  ['system', 'oats-linear', 'oats.linear tasks package', `${GH}awebai/oats-linear`, ['coordination', 'provider-integration'], ['oats-linear-expert'],
+    'The Linear tasks-layer integration: the `linear-tasks` skill, an advisory spawn hook and `oats linear` issue commands.'],
+  ['system', 'oats-authoring', 'oats.authoring package', `${GH}oats-project/oats-authoring`, ['oats-direction'], ['oats-authoring-expert'],
+    'Authoring guidance: skills for routing capability work, writing Agent Skills and writing souls.'],
+  ['system', 'oats-apps', 'oats.apps package', `${GH}awebai/oats-apps`, ['provider-integration'], ['oats-apps-expert'],
+    'App guidance capabilities `oats.folio` and `oats.library`: aweb apps used from an OATS instance.'],
+  ['system', 'oats-cloning', 'oats.cloning package', `${GH}oats-project/oats-cloning`, ['coordination'], [],
+    'Clones a running instance for a new goal: a fresh instance of the source\'s soul that starts with what the source knew, as far as the goal needs.'],
+  ['system', 'oats-engineering', 'oats.engineering coordination package', `${GH}oats-project/oats-engineering`, ['coordination'], [],
+    'The engineering coordination package: engineering-expert and developer capabilities, adversarial code review and the code-reviewer soul. Its successor is a template organisations copy, not a package.'],
+  ['system', 'aweb', 'aweb', `${GH}awebai/aweb`, ['messaging'], [],
+    'The aweb messaging service OATS integrates: identities, teams, mail and chat. Integrated, not built in the OATS repositories.'],
+  ['workstream', 'oats-direction', 'OATS direction', null, [], ['oats-maintainer'],
+    'Stewardship and project-wide decisions: what OATS is, how it ships and is reviewed, and plans that cross areas.'],
+  ['workstream', 'coordination', 'Coordination', null, [], ['oats-expert'],
+    'How agents and people work together: leads and experts, briefs and plans, review loops and hand-backs.'],
+  ['workstream', 'provider-integration', 'Provider integration', null, [], ['integrations-expert'],
+    'How a capability is built against the kernel\'s contracts and proven: hook contracts, live rehearsals, what a fake external CLI must model, compensation reporting.'],
+  ['workstream', 'operations', 'Operations', null, [], ['oats-operator-expert'],
+    'Running OATS deployments: onboarding and rebuilds, migration and cutover, multi-machine layout and first-time adoption.'],
+  ['workstream', 'positioning', 'Positioning', null, [], ['market-research-expert'],
+    'Dated, attributable research and fair, scoped comparisons of OATS with other approaches.'],
+  ['workstream', 'workspace-administration', 'Workspace administration', null, [], ['oats-setup-admin'],
+    'Administering a workspace\'s OATS configuration: which changes went wrong and why, how refusals were read, what verification caught. Never one deployment\'s state.'],
+  ['workstream', 'knowledge', 'Knowledge', null, [], [],
+    'How OATS keeps knowledge across packages: what counts as knowledge, and how it is consulted, proposed, reviewed and accepted.'],
+  ['workstream', 'messaging', 'Messaging', null, [], [],
+    'How instances and people message each other across providers: identities, teams, delivery and wakes.'],
+  ['project', 'coordination-rethink', 'Coordination rethink', null, ['coordination'], [],
+    'A bounded plan to rethink how OATS coordinates work across instances and people; its parts include the knowledge base by subject.'],
+  ['project', 'okf-5', 'oats.okf 5', null, ['knowledge'], [],
+    'The oats.okf 5 release line: remote consultation of accepted bases and its proposal and review flow, up to the subject layer of 6.0.'],
+  ['project', 'roster-2026-11', 'Roster, November 2026', null, ['oats-direction', 'coordination'], [],
+    'The November 2026 roster change: souls split by way of working, and the area souls folded into one engineering expert once the subject layout lands.'],
+].map(([kind, slug, title, repo, inWorkstreams, legacyNodes, description]) =>
+  ({ kind, slug, ref: `${kind}/${slug}`, title, repo, inWorkstreams, legacyNodes, description }));
+const SUBJECT_TYPE = { system: 'System', workstream: 'Workstream', project: 'Project' };
+const KIND_HEADING = { system: 'Systems', workstream: 'Workstreams', project: 'Projects' };
+
+// Primary subject per node (design §2.7), from the subjects' legacy-nodes.
+const PRIMARY = Object.fromEntries(SUBJECTS.flatMap(s => s.legacyNodes.map(n => [n, s.ref])));
+// Secondary by tag: exact tag (all tags in the base are lower case) → subject.
+const TAG_SUBJECTS = {
+  kernel: 'system/oats-kernel', desktop: 'system/oats-desktop', messaging: 'workstream/messaging',
+  knowledge: 'workstream/knowledge', operator: 'workstream/operations', integrations: 'workstream/provider-integration',
+};
+const LINK_THRESHOLD = 3;
+// Old type → [claim type, kind, extra status, id prefix]. `type:` itself is not changed.
+const TYPES = {
+  Decision: ['Decision', null, null, 'dec'], Roadmap: ['Decision', 'direction', 'proposed', 'dec'],
+  Lesson: ['Insight', 'lesson', null, 'ins'], Conclusion: ['Insight', 'finding', null, 'ins'],
+  Limitation: ['Insight', 'constraint', null, 'ins'], Reference: ['Reference', null, null, 'ref'],
+  Playbook: ['Playbook', null, null, 'pb'],
+};
+const CLAIM_TYPE_ORDER = ['Decision', 'Insight', 'Requirement', 'Risk', 'Question', 'Reference', 'Playbook'];
+const BRIDGE_KEYS = ['about', 'kind', 'status', 'id'];
+
+// ---------------------------------------------------------------------------------------------------------
+const posix = path.posix;
+const read = rel => fs.readFileSync(path.join(BASE, rel), 'utf8');
+const exists = rel => fs.existsSync(path.join(BASE, rel));
+const isReserved = rel => ['index.md', 'log.md'].includes(posix.basename(rel));
+const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const byTitle = (a, b) => cmp(a.title.toLowerCase(), b.title.toLowerCase()) || cmp(a.title, b.title) || cmp(a.path, b.path);
+const list = items => `[${items.join(', ')}]`;
+
+function walk(dir) {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(BASE, dir), { withFileTypes: true })) {
+    if (e.name.startsWith('.')) continue;
+    const rel = dir ? `${dir}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...walk(rel));
+    else if (e.name.endsWith('.md')) out.push(rel);
+  }
+  return out.sort(cmp);
+}
+
+// Split a concept into its frontmatter lines and its body (everything after the closing fence, byte for byte).
+function split(text, rel) {
+  const m = text.match(/^---\n([\s\S]*?)\n---\n/);
+  assert(m, `${rel}: no frontmatter`);
+  assert(!m[1].includes('\r'), `${rel}: CR in frontmatter`);
+  return { lines: m[1].split('\n'), body: text.slice(m[0].length) };
+}
+const keyOf = line => (line.match(/^([A-Za-z_][A-Za-z0-9_-]*):/) || [])[1];
+const scalar = (lines, key) => {
+  const line = lines.find(l => keyOf(l) === key);
+  return line === undefined ? undefined : line.slice(key.length + 1).trim();
+};
+const flowList = (value, rel) => {
+  assert(/^\[[^\[\]]*\]$/.test(value ?? ''), `${rel}: tags is not a flow list`);
+  return value.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+};
+
+// Resolve a body link to a base-relative path, or null if external or a pure fragment.
+function linkTarget(from, target) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('//')) return null;
+  const clean = target.split('#')[0];
+  if (!clean) return null;
+  return clean.startsWith('/') ? posix.normalize(clean.slice(1)) : posix.normalize(posix.join(posix.dirname(from), clean));
+}
+const LINK_RE = /\[[^\]]*\]\(([^)\s]+)\)/g;
+
+// ---------------------------------------------------------------------------------------------------------
+const writes = new Map(); // rel → new text (only where it differs from disk)
+function plan(rel, text) {
+  const old = exists(rel) ? read(rel) : null;
+  if (old !== text) writes.set(rel, text);
+}
+
+// 1. okf-base.json: the three reserved nodes, path = name, sentinel owner, appended in fixed order.
+const baseText = read('okf-base.json');
+const baseJson = JSON.parse(baseText);
+assert.equal(JSON.stringify(baseJson, null, 2) + '\n', baseText, 'okf-base.json is not in canonical 2-space form');
+assert.equal(baseJson.version, 1, 'okf-base.json must be version 1');
+for (const name of RESERVED) {
+  const want = { path: name, owner: SENTINEL };
+  if (baseJson.nodes[name]) assert.deepEqual(baseJson.nodes[name], want, `okf-base.json: ${name} exists and differs`);
+  else baseJson.nodes[name] = want;
+}
+const owned = Object.keys(baseJson.nodes).filter(n => !RESERVED.includes(n));
+for (const n of owned) {
+  assert.equal(baseJson.nodes[n].path, `nodes/${n}`, `node ${n} is not at nodes/${n}`);
+  assert(PRIMARY[n], `node ${n} has no subject naming it in legacy-nodes`);
+}
+plan('okf-base.json', JSON.stringify(baseJson, null, 2) + '\n');
+
+// 2. Concepts under nodes/.
+const all = walk('nodes');
+const conceptPaths = all.filter(r => !isReserved(r));
+const conceptSet = new Set(conceptPaths);
+const concepts = [];
+for (const rel of conceptPaths) {
+  const text = read(rel);
+  const { lines, body } = split(text, rel);
+  const node = rel.split('/')[1];
+  const type = scalar(lines, 'type');
+  assert(TYPES[type], `${rel}: unmapped type ${type}`);
+  const [claimType, kind, status, prefix] = TYPES[type];
+  const title = scalar(lines, 'title'), description = scalar(lines, 'description');
+  assert(title && description, `${rel}: title and description are required`);
+  const tags = flowList(scalar(lines, 'tags'), rel);
+
+  const primary = PRIMARY[node];
+  const reasons = {};
+  const add = (ref, why) => { if (ref !== primary) (reasons[ref] ??= []).push(why); };
+  for (const tag of tags) if (TAG_SUBJECTS[tag]) add(TAG_SUBJECTS[tag], `tag ${tag}`);
+  const linksInto = {};
+  for (const m of body.matchAll(LINK_RE)) {
+    const t = linkTarget(rel, m[1]);
+    if (!t || !conceptSet.has(t)) continue;
+    const other = t.split('/')[1];
+    if (other !== node) linksInto[other] = (linksInto[other] || 0) + 1;
+  }
+  for (const [other, n] of Object.entries(linksInto)) if (n >= LINK_THRESHOLD) add(PRIMARY[other], `${n} links into ${other}`);
+  const about = [primary, ...Object.keys(reasons).sort(cmp)];
+  const id = `${prefix}-${crypto.createHash('sha256').update(rel).digest('hex').slice(0, 12)}`;
+
+  const inserted = [`about: ${list(about)}`];
+  if (kind) inserted.push(`kind: ${kind}`);
+  if (status) inserted.push(`status: ${status}`);
+  inserted.push(`id: ${id}`);
+
+  const d = lines.findIndex(l => keyOf(l) === 'description');
+  assert.equal(lines.filter(l => keyOf(l) === 'description').length, 1, `${rel}: one description line`);
+  const present = lines.filter(l => BRIDGE_KEYS.includes(keyOf(l)));
+  let next;
+  if (present.length === 0) next = [...lines.slice(0, d + 1), ...inserted, ...lines.slice(d + 1)];
+  else {
+    // Idempotence: the bridge keys must be exactly ours, in our place.
+    assert.deepEqual(lines.slice(d + 1, d + 1 + inserted.length), inserted, `${rel}: bridge keys present and different`);
+    assert.equal(present.length, inserted.length, `${rel}: stray bridge key`);
+    next = lines;
+  }
+  const out = `---\n${next.join('\n')}\n---\n${body}`;
+  // The guarantee: removing the inserted lines restores the frontmatter, and the body is byte-identical.
+  const again = split(out, rel);
+  assert.equal(again.body, body, `${rel}: body changed`);
+  assert.deepEqual(again.lines, next, `${rel}: frontmatter did not round-trip`);
+  if (!present.length) assert.deepEqual(next.filter((l, i) => !(i > d && i <= d + inserted.length)), lines, `${rel}: frontmatter changed beyond the insertion`);
+  plan(rel, out);
+  concepts.push({ path: rel, node, type, claimType, kind, id, title, description, about, reasons });
+}
+assert.equal(new Set(concepts.map(c => c.id)).size, concepts.length, 'id collision');
+
+// 3. Subject files and generated views.
+const subjectRefs = new Set(SUBJECTS.map(s => s.ref));
+for (const c of concepts) for (const ref of c.about) assert(subjectRefs.has(ref), `${c.path}: unknown subject ${ref}`);
+for (const s of SUBJECTS) for (const w of s.inWorkstreams) assert(subjectRefs.has(`workstream/${w}`), `${s.ref}: unknown workstream ${w}`);
+for (const s of SUBJECTS) for (const n of s.legacyNodes) assert(owned.includes(n), `${s.ref}: legacy node ${n} not in okf-base.json`);
+
+const viewPath = s => `subjects/${s.kind}/${s.slug}/index.md`;
+for (const s of SUBJECTS) {
+  const fm = [`type: ${SUBJECT_TYPE[s.kind]}`, `title: ${s.title}`, `description: ${s.description}`];
+  if (s.repo) fm.push(`repo: ${s.repo}`);
+  if (s.inWorkstreams.length) fm.push(`in-workstreams: ${list(s.inWorkstreams)}`);
+  fm.push('status: active');
+  if (s.legacyNodes.length) fm.push(`legacy-nodes: ${list(s.legacyNodes)}`);
+  let body = `\n# ${s.title}\n\n${s.description}\n`;
+  if (s.inWorkstreams.length) body += `\nPart of: ${s.inWorkstreams.map(w => `[${w}](/subjects/workstream/${w}.md)`).join(', ')}.\n`;
+  if (s.legacyNodes.length) body += `\nAbsorbs the node${s.legacyNodes.length > 1 ? 's' : ''} ${s.legacyNodes.map(n => `[${n}](/nodes/${n}/index.md)`).join(', ')}, whose concepts stay where they are and name this subject in \`about:\`.\n`;
+  body += `\nWhat the base knows about it: [generated view](/${viewPath(s)}).\n`;
+  plan(`subjects/${s.kind}/${s.slug}.md`, `---\n${fm.join('\n')}\n---\n${body}`);
+
+  const mine = concepts.filter(c => c.about.includes(s.ref));
+  let view = `# ${s.title}\n\nGenerated from the \`about:\` frontmatter of the base's concepts; do not edit by hand. Subject: [${s.ref}](/subjects/${s.ref}.md).\n`;
+  if (!mine.length) view += '\nNo concepts are about this subject yet.\n';
+  for (const t of CLAIM_TYPE_ORDER) {
+    const rows = mine.filter(c => c.claimType === t).sort(byTitle);
+    if (rows.length) view += `\n## ${t}\n\n${rows.map(c => `* [${c.title}](/${c.path}) - ${c.description}`).join('\n')}\n`;
+  }
+  plan(viewPath(s), view);
+}
+let subjectsIndex = '# Subjects\n\nWhat the knowledge in this base is about. Generated from the subject files; do not edit by hand. Each subject file links its generated view of the concepts about it.\n';
+for (const kind of ['system', 'workstream', 'project']) {
+  const rows = SUBJECTS.filter(s => s.kind === kind).sort((a, b) => cmp(a.slug, b.slug));
+  subjectsIndex += `\n## ${KIND_HEADING[kind]}\n\n${rows.map(s => `* [${s.title}](/subjects/${s.ref}.md) - ${s.description}`).join('\n')}\n`;
+}
+plan('subjects/index.md', subjectsIndex);
+plan('claims/index.md', '# Claims\n\nNew claims land here, one file per claim under `claims/<type-plural>/`, each with a stable `id:` and an `about:` naming at least one [subject](/subjects/index.md). The concepts accepted before the subject layout stay in their node directories and carry `about:` too; each subject\'s generated view lists both.\n\nNo claims have landed here yet.\n');
+plan('verdicts/index.md', '# Verdicts\n\nThe knowledge maintainer\'s record of claims it rejected, superseded or found to duplicate an accepted one: one `verdicts/<id>.md` per verdict (`type: Verdict`), which a proposer checks before proposing a claim again.\n\nNo verdicts are recorded yet.\n');
+const nodeLog = (name, what) => `# ${name} log\n\n## ${DATE}\n\n* **Creation**: Reserved node added by ${PR}: ${what}\n`;
+plan('claims/log.md', nodeLog('claims', 'where new claims land, about one or more subjects.'));
+plan('subjects/log.md', nodeLog('subjects', `${SUBJECTS.length} subject files (${SUBJECTS.filter(s => s.kind === 'system').length} systems, ${SUBJECTS.filter(s => s.kind === 'workstream').length} workstreams, ${SUBJECTS.filter(s => s.kind === 'project').length} projects) and their generated views.`));
+plan('verdicts/log.md', nodeLog('verdicts', 'the record of rejected, superseded and duplicate claims; empty so far.'));
+
+// 4. Root index: a "Subjects" section at the end (replaced on rerun).
+const SECTION = '\n## Subjects\n\n'
+  + '* [Subjects](subjects/index.md) - What the knowledge is about: systems, workstreams and projects, each with a generated view of the concepts about it.\n'
+  + '* [Claims](claims/index.md) - Where new claims land, each about one or more subjects.\n'
+  + '* [Verdicts](verdicts/index.md) - The maintainer\'s record of rejected, superseded and duplicate claims.\n';
+const rootIndex = read('index.md');
+const cut = rootIndex.indexOf('\n## Subjects\n');
+plan('index.md', (cut < 0 ? rootIndex : rootIndex.slice(0, cut)) + SECTION);
+
+// 5. Root log: one dated line naming this PR, newest first (replaced on rerun).
+const MARK = '* **Update**: Bridge to the subject layout';
+const nodesCount = Object.keys(baseJson.nodes).length;
+const logLine = `${MARK}, by ${PR}: the reserved nodes [claims](/claims/index.md), [subjects](/subjects/index.md) and [verdicts](/verdicts/index.md) under a placeholder owner, ${SUBJECTS.length} [subject files](/subjects/index.md) with generated views, and \`about:\`, \`kind:\` and \`id:\` frontmatter on all ${concepts.length} concepts. No file moved and no concept body changed. The base declares ${nodesCount} nodes.`;
+let rootLog = read('log.md').split('\n').filter(l => !l.startsWith(MARK)).join('\n');
+const dateHead = `## ${DATE}\n\n`;
+const first = rootLog.indexOf('\n## ');
+assert(first >= 0, 'root log.md has no dated section');
+if (rootLog.slice(first + 1).startsWith(dateHead)) {
+  const at = first + 1 + dateHead.length;
+  rootLog = rootLog.slice(0, at) + logLine + '\n' + rootLog.slice(at);
+} else rootLog = rootLog.slice(0, first + 1) + dateHead + logLine + '\n\n' + rootLog.slice(first + 1);
+plan('log.md', rootLog);
+
+// ---------------------------------------------------------------------------------------------------------
+const secondary = concepts.filter(c => c.about.length > 1);
+const report = {
+  date: DATE, concepts: concepts.length, subjects: SUBJECTS.length, nodes: nodesCount,
+  generatedIndexes: SUBJECTS.length + 1,
+  about: { one: concepts.filter(c => c.about.length === 1).length, two: concepts.filter(c => c.about.length === 2).length,
+    threePlus: concepts.filter(c => c.about.length >= 3).length, edges: concepts.reduce((n, c) => n + c.about.length, 0) },
+  types: Object.fromEntries(Object.keys(TYPES).map(t => [t, concepts.filter(c => c.type === t).length])),
+  perSubject: Object.fromEntries(SUBJECTS.map(s => [s.ref, concepts.filter(c => c.about.includes(s.ref)).length])),
+  secondary: secondary.map(c => ({ path: c.path, about: c.about, reasons: c.reasons })),
+  changes: [...writes.keys()].sort(cmp),
+};
+if (REPORT) fs.writeFileSync(REPORT, JSON.stringify(report, null, 2) + '\n');
+if (CHECK) {
+  if (writes.size) { console.error(`check: ${writes.size} file(s) would change:\n${[...writes.keys()].slice(0, 20).join('\n')}`); process.exit(1); }
+  console.log(`check: clean (${concepts.length} concepts, ${SUBJECTS.length} subjects)`);
+} else {
+  for (const [rel, text] of writes) {
+    fs.mkdirSync(path.dirname(path.join(BASE, rel)), { recursive: true });
+    fs.writeFileSync(path.join(BASE, rel), text);
+  }
+  const { secondary: _s, changes: _c, ...summary } = report;
+  console.log(JSON.stringify({ ...summary, written: writes.size }, null, 2));
+}
