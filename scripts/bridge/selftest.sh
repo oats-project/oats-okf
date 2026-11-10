@@ -68,4 +68,17 @@ expect_fail "bridge: a tag list the reader cannot parse" node "$S/bridge.mjs" "$
 fresh "$BASE"; sed -i 's/^\(description: .*\)$/\1\nid: dec-000000000000/' "$T/c/$D"
 expect_fail "bridge: a stray bridge key on main" node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX"
 [ "$(git -C "$T/c" status --porcelain)" = " M $D" ] && echo "ok: a refused run wrote nothing" || { echo "FAIL: refused run wrote files"; exit 1; }
+# regenerate.sh takes main's fetched tip even under a branch-limited fetch refspec with a stale origin/main.
+rm -rf "$T/origin.git" "$T/r" "$T/w"
+git clone -q --bare "$KB" "$T/origin.git"
+git -C "$T/origin.git" update-ref refs/heads/main "$BASE"
+git -C "$T/origin.git" update-ref refs/heads/okf-bridge/2026-11-10 "$BRIDGED"
+git clone -q --branch okf-bridge/2026-11-10 "$T/origin.git" "$T/r"
+git -C "$T/r" config --replace-all remote.origin.fetch '+refs/heads/okf-bridge/2026-11-10:refs/remotes/origin/okf-bridge/2026-11-10'
+git clone -q "$T/origin.git" "$T/w"; git -C "$T/w" checkout -q main
+echo probe > "$T/w/new-main-file.txt"; git -C "$T/w" add new-main-file.txt
+git -C "$T/w" -c user.name=t -c user.email=t@t commit -q -m "advance main"; git -C "$T/w" push -q origin main
+TIP=$(git -C "$T/w" rev-parse HEAD)
+(cd "$T/r" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t "$S/regenerate.sh" "$OKF" 342 "$BRIDGED" "$REINDEX" "selftest" > /dev/null 2>&1) || { echo "FAIL: regenerate.sh refused"; exit 1; }
+[ "$(git -C "$T/r" rev-parse HEAD~2)" = "$TIP" ] && [ -f "$T/r/new-main-file.txt" ] && echo "ok: regenerate.sh builds on main's fetched tip" || { echo "FAIL: regenerate.sh did not build on main's tip"; exit 1; }
 echo "SELFTEST PASSED"

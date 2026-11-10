@@ -16,15 +16,19 @@ test -f "$REINDEX" || { echo "no regenerator at $4" >&2; exit 2; }
 case "$PR" in *[!0-9]*|'') echo "PR must be a number" >&2; exit 2;; esac
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 test -z "$(git status --porcelain)" || { echo "working tree not clean" >&2; exit 1; }
-git fetch -q origin main
+# Fetch main's tip explicitly (a branch-limited fetch refspec would leave origin/main stale) and use that
+# exact commit for generation, verification and the recorded base.
+git fetch -q origin +refs/heads/main:refs/remotes/origin/main
+MAIN=$(git rev-parse --verify FETCH_HEAD^{commit})
+[ "$MAIN" = "$(git rev-parse --verify refs/remotes/origin/main)" ] || { echo "origin/main did not update to the fetched tip" >&2; exit 1; }
 # On any failure after this point, return to the branch (the tree was clean; only generated files are lost).
 trap 'rc=$?; set +e; if [ $rc -ne 0 ]; then git cherry-pick --abort >/dev/null 2>&1; git checkout -q -f "$BRANCH"; echo "regenerate failed; back on $BRANCH" >&2; fi; exit $rc' EXIT
-BASE=$(git rev-parse --short=7 origin/main)
-git switch -q --detach origin/main
+BASE=$(git rev-parse --short=7 "$MAIN")
+git switch -q --detach "$MAIN"
 REF="PR [#$PR](https://github.com/oats-project/oats-knowledge/pull/$PR)"
 node "$OKF/scripts/bridge/bridge.mjs" . --pr "$REF" --reindex "$REINDEX" > /dev/null
 node "$OKF/scripts/bridge/bridge.mjs" . --pr "$REF" --reindex "$REINDEX" --check
-node "$OKF/scripts/bridge/verify.mjs" . origin/main > /dev/null
+node "$OKF/scripts/bridge/verify.mjs" . "$MAIN" > /dev/null
 git add knowledge
 git commit -q -m "Bridge: subjects, about-edges, ids and generated subject views on the version-1 layout
 
