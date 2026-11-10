@@ -713,3 +713,27 @@ test('a soul\'s publish: off never excuses a host or spawn harvest key (only har
   assert.deepEqual(legacySettings(env({ harvest: 'off' }, { harvest: 'soul' })), [], 'the soul\'s own harvest: off is the opt-out');
   assert.deepEqual(legacySettings(env({ harvest: 'off' }, { harvest: 'host' })).map(x => x.key), ['harvest'], 'a host off masks nothing and refuses');
 });
+
+// Round-8 review finding (PR #131 at 4e77a32).
+test('an index change between apply\'s tree check and the helper\'s commit is refused before anything is pushed', async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'x' }).result; const clone = edit(f, plan);
+    const checked = propose(f.home, { check: true, slug: 'x' }).result;
+    const real = publication.execute; let interleaved = false;
+    publication.execute = (command, o) => {
+      if (command === 'commit' && !interleaved) {
+        interleaved = true;
+        fs.appendFileSync(join(clone, 'expert/retry-budget.md'), 'An unchecked line.\n');
+        f.git(clone, 'add', 'expert/retry-budget.md');
+      }
+      return real(command, o);
+    };
+    try {
+      assert.throws(() => propose(f.home, { apply: true, slug: 'x', digest: checked.digest }), e => e.code === 'E_DIGEST' && e.result?.failed?.code === 'E_DIGEST' && e.result.published.length === 0);
+      assert.equal(interleaved, true);
+      assert.deepEqual(remoteRefs(f), ['refs/heads/main'], 'nothing was pushed');
+      assert.deepEqual(f.prs(), []);
+    } finally { publication.execute = real; }
+  });
+});

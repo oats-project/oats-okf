@@ -598,6 +598,10 @@ export function apply(source, slug, expected) {
       if (git(r.clone, ['write-tree']) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the clone changed after the digest was checked; nothing was pushed`);
       const terms = p.terms ? { 'terms-file': p.terms } : {};
       const committed = runHelper('commit', { repo: r.clone, base: r.accepted, head: r.accepted, branch, 'commit-file': commitFile, ...terms });
+      // The helper commits the clone's index, which another process could have
+      // changed since the comparison above: the commit object is immutable, so
+      // its tree must be the digest-bound one before anything leaves the host.
+      if (!/^[0-9a-f]{40,64}$/.test(committed?.head ?? '') || git(r.clone, ['rev-parse', '--verify', `${committed.head}^{tree}`]) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the committed tree is not the one --check showed (the clone's index changed during --apply); nothing was pushed`);
       const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
         'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
