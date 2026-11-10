@@ -643,3 +643,30 @@ test('note paths: no hidden, parent, empty, backslash or control-character segme
   assert.equal(parseProvenance(fence([{ note: 'notes/decision.md (v2).md' }])).valid, true);
   for (const note of ['notes/.hidden.md', 'notes/a\\b.md', 'notes/a\u0001.md', 'notes/../x.md']) assert.equal(parseProvenance(fence([{ note }])).valid, false, note);
 });
+
+// Round-4 review findings (PR #131 at fdab304).
+test('strict validation reads the tree\'s stored bytes: a clean/smudge filter cannot pass an invalid concept', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); const clone = edit(f, plan);
+  write(join(clone, '.git', 'info', 'attributes'), 'expert/retry-budget.md filter=frontmatter\n');
+  // clean strips the YAML frontmatter from what is stored; smudge would put it back in a checkout.
+  f.git(clone, 'config', 'filter.frontmatter.clean', "awk 'BEGIN{n=0} n<2 && /^---$/ {n++; next} n>=2 || n==0 {print}'");
+  f.git(clone, 'config', 'filter.frontmatter.smudge', "awk 'BEGIN{print \"---\"; print \"type: Decision\"; print \"title: Retry budget is per request\"; print \"description: Retries are budgeted per request.\"; print \"---\"} {print}'");
+  refused(f.run(['--check', '--slug', 'x']), 'E_VALIDATION', /retry-budget\.md/);
+  assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
+});
+
+test('identifiers the bindings accept work end to end: a 96-character alias and an uppercase node, and the parser accepts the v3 block', t => {
+  const alias = 'B'.repeat(96), f = fixture(t);
+  // Rebind kb under a long alias, and rename the owned node to Expert (same path and owner).
+  const bindings = JSON.parse(fs.readFileSync(f.bindingsFile, 'utf8')); bindings.bases = { [alias]: bindings.bases.kb }; json(f.bindingsFile, bindings);
+  const writer = join(f.dir, 'writer'); f.git(f.dir, 'clone', '-q', f.origin, writer);
+  const meta = JSON.parse(fs.readFileSync(join(writer, 'okf-base.json'), 'utf8')); meta.nodes = { Expert: meta.nodes.expert, peer: meta.nodes.peer };
+  json(join(writer, 'okf-base.json'), meta); f.git(writer, 'commit', '-qam', 'node id Expert'); f.git(writer, 'push', '-q', 'origin', 'HEAD:main');
+  json(join(f.soul, 'okf.json'), { version: 1, owner: 'source', owns: [`${alias}/Expert`], reads: [`${alias}/peer`] });
+  const plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const checked = ok(f.run(['--check', '--slug', 'x']));
+  const block = parseProvenance(checked.prBody);
+  assert.equal(block.valid, true, block.problems.join('; '));
+  assert.deepEqual([block.value.source.ownedNodes, block.value.source.bases[0].alias], [[`${alias}/Expert`], alias]);
+  assert.ok(ok(f.run(['--apply', '--slug', 'x', '--digest', checked.digest])).prs[0].url);
+});

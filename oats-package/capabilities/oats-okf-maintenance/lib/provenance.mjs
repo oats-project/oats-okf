@@ -16,8 +16,12 @@ const FENCE = /^```(okf-harvest|okf-proposal)[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*
 const FENCE_OF = { 1: 'okf-harvest', 2: 'okf-harvest', 3: 'okf-proposal' };
 const obj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v, max = 256) => typeof v === 'string' && v.length > 0 && v.length <= max && !/[\u0000-\u001f\u007f]/.test(v);
-const NODE = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
-const SUBJECT = NODE; // <kind>/<slug>, the same grammar as base/node
+// <base alias>/<node id>, each the bindings' and okf-base.json's identifier
+// grammar (io.mjs identifier: a letter or digit, then letters, digits, . _ -;
+// at most 96), so every reference a soul may declare parses here.
+const ID = '[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}';
+const NODE = new RegExp(`^${ID}/${ID}$`);
+const SUBJECT = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/; // <kind>/<slug>, the subject layer's
 /** A base root as a repository-relative directory: no `..`, absolute, backslash or empty segment. */
 export const safeRoot = (r) => r === '.' || (typeof r === 'string' && !r.startsWith('/') && !r.includes('\\') && r.split('/').every((s) => s && s !== '.' && s !== '..'));
 
@@ -66,7 +70,7 @@ export function parseProvenance(body) {
     need(str(s.instance, 128), 'source.instance must be a name');
     if (v.version === 3) need(str(s.incarnation, 128), 'source.incarnation must be the source instance.json createdAt');
     for (const k of ['ownedNodes', 'readNodes']) need(Array.isArray(s[k]) && s[k].length <= 256 && s[k].every((n) => typeof n === 'string' && NODE.test(n)), `source.${k} must be a list of base/node`);
-    need(Array.isArray(s.bases) && s.bases.length <= 64 && s.bases.every((b) => obj(b) && Object.keys(b).every((k) => ['alias', 'id', 'kind', 'root', 'repository'].includes(k)) && str(b.alias, 64) && str(b.id, 128) && ['git', 'directory'].includes(b.kind) && (b.root === undefined || str(b.root, 512)) && (b.repository === undefined || str(b.repository, 512))), 'source.bases must be a list of {alias, id, kind, root?, repository?}');
+    need(Array.isArray(s.bases) && s.bases.length <= 64 && s.bases.every((b) => obj(b) && Object.keys(b).every((k) => ['alias', 'id', 'kind', 'root', 'repository'].includes(k)) && (v.version === 3 ? typeof b.alias === 'string' && new RegExp(`^${ID}$`).test(b.alias) : str(b.alias, 64)) && str(b.id, 128) && ['git', 'directory'].includes(b.kind) && (b.root === undefined || str(b.root, 512)) && (b.repository === undefined || str(b.repository, 512))), 'source.bases must be a list of {alias, id, kind, root?, repository?}');
     need(!Array.isArray(s.bases) || s.bases.every((b) => !obj(b) || b.root === undefined || safeRoot(b.root)), 'source.bases[].root must be a relative directory without ..');
     // v2 publishes no machine path: a base's repository is its GitHub owner/repo.
     if (v.version >= 2) need(!Array.isArray(s.bases) || s.bases.every((b) => !obj(b) || b.repository === undefined || (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(b.repository) && b.repository.split('/').every((x) => x !== '.' && x !== '..'))), 'source.bases[].repository must be the GitHub owner/repo, never a path or URL');

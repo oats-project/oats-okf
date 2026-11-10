@@ -19,7 +19,8 @@ the release lane's.
   writes the `proposal.md` skeleton and prints the write surface (the owned
   nodes and the base root `index.md`) and the open `okf-proposal`/
   `okf-harvest` PRs. `--check` validates the proposed tree
-  (`okf-validate --strict`), checks every changed path against the surface
+  (`okf-validate --strict`, on the tree's stored bytes, never a filtered
+  checkout), checks every changed path against the surface
   (`E_SCOPE`, `E_OWNER`), reads `proposal.md` (`E_PROPOSAL_FORMAT`, the 5.8
   note-locator rules), hashes the named notes (a missing one is dropped with
   an `E_NOTE` warning), runs the content screen over the full outgoing
@@ -53,6 +54,9 @@ the release lane's.
   proposer and the parser alike (any filename under `notes/` ending `.md`, a
   space or parentheses included; no empty, `.`, `..` or hidden segment, no
   backslash or control character); the parser previously refused a space.
+  Node references (`<base>/<node>`) and, in version 3, base aliases follow the
+  bindings' identifier grammar (letters of either case, digits, `.`, `_`, `-`;
+  up to 96 characters); the parser previously refused uppercase.
 - **The publication helper** accepts an `okf-proposal/` branch with a v3 body
   under the `okf-proposal` label beside `okf-harvest/` with v2 (both through
   6.x); `rewrite`, `merge` and `close` accept a v3 PR. `create` takes an

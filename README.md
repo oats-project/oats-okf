@@ -341,7 +341,8 @@ Then, from its instance home, in five steps:
    `- notes/<file>.md` line per backing note. Files only: no commit or push
    in the clone.
 3. **Check:** `oats okf propose --check --slug <slug>`. It validates the
-   proposed tree (`okf-validate --strict`), checks every changed path
+   proposed tree (`okf-validate --strict`, on the tree's stored bytes, so no
+   clean/smudge filter shows it something else), checks every changed path
    against the write surface, hashes the named notes, runs the content screen
    over everything that would leave the host (the tree delta, file names,
    the commit text, the PR body) and prints the **complete outgoing diff**,
@@ -595,7 +596,9 @@ Parameters: `repo` (required, `github.com/<owner>/<repo>`), `base` (default
 `okf-harvest`, with the same parameters: the kernel requires every label a
 trigger names (`on.labels` is AND), so one trigger cannot watch both. Keep
 `harvest-review` beside `proposal-review` only while a 5.x harvester may
-still open an `okf-harvest` PR; the two never fire on the same PR.
+still open an `okf-harvest` PR. A PR the helper opened carries exactly one of the two labels, so it fires
+only one of them; never add both labels to a PR while both are installed (it
+would get two maintainers: concurrency is counted per trigger).
 
 oats.okf never installs the trigger. The `okf-trigger-setup` skill teaches
 the workspace automation file (`oats-triggers/okf-proposal-review.yaml`,
