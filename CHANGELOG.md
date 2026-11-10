@@ -63,9 +63,10 @@ the release lane's.
 - **`oats okf bases` reports `protection: enforced | none | unknown`** per
   Git base, from the rulesets read (`gh api
   repos/<owner>/<repo>/rules/branches/<branch>`) and the classic read (`gh api
-  repos/<owner>/<repo>/branches/<branch>/protection`): classic protection
-  reads `enforced`, never `none`; `none` only when both reads succeed and
-  neither protects; `unknown` when either cannot be read (a caller without
+  repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when a
+  ruleset or classic protection requires a PR review or restricts pushers;
+  `none` only when both reads succeed and neither does (status-check-only
+  classic protection included); `unknown` when either cannot be read (a caller without
   admin read gets 404 `Not Found` or 403). Read-only, best-effort, bounded by
   `git-timeout`, never a refusal.
 - **Trigger template `proposal-review`** (id `okf-proposal-review`, label

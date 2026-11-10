@@ -93,8 +93,9 @@ oats okf bases --soul <a soul that reads the base>    # protection: enforced | n
 `oats okf bases` reads the branch's active rulesets (`gh api
 repos/<owner>/<repo>/rules/branches/<branch>`) and its classic protection
 (`gh api repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when
-a ruleset requires a PR or restricts updates, or classic protection exists;
-`none` only when both reads succeed and neither protects; `unknown` when
+a ruleset or classic protection requires a PR or restricts who may push;
+`none` only when both reads succeed and neither does (classic protection with
+status checks only gates no direct push); `unknown` when
 either read fails (`gh` absent, or an account without admin read on the
 repository: GitHub answers 404 `Not Found` or 403) or the base is not on
 GitHub. It is read-only and never refuses anything. Run it with an account

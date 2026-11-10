@@ -586,3 +586,34 @@ test('provenance v3: the writer and the parser agree on the node shape and the s
   const v2 = parseProvenance(`\`\`\`okf-harvest\n${JSON.stringify({ version: 2, source: { ...nodes.source, incarnation: undefined, subjects: ['a/b'] }, evidence: [], tasks: nodes.tasks, harvester: { instance: 'h', alias: null } })}\n\`\`\`\n`);
   assert.equal(v2.valid, false); assert.ok(v2.problems.some(p => p.includes('unknown key "subjects"')));
 });
+
+// Round-3 review findings (PR #131 at 401dd78).
+test('plan.json values never reach Git unchecked: a non-OID accepted value or a bad alias is E_PROPOSAL_FORMAT, before any Git call', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const file = join(plan.proposal, 'plan.json'), good = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const victim = join(f.dir, 'victim'); fs.writeFileSync(victim, 'DO NOT OVERWRITE');
+  for (const bases of [[{ ...good.bases[0], accepted: `--output=${victim}` }], [{ ...good.bases[0], accepted: 'HEAD' }], [{ ...good.bases[0], accepted: good.bases[0].accepted.slice(0, 12) }],
+    [{ ...good.bases[0], alias: '../kb' }], [{ ...good.bases[0], extra: 1 }], [good.bases[0], good.bases[0]]]) {
+    json(file, { ...good, bases });
+    refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /plan\.json is not an oats okf propose plan/);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'DO NOT OVERWRITE');
+  }
+  json(file, { ...good, bases: [{ ...good.bases[0], accepted: 'f'.repeat(40) }] });
+  refused(f.run(['--check', '--slug', 'x']), 'E_GIT', /git cat-file failed/);
+  const tree = f.git(plan.bases[0].clone, 'rev-parse', `${good.bases[0].accepted}^{tree}`);
+  json(file, { ...good, bases: [{ ...good.bases[0], accepted: tree }] });
+  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /is not a commit in its clone/);
+});
+
+test('plan clones without hard links, and a hard-linked file under .git is refused before any write', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); const clone = edit(f, plan);
+  const links = []; const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else if (fs.lstatSync(p).nlink !== 1) links.push(p); } };
+  walk(join(clone, '.git')); assert.deepEqual(links, [], 'a local-path origin is cloned with --no-hardlinks');
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const outside = join(f.dir, 'outside-reflog');
+  fs.renameSync(join(clone, '.git', 'logs', 'HEAD'), outside); fs.linkSync(outside, join(clone, '.git', 'logs', 'HEAD'));
+  const before = fs.readFileSync(outside, 'utf8');
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_FORMAT', /\.git\/logs\/HEAD is hard-linked elsewhere/);
+  assert.equal(fs.readFileSync(outside, 'utf8'), before, 'nothing appended outside the clone');
+  assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
+});

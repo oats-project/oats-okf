@@ -571,9 +571,10 @@ by other means meets it too. The `okf-trigger-setup` skill has the steps.
 base, from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
 (rulesets) and `gh api repos/<owner>/<repo>/branches/<branch>/protection`
 (classic branch protection, which the first never shows). `enforced` when an
-active ruleset requires a PR or restricts updates, or when classic protection
-exists; `none` only when both reads succeed and neither protects (GitHub
-answers the classic read with 404 `Branch not protected`); `unknown` when
+active ruleset, or classic protection, requires a PR or restricts who may
+push; `none` only when both reads succeed and neither does (GitHub answers the
+classic read with 404 `Branch not protected`; classic protection with status
+checks only gates no direct push and reads `none` too); `unknown` when
 either read cannot be made (`gh` absent, 404 `Not Found` or 403 for a caller
 without admin read, a failure) or the base is not on GitHub. It is read-only,
 best-effort and bounded by `git-timeout`, never a refusal.
