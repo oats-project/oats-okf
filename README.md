@@ -196,6 +196,8 @@ Each accepted base carries **`okf-base.json`**:
   `owner` in `okf-base.json` must equal the soul's `owner` (`E_OWNER`
   otherwise). `reads` selects initial context. Neither is an access control:
   every configured base is readable.
+- oats.okf 6.0 adds `okf.json` **version 2**, `{"version":2,"subjects":[...]}`,
+  for a base with the subject layout (below); version 1 keeps working.
 - A soul without `okf.json` cannot spawn with oats.okf: provision it
   (`init`, or `migrate` for a legacy soul) or deactivate oats.okf for that
   soul. The soul-scaffold hook creates no knowledge.
@@ -241,6 +243,129 @@ soul's declaration.
   `legacy-local-view` and never read.
 
 The `okf-consultation` skill teaches the consult CLI.
+
+## The subject layout (bridged bases)
+
+oats.okf 6.0 reads a base **by subject** when its `okf-base.json` (still
+`version: 1`) lists the three reserved nodes `claims`, `subjects` and
+`verdicts`, each at the path of its name and owned by the sentinel
+`00000000-0000-0000-0000-000000000000`. Such a base is **bridged**. A base
+without all three, exactly so, is a plain version-1 base and is read as
+before. oats.okf 5.8.0 accepts a bridged base unchanged; the suite proves it
+on every run by validating its bridged fixture with the unchanged `v5.8.0`
+validator (`git show v5.8.0:oats-package/capabilities/oats-okf/lib/okf-validate.mjs`).
+
+| Path | What | Frontmatter |
+|---|---|---|
+| `subjects/<kind>/<slug>.md` | a subject; kind `system`, `workstream` or `project` | `type: System \| Workstream \| Project`, `title`, `description`, optional `repo`, `in-workstreams: [workstream/...]`, `depends-on: [system/...]`, `status`, `legacy-nodes: [<node>, ...]` (the old per-soul nodes it absorbs; a node belongs to one subject) |
+| any concept in a node (old node directories stay canonical; new claims go under `claims/`) | a claim or document | `about: [<kind>/<slug>, ...]` (one or more existing subjects), `kind:` where the type has kinds, `id:` (stable; stamped by the bridge PR or by the maintainer at acceptance, never by a proposer), and `type`, `title`, `description`, `tags`, `timestamp` as before |
+| `verdicts/<id>.md` | the maintainer's verdict on a claim id | `type: Verdict`, `verdict: rejected \| superseded \| duplicate`, `claim-type`, `claim-title`, `claim-description`, `title-hash`, `reason`, `pr`, `decided-by`, `decided-on`, `canonical` (the id) for `duplicate` and `superseded` |
+| `subjects/<kind>/<slug>/index.md`, `subjects/index.md`, `verdicts/index.md`, the root `index.md`'s `## Subjects` section | **generated**: a subject's claims by type (and kind), the subjects by kind, the verdict record, the root link | none |
+
+Frontmatter stays flat: scalars and flow lists (`[a, "b"]`, bare or
+JSON-double-quoted items). `title-hash` is the first 16 hex digits of the
+sha256 of `<claim-type>|<claim-title>`, the title lowercased, trimmed and
+its whitespace collapsed. `claims/index.md` is written by hand.
+
+### The validator and the regenerator
+
+`okf-validate.mjs` (validator v2) and `okf-reindex.mjs` (the regenerator,
+new) ship together, byte-identical, in `oats-okf/lib/` and in each
+`okf-authoring/scripts/`; neither has dependencies.
+
+```sh
+node okf-reindex.mjs <base-dir>            # write the generated indexes
+node okf-reindex.mjs <base-dir> --check    # exit 1 when any differs; writes nothing
+node okf-validate.mjs <base-dir> --strict  # validator v2
+```
+
+On a bridged base the validator also errors on: a malformed flow list; a
+claim whose `about` is missing, empty, not a list or names a subject with no
+file; a subject file off `subjects/<kind>/<slug>.md` (lowercase slug), or
+whose `type` does not match its kind directory; an `in-workstreams` or
+`depends-on` entry that is not a subject of that kind; a node absorbed by two
+subjects; a `Verdict` outside `verdicts/`, or a verdict file that is not
+`verdicts/<id>.md` of type `Verdict` with a valid `verdict`, its
+`claim-type`/`claim-title`, the derived `title-hash` and, for `duplicate`
+and `superseded`, `canonical`; a claim under `claims/` without `id`; and a
+duplicate `id`. With `--strict` it warns on an old-node claim without `id`
+and on a generated index that differs from the regenerator's output (an
+error exit with `OKF_STRICT_EXIT=1`). A plain version-1 base gets exactly
+5.8's findings.
+
+A spawn and `oats okf bases` validate the accepted base with `--strict` and
+refuse any warning, as before. So a stale generated index, or a claim
+without `id`, on the accepted branch makes the base invalid for 6.0 readers
+until it is fixed: the knowledge maintainer stamps ids and regenerates
+before every merge.
+
+### okf.json version 2
+
+```json
+{"version": 2, "subjects": ["system/oats-okf", "workstream/knowledge"]}
+```
+
+- `subjects` are the subjects a fresh instance reads first: reading
+  defaults, not access and not write scope. There is no `owner`, `owns` or
+  `reads`. Every bound base stays readable.
+- The spawn hook and readiness resolve each subject to its file in a bound
+  base with the subject layout: `E_CONFIG: unresolved subject: <ref>`, or,
+  when no bound base has the layout, `E_CONFIG: base <alias> has no subject
+  layout; declare owns/reads (version 1) or bridge the base (release note
+  §7.2)`. A subject found in two bridged bases is refused too (one base per
+  subject layout). Readiness reports either as `declaration:unresolved`.
+- A version-1 declaration keeps working on a bridged base: its nodes resolve
+  and `E_OWNER` applies to `owns`, as before.
+- The portable binding (`oats.okf.locations@1`, below) still carries version
+  1 only: a payload with `subjects` is refused with `E_CONFIG` naming the
+  limit. A version-2 soul is bound through the `bindings-file` setting.
+- The spawn brief of a version-2 soul names, instead of the owns/reads
+  clause, one line per declared subject (at most eight), from its generated
+  index: `system/oats-okf — The knowledge provider package (12 decisions, 9
+  insights, 1 reference)`. The spawn reads only bases it has just validated
+  and never fetches for the brief; an unreadable index leaves the bare ref.
+
+A soul moves to version 2 once its base is bridged. This repository's soul
+keeps version 1 until the bridge PR on its base is accepted; its version 2
+file waits beside it as `souls/oats-okf-expert/okf.json.v2`, so the switch
+is one rename.
+
+### Reading by subject
+
+```sh
+oats okf subjects [--kind system|workstream|project]   # one line per subject
+oats okf subject system/oats-okf     # its file, legacy nodes, workstreams or members, claim counts
+oats okf claims --about system/oats-okf [--type Decision] [--kind architecture]
+oats okf index                       # a version-2 soul: its subjects' generated indexes
+oats okf index workstream/knowledge  # any soul: that subject's generated index
+oats okf verdicts --check <claim file>
+```
+
+- Each verb reads committed generated indexes (one blob each, plus the
+  subject file for `subject`), never scans the base, and keeps the receipt
+  (`alias@oid`): cite as before, `alias/path@oid`.
+- The base is `--base ALIAS`, else the only bound base, else the only bound
+  base with the layout. On a plain base each answers `E_USAGE: base <alias>
+  has no subject layout`.
+- `index` without an argument keeps its version-1 behaviour for a version-1
+  soul, and `--base ALIAS` alone still reads the base's root index. A
+  `<kind>/<slug>` argument reads a subject unless its kind is a bound alias.
+- `--type` and `--kind` match case-insensitively.
+
+### The verdict check
+
+`oats okf verdicts --check <claim file>` reads a local claim file and the
+base's `verdicts/index.md`, in two lanes:
+
+1. **Identity.** When the claim names a known id (its `id`, or the id its
+   `reconsiders:` names) that id's verdict is read. A `rejected` id proposed
+   again without a `reconsiders:` line refuses `E_VERDICT` with the
+   verdict's reason, date and PR.
+2. **Exact title hash.** The claim's `title-hash` against every verdict's.
+   A hit is a candidate for the PR body and the reviewer, never a refusal: it
+   catches whitespace and case retries, not paraphrases.
+
+The lexical lane of the design is not in 6.0.
 
 ## Instance knowledge and the spawn hook
 
@@ -986,6 +1111,17 @@ directories and the package's CLI:
   comment, idempotence, the refused shapes and files, a nested `oats.okf`, the deployment scope, soul-origin keys);
 - `okf5-provenance`: the version 1 and 2 parser, `review-context` and
   `notify-harvester`.
+- `okf6-subjects`: the subject layout on a bridged fixture base (a small
+  version-1 base plus the reserved nodes, two subjects, three claims with
+  `about` and one verdict, its indexes written by the regenerator): validator
+  v2 accepts it and refuses each error, the 5.8 fact (the unchanged `v5.8.0`
+  validator passes it with 0 errors and 0 warnings; needs the tag, so CI
+  checks out with full history), a plain base gets 5.8's findings, the
+  regenerator is deterministic and `--check` catches a stale or orphaned
+  index, `okf.json` version 2 resolves (and refuses on a plain base or an
+  unknown subject) at spawn and readiness, the brief, each verb's output and
+  `E_USAGE` on a plain base, a version-1 soul's `index` unchanged on the
+  bridged base, the verdict lanes, and the portable binding's refusal.
 
 `okf5-real-kernel` runs only when `OATS_OKF_REAL_CLI` names a kernel; CI's
 `real-kernel-0692` job installs the released **OATS 0.69.2** in a disposable

@@ -294,6 +294,49 @@ Privately name real-exposure locations to the authorized maintainer for
 rotation and, when warranted, GitHub Support's ref/cache removal. Never repeat
 the data in the PR verdict, message, task note or report.
 
+## On a base with the subject layout (oats.okf 6.0)
+
+A base whose `okf-base.json` lists the reserved nodes `claims`, `subjects`
+and `verdicts` is read by subject (the okf-authoring skill, and the README's
+"The subject layout"). On such a base, add to your checks:
+
+- **Reject out-of-surface writes.** This is a checklist item, and your
+  review is the gate: the proposing tool's own check is advisory, because it
+  runs with the proposer's push rights. A proposal from an `okf.json`
+  version 1 soul may change only its owned nodes and the root `index.md`, and
+  each new claim carries `about:` from the subject whose `legacy-nodes` names
+  that node. A proposal from a version 2 soul may add or change files under
+  `claims/**`, add files under `subjects/system/**` and
+  `subjects/project/**`, set `status: superseded` on a concept it
+  supersedes, and must carry the regenerated indexes; it never touches
+  `verdicts/**`, `subjects/workstream/**`, `okf-base.json`, the root
+  `index.md` by hand, or another old-node file. An out-of-surface change is
+  amended away or closes the PR with a verdict.
+- **A workstream changes only on a person's cited acceptance** (the message
+  or comment and its date), carried by the PR.
+- **Stamp `id:` on every claim you accept** that has none, in the bridge's
+  form `<prefix>-<first 12 hex of sha256 of its path at acceptance>`
+  (`dec` Decision and Roadmap, `ins` Insight, Lesson, Conclusion and
+  Limitation, `ref` Reference, `pb` Playbook). Never change an existing id: a
+  path is where a claim is, the id is what it is.
+- **Regenerate and validate the whole base before you merge:**
+  `okf-reindex.mjs <base>` then `OKF_STRICT_EXIT=1 okf-validate.mjs <base>
+  --strict`. A stale index or a missing id on the accepted branch makes the
+  base invalid for every 6.0 reader.
+- **Verdict candidates.** The PR body lists the proposer's
+  `oats okf verdicts --check` candidates (an exact title hash): resolve each
+  to its canonical id, and judge whether the claim is the same, a
+  reconsideration (it must say `reconsiders: <id>` and bring new evidence) or
+  different.
+- **Record the verdict in the base** when you close a claim as rejected or
+  duplicate, or supersede one: `verdicts/<id>.md` (`type: Verdict`,
+  `verdict`, `claim-type`, `claim-title`, `claim-description`, `title-hash`,
+  `reason`, `pr`, `decided-by`, `decided-on`, and `canonical` for a duplicate
+  or a supersession), then regenerate. A rejected claim that never had a path
+  gets its id at rejection. Only you write `verdicts/**`: it rides in your
+  amend of the PR it rules on, or in your own reviewed change when the PR
+  closes.
+
 ## 7. Retire
 
 Once the PR is merged or closed, retire (the oats skill). A version 2 (5.0)
