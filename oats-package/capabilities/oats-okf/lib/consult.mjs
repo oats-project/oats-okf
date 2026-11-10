@@ -721,13 +721,21 @@ export function subject(source, flags, positionals) {
     return { result, text: `${text.trimEnd()}\n\n${lines.join('\n')}\n${footer([ctx.receipt])}` };
   });
 }
+const HEADING_CHARS = 200;
+const cutHeading = v => v.length > HEADING_CHARS ? `${v.slice(0, HEADING_CHARS)}…` : v;
 export function claims(source, flags, positionals) {
   if (positionals.length) fail('E_USAGE', 'claims takes --about <kind>/<slug> [--type T] [--kind K]');
   if (flags.about === undefined) fail('E_USAGE', 'claims needs --about <kind>/<slug>');
   const ref = subjectArg(flags.about), same = (a, b) => b === undefined || (a ?? '').toLowerCase() === b.toLowerCase();
   return withSubject(source, flags, ref, ctx => {
     const { path, view } = readView(ctx, ref);
-    const rows = view.sections.filter(x => same(x.type, flags.type) && same(x.kind, flags.kind)).flatMap(x => x.entries.map(c => ({ type: x.type, kind: x.kind, title: c.title, path: c.path, description: c.description })));
+    // Each row repeats its section's type and kind: those read from an
+    // untrusted committed index are cut to HEADING_CHARS so a long heading
+    // over many entries cannot multiply the answer (the filter sees them whole).
+    const rows = view.sections.filter(x => same(x.type, flags.type) && same(x.kind, flags.kind)).flatMap(x => {
+      const type = cutHeading(x.type), kind = x.kind === null ? null : cutHeading(x.kind);
+      return x.entries.map(c => ({ type, kind, title: c.title, path: c.path, description: c.description }));
+    });
     const text = rows.map(r => `${shown(r.path)}  [${r.type}${r.kind ? `/${r.kind}` : ''}] ${r.title}${r.description ? ` — ${r.description}` : ''}`).join('\n');
     return { result: { base: ctx.alias, about: ref, type: flags.type ?? null, kind: flags.kind ?? null, index: path, claims: rows, receipt: ctx.receipt }, text: `${text || '(no claims)'}\n${footer([ctx.receipt])}` };
   });

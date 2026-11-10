@@ -552,10 +552,31 @@ test('a committed subject index with very many sections is read in linear time (
   let started=Date.now();const parsed=parseView(fs.readFileSync(view,'utf8'));
   assert.ok(Date.now()-started<2000,`parseView took ${Date.now()-started} ms`);assert.ok(parsed.sections.length>100000);
   // filtered so the answer stays small; the whole index is still parsed
+  // one long type or kind heading over many entries: the section is looked up per heading, not per entry
+  for(const [heading,label] of [[`## ${'T'.repeat(1000000)}`,'long type'],[`## Decision\n\n### ${'k'.repeat(1000000)}`,'long kind']]) {
+    const lines=[heading,''];for(let i=0;i<20000;i++) lines.push(`* [C${i}](/claims/c${i}.md) - D`);
+    started=Date.now();const v=parseView(lines.join('\n'));
+    assert.ok(Date.now()-started<2000,`${label}: parseView took ${Date.now()-started} ms`);
+    assert.equal(v.sections.length,1);assert.equal(v.sections[0].entries.length,20000);
+  }
+  const merged=parseView('## A\n* [1](/claims/1.md)\n### k\n* [2](/claims/2.md)\n## B\n* [3](/claims/3.md)\n## A\n* [4](/claims/4.md)\n### k\n* [5](/claims/5.md)');
+  assert.deepEqual(merged.sections.map(x=>[x.type,x.kind,x.entries.map(e=>e.title).join()]),[['A',null,'1,4'],['A','k','2,5'],['B',null,'3']]);
+  fs.appendFileSync(view,`\n## ${'T'.repeat(1000000)}\n\n`+Array.from({length:20000},(_,i)=>`* [L${i}](/claims/l${i}.md) - D`).join('\n')+'\n');
+  f.git('add','-A');f.git('commit','-q','-m','long heading');
   for(const args of [['claims','--about','system/okf','--type','Type-99999','--fresh','--json']]) {
     started=Date.now();const r=run(f,args);
     assert.equal(r.status,0,r.text.slice(0,300));assert.ok(Date.now()-started<15000,`${args[0]} took ${Date.now()-started} ms`);
   }
+});
+
+test('`claims` cuts a long committed type or kind heading in each row (the filter still sees it whole), so a heading cannot multiply the answer',t=>{
+  const f=deployment(t),view=join(f.repo,'subjects/system/okf/index.md'),type='T'.repeat(300),kind='k'.repeat(300);
+  fs.appendFileSync(view,`\n## ${type}\n\n### ${kind}\n\n* [A](/claims/a.md) - x\n* [B](/claims/b.md) - y\n`);
+  f.git('add','-A');f.git('commit','-q','-m','long headings');
+  const r=run(f,['claims','--about','system/okf','--type',type,'--fresh','--json']);
+  assert.equal(r.status,0,r.text.slice(0,300));
+  assert.deepEqual(r.out.result.claims.map(c=>[c.type,c.kind,c.title]),[[`${'T'.repeat(200)}…`,`${'k'.repeat(200)}…`,'A'],[`${'T'.repeat(200)}…`,`${'k'.repeat(200)}…`,'B']]);
+  assert.equal(r.out.result.type,type);
 });
 
 test('`oats okf verdicts --check`: identity refuses a rejected id without reconsiders (E_VERDICT, the reason); the exact title hash lists candidates',t=>{

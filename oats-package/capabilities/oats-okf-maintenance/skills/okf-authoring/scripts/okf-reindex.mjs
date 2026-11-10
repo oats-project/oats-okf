@@ -338,24 +338,29 @@ export function parseEntry(line) {
 export function parseView(text) {
   const lines = String(text).split(/\r?\n/), out = { title: "", description: "", members: [], sections: [] };
   let type = null, kind = null, inMembers = false, sawNote = false;
-  const byKey = new Map();
+  const byType = new Map();
+  let current = null;
   for (const line of lines) {
     if (!out.title && line.startsWith("# ")) { out.title = line.slice(2).trim(); continue; }
     if (line.startsWith(GENERATED_NOTE)) { sawNote = true; continue; }
     if (!sawNote && out.title && line.trim() && !line.startsWith("#")) { out.description = line.trim(); continue; }
     const h2 = /^## (.+)$/.exec(line), h3 = /^### (.+)$/.exec(line);
-    if (h2) { inMembers = h2[1].trim() === MEMBERS; type = inMembers ? null : h2[1].trim(); kind = null; continue; }
-    if (h3) { kind = h3[1].trim(); continue; }
+    if (h2) { inMembers = h2[1].trim() === MEMBERS; type = inMembers ? null : h2[1].trim(); kind = null; current = null; continue; }
+    if (h3) { kind = h3[1].trim(); current = null; continue; }
     const e = parseEntry(line);
     if (!e) continue;
     if (inMembers) out.members.push(e);
     else if (type) {
-      // One lookup per entry (a committed index is untrusted: no scan of the
-      // sections seen so far); out.sections keeps first-seen order.
-      const key = JSON.stringify([type, kind]);
-      let section = byKey.get(key);
-      if (!section) { out.sections.push(section = { type, kind, entries: [] }); byKey.set(key, section); }
-      section.entries.push(e);
+      // A committed index is untrusted: the section is looked up once per
+      // heading, never per entry (no scan of the sections seen so far, no
+      // heading-sized key per entry); out.sections keeps first-seen order.
+      if (!current) {
+        if (!byType.has(type)) byType.set(type, new Map());
+        const kinds = byType.get(type);
+        current = kinds.get(kind);
+        if (!current) { out.sections.push(current = { type, kind, entries: [] }); kinds.set(kind, current); }
+      }
+      current.entries.push(e);
     }
   }
   return out;
