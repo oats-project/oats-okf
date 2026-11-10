@@ -430,7 +430,7 @@ function onePath(positionals, label) {
 // pushes; none: both reads succeeded and neither does (classic protection with
 // status checks only included); unknown otherwise.
 /** What `protection` answers, printed with every Git base by `oats okf bases`. */
-export const PROTECTION_MEANING = 'protection answers "can anyone but a reviewer land a change on the accepted branch?": enforced = a ruleset or classic rule requires a PR review or restricts who may push; none = nothing of the sort (classic protection with status checks only included: it reviews nothing); unknown = a GitHub read failed or the base is not on GitHub';
+export const PROTECTION_MEANING = 'protection answers "can anyone but a reviewer land a change on the accepted branch?": enforced = a readable ruleset or classic rule requires a pull request or restricts who may push; none = both reads succeeded and neither does (classic protection with status checks only included: it gates nothing); unknown = neither read shows such a rule and at least one read failed, or the base is not on GitHub. It does not check approval counts, bypass lists or who the maintainer is';
 const GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
 export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout }) } = {}) {
   if (base.kind !== 'git' || !GITHUB_REMOTE.test(base.repository)) return 'unknown';

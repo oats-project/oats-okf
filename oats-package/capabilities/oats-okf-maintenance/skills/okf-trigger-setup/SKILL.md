@@ -103,8 +103,9 @@ repos/<owner>/<repo>/rules/branches/<branch>`) and its classic protection
 a ruleset or classic protection requires a PR or restricts who may push;
 `none` only when both reads succeed and neither does (classic protection with
 status checks only gates no direct push; the report does not read bypass
-lists or the admin-bypass setting, so check those by hand); `unknown` when
-either read fails (`gh` absent, or an account without admin read on the
+lists, approval counts or the admin-bypass setting, so check those by hand);
+`unknown` when neither read shows such a rule and either read fails (`gh`
+absent, or an account without admin read on the
 repository: GitHub answers 404 `Not Found` or 403) or the base is not on
 GitHub. It is read-only and never refuses anything. Run it with an account
 that may read the repository's settings, or read `unknown` as "check by hand".

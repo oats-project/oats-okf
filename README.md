@@ -575,20 +575,23 @@ skill has the steps. `protection: enforced` does not read bypass lists or
 the admin-bypass setting.
 `oats okf bases` reports `protection: enforced | none | unknown` per Git
 base. The field answers one question: **can anyone but a reviewer land a
-change on the accepted branch?** `enforced` = a ruleset or classic rule
-requires a PR review or restricts who may push; `none` = nothing of the sort
-(classic protection with status checks only included, because it reviews
-nothing); `unknown` = either GitHub read failed. The command prints that
+change on the accepted branch?** `enforced` = a readable ruleset or classic
+rule requires a pull request or restricts who may push; `none` = both reads
+succeeded and neither does (classic protection with status checks only
+included, because it gates nothing); `unknown` = neither read shows such a
+rule and at least one read failed, or the base is not on GitHub. It does not
+check approval counts, bypass lists or who the maintainer is. The command prints that
 definition with its answer (and `protectionMeaning` in `--json`). It comes
 from two reads: `gh api repos/<owner>/<repo>/rules/branches/<branch>`
 (rulesets) and `gh api repos/<owner>/<repo>/branches/<branch>/protection`
 (classic branch protection, which the first never shows). `enforced` when an
 active ruleset, or classic protection, requires a PR or restricts who may
-push; `none` only when both reads succeed and neither does (GitHub answers the
-classic read with 404 `Branch not protected`; classic protection with status
-checks only gates no direct push and reads `none` too); `unknown` when
-either read cannot be made (`gh` absent, 404 `Not Found` or 403 for a caller
-without admin read, a failure) or the base is not on GitHub. It is read-only,
+push (one such rule decides it, even if the other read failed); `none` only
+when both reads succeed and neither does (GitHub answers the classic read with
+404 `Branch not protected`; classic protection with status checks only gates
+no direct push and reads `none` too); `unknown` when no read shows such a rule
+and either read cannot be made (`gh` absent, 404 `Not Found` or 403 for a
+caller without admin read, a failure), or the base is not on GitHub. It is read-only,
 best-effort and bounded by `git-timeout`, never a refusal.
 
 The maintainer is spawned per PR by the **`proposal-review` trigger

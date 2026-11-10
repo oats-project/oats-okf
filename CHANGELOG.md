@@ -72,10 +72,12 @@ the release lane's.
   accepted branch?" (printed with it, `protectionMeaning` in `--json`), from the rulesets read (`gh api
   repos/<owner>/<repo>/rules/branches/<branch>`) and the classic read (`gh api
   repos/<owner>/<repo>/branches/<branch>/protection`): `enforced` when a
-  ruleset or classic protection requires a PR review or restricts pushers;
-  `none` only when both reads succeed and neither does (status-check-only
-  classic protection included); `unknown` when either cannot be read (a caller without
-  admin read gets 404 `Not Found` or 403). Read-only, best-effort, bounded by
+  readable ruleset or classic protection requires a pull request or restricts
+  pushers; `none` only when both reads succeed and neither does
+  (status-check-only classic protection included); `unknown` when neither
+  shows such a rule and either cannot be read (a caller without admin read
+  gets 404 `Not Found` or 403). It does not check approval counts, bypass
+  lists or the maintainer's identity. Read-only, best-effort, bounded by
   `git-timeout`, never a refusal.
 - **Trigger template `proposal-review`** (id `okf-proposal-review`, label
   `okf-proposal`). `harvest-review` (id `okf-harvest-review`) stays through
