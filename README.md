@@ -295,7 +295,9 @@ link in a concept's description would otherwise resolve against the index,
 not the concept. `--type` and `--kind` filters are read the same way. A verdict record's
 line is `verdict; claim type; title hash; claim description`, with `\` and
 `;` escaped by `\` in the claim type. The root `## Subjects` section is found
-only outside fenced code blocks, so a fenced example of it stays.
+only outside fenced code blocks and ends at the next `## ` heading or fence,
+so fenced text stays; with none it is appended, before a fence left open at
+the end.
 
 The regenerator refuses (`E_PATH`, exit 2), before reading or writing, a
 base that holds a symlink, a non-regular file or a file with more than one

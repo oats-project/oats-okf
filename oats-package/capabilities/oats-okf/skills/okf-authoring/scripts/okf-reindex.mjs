@@ -329,33 +329,39 @@ export const ROOT_SECTION = "## Subjects\n\n* [Subjects](subjects/index.md) - Wh
  *  `## ` heading or the end) replaced by the generated one, or appended. */
 /** Which lines are Markdown text, not inside a fenced code block (``` or ~~~,
  *  up to three spaces of indent; closed by the same character, at least as
- *  long, with nothing after; an unclosed fence runs to the end). */
+ *  long, with nothing after; an unclosed fence runs to the end). → { text:
+ *  boolean per line, opens: boolean per line (a fence's opening line),
+ *  unclosed: the opening line of a fence still open at the end, or -1 }. */
 export function outsideFences(lines) {
-  const out = [];
-  let fence = null;
-  for (const l of lines) {
+  const text = [], opens = [];
+  let fence = null, openedAt = -1;
+  lines.forEach((l, i) => {
     if (fence) {
       const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(l);
       if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = null;
-      out.push(false);
-      continue;
+      text.push(false); opens.push(false);
+      return;
     }
     const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);
-    if (open && !(open[1][0] === "`" && open[2].includes("`"))) { fence = open[1]; out.push(false); continue; }
-    out.push(true);
-  }
-  return out;
+    if (open && !(open[1][0] === "`" && open[2].includes("`"))) { fence = open[1]; openedAt = i; text.push(false); opens.push(true); return; }
+    text.push(true); opens.push(false);
+  });
+  return { text, opens, unclosed: fence ? openedAt : -1 };
 }
 export function withSubjectsSection(text) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
-  // Only a heading outside a fenced code block starts or ends the section: a
-  // fenced example of one is the author's text and stays.
-  const text_ = outsideFences(lines);
-  const start = lines.findIndex((l, i) => text_[i] && /^## Subjects\s*$/.test(l));
+  // Only a heading outside a fenced code block starts the section, which runs
+  // to the next such `## ` heading or the next fence (never into or past
+  // fenced text: the author's, kept as is). With no section, it is appended,
+  // or put just before a fence left open at the end (else it would be inside it).
+  const f = outsideFences(lines);
+  const start = lines.findIndex((l, i) => f.text[i] && /^## Subjects\s*$/.test(l));
   let before, after;
-  if (start < 0) { before = lines.join("\n"); after = ""; }
-  else {
-    let end = lines.findIndex((l, i) => i > start && text_[i] && /^## /.test(l));
+  if (start < 0) {
+    const at = f.unclosed < 0 ? lines.length : f.unclosed;
+    before = lines.slice(0, at).join("\n"); after = lines.slice(at).join("\n");
+  } else {
+    let end = lines.findIndex((l, i) => i > start && (f.opens[i] || f.text[i] && /^## /.test(l)));
     if (end < 0) end = lines.length;
     before = lines.slice(0, start).join("\n");
     after = lines.slice(end).join("\n");

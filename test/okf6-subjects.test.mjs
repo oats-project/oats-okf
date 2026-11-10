@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writePlainBase, bridge, reindex, validate, REJECTED, SUBJECT_COUNTS, REINDEX, VALIDATE } from './fixtures/bridged-base.mjs';
 import { validateDeclaration, resolveSubjects } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue, keyValue, textKey, GENERATED_NOTE, counts } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
+import { generate, parseView, parseSubjectsIndex, parseVerdictsIndex, readConcepts, titleHash, flowList, parseFrontmatter, scalarValue, keyValue, textKey, GENERATED_NOTE, counts, withSubjectsSection } from '../oats-package/capabilities/oats-okf/lib/okf-reindex.mjs';
 import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts.mjs';
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
@@ -692,6 +692,26 @@ test('the root index\'s Subjects section ignores a fenced example of its heading
   assert.equal(after.split('\n').filter(l=>l==='## Subjects').length,3,'two fenced examples, one generated section');
   assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
   assert.equal(spawnSync(process.execPath,[REINDEX,dir,'--check'],{encoding:'utf8'}).status,0,'idempotent');
+});
+
+test('a root index ending in an unclosed fence (``` or ~~~): the Subjects section goes before it, regeneration is idempotent, the fence stays',t=>{
+  for(const opener of ['```md','~~~~']) {
+    const dir=join(tmp(t,'okf6-open-fence-'),'base');writePlainBase(dir);
+    const root=join(dir,'index.md'),tail=`\nAn example:\n\n${opener}\n## Subjects\n\n* Subjects\n`;
+    fs.appendFileSync(root,tail);
+    assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0);
+    bridge(dir);
+    const once=fs.readFileSync(root,'utf8');
+    assert.ok(once.includes(`${opener}\n## Subjects\n\n* Subjects\n`),once);
+    assert.ok(once.indexOf('* [Subjects](subjects/index.md)')<once.indexOf(opener),'the generated section precedes the open fence');
+    for(const l of ['* [expert](expert/index.md) - The expert node.','* [peer](peer/index.md) - The peer node.']) assert.ok(once.includes(l),l);
+    assert.equal(spawnSync(process.execPath,[REINDEX,dir,'--check'],{encoding:'utf8'}).status,0,`${opener}: --check after one run`);
+    reindex(dir);assert.equal(fs.readFileSync(root,'utf8'),once,`${opener}: a second run changes nothing`);
+    assert.equal(validate(dir,{env:{OKF_STRICT_EXIT:'1'}}).status,0,opener);
+  }
+  // a fence right after an existing section is the author's text: kept, not taken into the section
+  const kept=withSubjectsSection('# R\n\n## Subjects\n\nold text\n\n```\ncode\n```\n');
+  assert.ok(kept.endsWith('```\ncode\n```\n'),kept);assert.equal(withSubjectsSection(kept),kept);
 });
 
 test('`oats okf verdicts --check`: identity refuses a rejected id without reconsiders (E_VERDICT, the reason); the exact title hash lists candidates',t=>{
