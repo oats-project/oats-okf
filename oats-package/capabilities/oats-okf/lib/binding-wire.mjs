@@ -125,7 +125,7 @@ function runtimeSettings(settings) {
   if(obj(settings)) {const removed=removedMessage(settings);if(removed) removedError(removed);}
   // A 4.x manifest default is dropped; `harvest` left can only be the soul's own opt-out (off).
   settings=withoutDefaults(settings);
-  keys(settings,['bindings-file','state-dir','harvest'],[], 'OKF settings');
+  keys(settings,['bindings-file','state-dir','screen-terms-file','harvest'],[], 'OKF settings');
   const descriptorFile=settings['bindings-file'],stateDir=settings['state-dir'];
   for(const name of ['bindings-file','state-dir']) {
     if(settings[name]===undefined) settingError(`${name}:missing`);

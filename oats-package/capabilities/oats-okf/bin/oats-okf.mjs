@@ -9,6 +9,7 @@ import { loadInvocationKnowledgeBinding } from '../lib/binding-wire.mjs';
 import { refuseLegacySettings, removeLegacySettings } from '../lib/legacy-settings.mjs';
 import { writeHarvestPolicy, harvestPolicy } from '../lib/harvest-policy.mjs';
 import { upgradePlan, upgradeApply } from '../lib/upgrade.mjs';
+import { propose } from '../lib/propose.mjs';
 const HELP=`oats okf status [--home PATH] [--json]
   (spawn-recorded harvest duty: on, off, or unknown; no base/network read)
 oats okf inspect [--home PATH] [--json]
@@ -18,6 +19,10 @@ oats okf cat --base ALIAS PATH [--from PATH] [--fresh] [--json]
 oats okf ls --base ALIAS [DIR] [--fresh] [--json]
 oats okf links --base ALIAS PATH [--fresh] [--json]
 oats okf search [--base ALIAS | --all] [--node NODE] [--regex] [--case-sensitive] TEXT [--fresh] [--json]
+oats okf propose --plan | --check | --apply --slug SLUG [--digest DIGEST] [--home PATH] [--json]
+  (from the instance home: clone the owned bases, check the edits and print the
+  outgoing diff and digest, then open one okf-proposal PR per changed base;
+  operator form from the deployment: --home <instance home | retirement recovery> --soul SOUL)
 Consult commands read the accepted state remotely (host cache, no local copy);
 also accept --home PATH. PATH is /node/x.md from the base root, relative to
 --from's directory, or bare node/x.md from the root.
@@ -62,11 +67,11 @@ else {
   const event=process.env.OATS_EVENT || args[0];
   const hook=['spawn','soul-scaffold'].includes(event);
   const consult=Object.hasOwn(CONSULT,event);
-  let exit=0,answer,text,textMode=consult && !args.includes('--json');
+  let exit=0,answer,text,textMode=(consult || event==='propose') && !args.includes('--json');
   try {
     // Removed 4.x commands refuse whatever their (old) flags were.
     if(['harvest','run-source','complete','retry','harvest-status'].includes(event)) removed(`oats okf ${event}`);
-    const flags={},positionals=[]; const boolean=new Set(['json','confirm','fresh','all','regex','case-sensitive','remove-legacy-settings','plan','enable','disable','install-host','remove-schedules']);
+    const flags={},positionals=[]; const boolean=new Set(['json','confirm','fresh','all','regex','case-sensitive','remove-legacy-settings','plan','check','apply','enable','disable','install-host','remove-schedules']);
     for(let i=1;i<args.length;i++) {
       if(consult && args[i]==='--') {positionals.push(...args.slice(i+1));break;}
       if(!args[i].startsWith('--')) {if(!consult) fail('E_USAGE',`unexpected argument ${args[i]}`);positionals.push(args[i]);continue;}
@@ -86,6 +91,7 @@ else {
       bases:['home','fresh'],index:['home','base','fresh'],cat:['home','base','from','fresh'],ls:['home','base','fresh'],
       links:['home','base','fresh'],search:['home','base','all','node','regex','case-sensitive','fresh'],
       setup:['remove-legacy-settings','plan','harvest','enable','disable','install-host','remove-schedules'],init:['base','nodes','output','confirm'],
+      propose:['home','plan','check','apply','slug','digest'],
       migrate:['source-home','legacy','base','node','output','deliver','cutover','soul-dir','forget'],unlock:['lock','token']
     };
     for(const k of Object.keys(flags)) if(!['json','soul',...(accepted[event] || [])].includes(k)) fail('E_USAGE',`unknown flag --${k} for ${event}`);
@@ -95,6 +101,7 @@ else {
     if(event==='status') result=harvestPolicy(home);
     else if(event==='read') fail('E_REMOVED','okf 4.0.0 removed read: use `oats okf cat --base ALIAS PATH` (same path, text and receipt)');
     else if(consult) {const answer=CONSULT[event](consultSource(home),flags,positionals);result=answer.result;text=answer.text;}
+    else if(event==='propose') {const answer=propose(home,flags);result=answer.result;text=answer.text;}
     else if(event==='refresh') fail('E_REMOVED','okf 3.0.0 has no per-instance views; index/cat always read the accepted state: run `oats okf index`, then `oats okf cat --base ALIAS PATH`');
     else if(event==='soul-scaffold') {
       // Souls are portable declarations, never an implicit knowledge store.
@@ -129,7 +136,8 @@ else {
   } catch(e) {const code=e.code || 'E_OKF',message=redactUrls(e.message);exit=1;answer=hook?{warning:`oats-okf ${code}: ${message}`}:{schemaVersion:1,ok:false,error:{code,message,...(e.result?{result:e.result}:{})}};}
   // Consult commands print text unless --json; every other answer is JSON.
   // Let Node drain the pipe; no process.exit after a possibly large answer.
-  if(textMode && exit) process.stderr.write(`oats okf ${event}: ${answer.error.code}: ${answer.error.message}\n`);
+  // A propose refusal's safe details (finding locations, retained report) go with it.
+  if(textMode && exit) process.stderr.write(`oats okf ${event}: ${answer.error.code}: ${answer.error.message}\n${answer.error.result?JSON.stringify(answer.error.result,null,2)+'\n':''}`);
   else if(textMode) process.stdout.write(text+'\n');
   else process.stdout.write(JSON.stringify(answer)+'\n');
   process.exitCode=exit;

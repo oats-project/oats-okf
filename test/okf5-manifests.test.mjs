@@ -38,8 +38,9 @@ test('every manifest is version 5.8.0 with the >=0.69.2 kernel floor',()=>{
   }
 });
 
-test('oats.okf declares exactly bindings-file, state-dir, git-timeout and consult-max-age',()=>{
-  assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','state-dir']);
+test('oats.okf declares exactly bindings-file, state-dir, git-timeout, consult-max-age and screen-terms-file',()=>{
+  assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','screen-terms-file','state-dir']);
+  assert.equal(cap('oats-okf').commands.propose,'bin/oats-okf.mjs propose');
   assert.equal(cap('oats-okf-harvest').settings,undefined);
 });
 

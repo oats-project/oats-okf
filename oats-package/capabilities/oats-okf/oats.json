@@ -20,6 +20,9 @@
     },
     "consult-max-age": {
       "description": "Seconds a Git base's host-cached accepted commit may age before an `oats okf` consult read refetches the accepted branch; default 300, 0 fetches on every read. `--fresh` always refetches."
+    },
+    "screen-terms-file": {
+      "description": "Optional absolute host path of a text file, one term per line: `oats okf propose` refuses any outgoing content (diff, file name, commit text, PR body, branch) containing a term, case-insensitively (rule host-term, location only). Absent: the fixed content-screen rules only."
     }
   },
   "skills": [
@@ -27,6 +30,7 @@
   ],
   "commands": {
     "harvest": "bin/oats-okf.mjs harvest",
+    "propose": "bin/oats-okf.mjs propose",
     "status": "bin/oats-okf.mjs status",
     "inspect": "bin/oats-okf.mjs inspect",
     "setup": "bin/oats-okf.mjs setup",

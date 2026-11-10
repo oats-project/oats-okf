@@ -1,0 +1,498 @@
+// oats.okf 6.0: the instance proposes its own knowledge as a pull request
+// (docs/design/2026-11-10-no-harvesters-propose-by-pr.md). There is no
+// harvester: `oats okf propose` clones the soul's owned bases (--plan), checks
+// the instance's edits and prints the complete outgoing diff and a digest
+// (--check), then publishes exactly that through the package's publication
+// helper (--apply). The knowledge maintainer gates every merge.
+//
+// The source record is consistency, not authorship: any caller that can run
+// the command can name a home. What bounds a proposal is the soul's owned
+// nodes, OKF validation, the content screen and the maintainer's review.
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { isAbsolute, relative, sep } from 'node:path';
+import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail } from './io.mjs';
+import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
+import { git, preflightLocalRepository, unavailable, validateBase } from './stores.mjs';
+import { consultSource } from './sources.mjs';
+import { harvestPolicy } from './harvest-policy.mjs';
+// The proposer's own copy of the shared publication helper (okf-authoring).
+import { execute } from '../skills/okf-authoring/scripts/okf-publication.mjs';
+
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const DIR = /^(\d{4}-\d{2}-\d{2})-(.+)$/;
+const MAX_FILE = 4 * 1024 * 1024, MAX_NOTES = 100, MAX_TOTAL = 16 * 1024 * 1024;
+const IDENTITY = ['-c', 'user.name=OKF harvest', '-c', 'user.email=okf@localhost', '-c', 'author.name=OKF harvest', '-c', 'author.email=okf@localhost',
+  '-c', 'committer.name=OKF harvest', '-c', 'committer.email=okf@localhost', '-c', 'commit.gpgSign=false'];
+const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+const sha256 = bytes => hash(bytes);
+const present = p => { try { fs.lstatSync(p); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } };
+const failWith = (code, message, result) => { throw Object.assign(new Error(message), { code, ...(result ? { result } : {}) }); };
+const parseJson = (bytes, label) => { try { return JSON.parse(bytes); } catch { return fail('E_SOURCE', `${label} is not readable JSON`); } };
+
+// ------------------------------------------------------------ safe reads
+// Every component below a trusted directory is checked; neither a symlinked
+// note directory nor a FIFO is a file to read. Descriptor checks close a leaf
+// replacement race. Consistency, not a UID sandbox.
+function readWithin(root, path, code = 'E_SOURCE') {
+  const rel = relative(root, path);
+  if (!rel || isAbsolute(rel) || rel.split(sep).some(p => !p || p === '..' || p === '.')) fail(code, 'a source file escapes its directory');
+  let at = root;
+  for (const part of [null, ...rel.split(sep)]) {
+    if (part !== null) at = join(at, part);
+    const st = fs.lstatSync(at);
+    if (st.isSymbolicLink() || (at !== path && !st.isDirectory())) fail(code, 'a source path contains a symlink or non-directory');
+  }
+  const before = fs.lstatSync(path);
+  if (!before.isFile() || before.size > MAX_FILE) fail(code, 'a source file is not regular or exceeds 4 MiB');
+  const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.dev !== before.dev || st.ino !== before.ino || st.size > MAX_FILE) fail(code, 'a source file changed while opening');
+    const bytes = Buffer.alloc(st.size + 1);
+    let n = 0, count;
+    while (n < bytes.length && (count = fs.readSync(fd, bytes, n, bytes.length - n, null)) > 0) n += count;
+    if (n !== st.size) fail(code, 'a source file changed while reading');
+    return bytes.subarray(0, n);
+  } finally { fs.closeSync(fd); }
+}
+const soulName = text => /^name:\s*['"]?([^'"\s#]+)/m.exec(text)?.[1] ?? null;
+// A key position, never a word boundary (`oats.okf-harvest:` is a capability id).
+const OPTED_OUT = /(?:^|[{,])[ \t]*(?:harvest|publish)[ \t]*:[ \t]*['"]?off['"]?[ \t]*(?:[,}#]|$)/m;
+
+// ------------------------------------------------------------ the source
+/** The home a proposal is read from: a live instance home, or the operator's
+ *  recovery form (a retirement recovery directory, the one holding
+ *  recovery.json). → { form, home, root, record, soul, decl, bindings, ... }. */
+export function resolveSource(home, env = process.env) {
+  home = safePath(resolve(home));
+  let st; try { st = fs.lstatSync(home); } catch { fail('E_SOURCE', `${home} is not a directory: run oats okf propose from your instance home, or give --home <instance home | retirement recovery>`); }
+  if (!st.isDirectory()) fail('E_SOURCE', `${home} is not a directory`);
+  let form = 'live', root = home, manifest = null;
+  if (present(join(home, 'recovery.json'))) {
+    form = 'recovery';
+    manifest = parseJson(readWithin(home, join(home, 'recovery.json')), 'retirement recovery manifest');
+    if (manifest?.version !== 1 || manifest.phase !== 'complete' || typeof manifest.instance !== 'string' || typeof manifest.sourceHome !== 'string') fail('E_SOURCE', 'the retirement recovery is not a completed version 1 recovery of one instance');
+    if (manifest.afterHooks !== undefined && (!object(manifest.afterHooks) || typeof manifest.afterHooks.home !== 'boolean')) fail('E_SOURCE', 'the retirement recovery has an invalid afterHooks receipt');
+    root = join(home, ...(manifest.afterHooks?.home ? ['after-hooks', 'home'] : ['home']));
+  }
+  if (!present(join(root, 'instance.json'))) fail('E_SOURCE', `${form === 'live' ? home : 'the recovery copy'} has no instance record (instance.json): run oats okf propose from your instance home, or give --home <instance home | retirement recovery directory>`);
+  const record = parseJson(readWithin(root, join(root, 'instance.json')), 'the instance record');
+  if (!object(record) || typeof record.instance !== 'string' || !NAME.test(record.instance) || typeof record.createdAt !== 'string' || !record.createdAt || typeof record.home !== 'string') fail('E_SOURCE', 'the instance record names no instance, home or createdAt');
+  if (record.kind === 'capability') fail('E_SOURCE', 'a service instance keeps no knowledge to propose');
+  if (form === 'live') {
+    let recorded; try { recorded = fs.realpathSync(record.home); } catch { recorded = record.home; }
+    if (recorded !== fs.realpathSync(home)) fail('E_SOURCE', `the instance record names another home (${record.home}); for a retirement recovery give the recovery directory that holds recovery.json`);
+  } else if (record.instance !== manifest.instance || record.home !== manifest.sourceHome) fail('E_SOURCE', 'the recovery copy\'s record does not match its retirement manifest');
+  // The spawn-recorded duty, as `oats okf status` answers it.
+  let policy;
+  try { policy = harvestPolicy(root); } catch (e) { fail('E_SOURCE', `${e.message}`); }
+  if (policy.harvest === 'unknown') fail('E_SOURCE', 'this home has no spawn-recorded knowledge duty (okf-harvest-policy.json): it was spawned by oats.okf 5.0/5.1 or earlier; respawn it with the current oats.okf (`oats instance upgrade` keeps the duty unknown); nothing was cloned');
+  // The soul: as recorded at spawn, and as the kernel dispatched it (OATS_SOUL).
+  const souls = [];
+  if (typeof record.soulDir === 'string' && isAbsolute(record.soulDir) && present(join(record.soulDir, 'soul.yaml'))) souls.push(['recorded', record.soulDir]);
+  if (env.OATS_SOUL && isAbsolute(env.OATS_SOUL) && present(join(env.OATS_SOUL, 'soul.yaml'))) souls.push(['dispatched', env.OATS_SOUL]);
+  if (!souls.length) fail('E_SOURCE', 'neither the recorded soul nor the dispatched soul (OATS_SOUL) has a readable soul.yaml');
+  const texts = souls.map(([which, dir]) => [which, readWithin(fs.realpathSync(dir), join(fs.realpathSync(dir), 'soul.yaml')).toString('utf8')]);
+  const names = new Set(texts.map(([, t]) => soulName(t)));
+  if (names.size !== 1 || names.has(null)) fail('E_SOURCE', 'the soul given (--soul, or the instance\'s own) is not the soul this home\'s record was spawned from');
+  const soul = [...names][0];
+  if (policy.harvest === 'off' || texts.some(([, t]) => OPTED_OUT.test(t))) fail('E_OPTED_OUT', `the soul ${soul} opts out (knowledge: { harvest: off } or { publish: off }): its instances never publish knowledge`);
+  const { decl, bindings } = consultSource(root);
+  const capabilities = [record.capabilities, record.capabilityRuntime].flatMap(l => Array.isArray(l) ? l : []);
+  const tasksProvider = capabilities.find(c => c?.layer === 'tasks')?.id ?? null;
+  const messaging = capabilities.some(c => c?.layer === 'messaging');
+  const proposer = form === 'live'
+    ? { form, instance: record.instance, alias: messaging ? record.instance : null }
+    : { form, instance: typeof env.OATS_INSTANCE === 'string' && NAME.test(env.OATS_INSTANCE) ? env.OATS_INSTANCE : null, alias: null };
+  return { form, home, root, record, soul, decl, bindings, tasksProvider: typeof tasksProvider === 'string' ? tasksProvider : null, proposer };
+}
+
+/** The owned Git bases, and the owned directory bases skipped with a reason. */
+function ownedBases(source) {
+  const aliases = [...new Set(source.decl.owns.map(ref => ref.split('/')[0]))];
+  const git = [], skipped = [];
+  for (const alias of aliases) {
+    const base = source.bindings.bases[alias];
+    if (!base) fail('E_CONFIG', `owned node base ${alias} is not bound in the bindings file`);
+    if (base.kind !== 'git') skipped.push({ alias, reason: `directory base ${alias} is unsupported for proposals: convert it to a Git base or edit it in a reviewed change` });
+    else git.push({ alias, base, nodes: source.decl.owns.filter(ref => ref.startsWith(`${alias}/`)).map(ref => ref.split('/')[1]) });
+  }
+  if (!git.length) fail('E_UNSUPPORTED', skipped.map(s => s.reason).join('; ') || 'the soul owns no node');
+  return { git, skipped };
+}
+
+// ------------------------------------------------------------ the proposal directory
+const proposalsRoot = source => join(source.root, 'proposals');
+function findProposal(source, slug) {
+  const dir = proposalsRoot(source);
+  let names; try { names = fs.readdirSync(dir); } catch { names = []; }
+  return names.filter(n => DIR.exec(n)?.[2] === slug).map(n => join(dir, n));
+}
+function proposalDir(source, slug) {
+  const found = findProposal(source, slug);
+  if (!found.length) fail('E_USAGE', `no proposal ${slug}: run oats okf propose --plan --slug ${slug} first`);
+  if (found.length > 1) fail('E_PROPOSAL_EXISTS', `more than one proposal directory has slug ${slug}; remove the stale one`);
+  return found[0];
+}
+function readPlan(dir) {
+  const plan = parseJson(readWithin(dir, join(dir, 'plan.json'), 'E_PROPOSAL_FORMAT'), 'plan.json');
+  if (plan?.version !== 1 || !Array.isArray(plan.bases) || !plan.bases.length) fail('E_PROPOSAL_FORMAT', 'plan.json is not an oats okf propose plan; never edit it; remove the proposal directory and plan again');
+  return plan;
+}
+
+export const SKELETON = `# OKF proposal: <one-line claim>
+
+## What
+<!-- Each claim, one concept per file in an owned node of the clone, and the node it lands in. -->
+
+## Why
+<!-- Why it outlives this task: what a future instance would decide or do differently. -->
+
+## Evidence
+<!-- What was observed and when, with task refs; accepted concepts confirmed, refined or contradicted, cited alias/node/concept.md@<oid>. No home, machine or account paths. -->
+
+## Backing notes
+<!-- One line per note: - notes/<file>.md -->
+`;
+const stripComments = text => text.replace(/<!--[\s\S]*?-->/g, '');
+
+// 5.x proposals did not prescribe a heading level or list grammar. Normalize
+// explicit note references anywhere in the proposal, plus list entries under
+// Backing notes. Unparseable note-bearing text is a format refusal, never an
+// empty evidence list (the oats.okf 5.8 note-locator rules).
+export function backingNotes(task) {
+  const notes = new Set();
+  const formatError = () => fail('E_PROPOSAL_FORMAT', 'unrecognized backing-note reference; reformat as a Backing notes list with one literal `- notes/<path>.md` entry per note');
+  let inSection = false;
+  for (const line of String(task).split(/\r?\n/)) {
+    if (/^Source:/.test(line)) continue;
+    const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (heading) inSection = /^Backing notes\s*:?$/i.test(heading[2]);
+    const entry = inSection && /^\s*[-*+]\s+(.+?)\s*$/.exec(line)?.[1];
+    if (entry && (entry.match(/notes\//g) || []).length <= 1 && /^(?:`[^`]+`|notes\/.*\.md|notes\/\S+|\/\S+)$/.test(entry)) {
+      notes.add(entry.replace(/^`(.*)`$/, '$1')); continue;
+    }
+    let consumed = 0;
+    for (const match of line.matchAll(/notes\//g)) {
+      const start = match.index;
+      if (start < consumed) continue;
+      const before = start ? line[start - 1] : '';
+      let end, note;
+      if (['`', '"', "'", '[', '('].includes(before)) {
+        const closing = before === '[' ? ']' : before === '(' ? ')' : before;
+        end = line.indexOf(closing, start);
+        if (end < 0) formatError();
+        note = line.slice(start, end);
+        if (before === '(' && /[\s()]/.test(note)) formatError();
+        const following = line.slice(end + 1);
+        if (following && !/^(?:\s|[.,;!?:)\]]+(?:\s|$))/.test(following)) formatError();
+        consumed = end + 1;
+      } else if (!before || /\s/.test(before)) {
+        const token = /^[^\s`"'<>\[\]()]+/.exec(line.slice(start))?.[0];
+        if (!token) formatError();
+        end = start + token.length;
+        if (end < line.length && !/\s/.test(line[end])) formatError();
+        note = token.replace(/[.,;!?:]+$/, '');
+        consumed = end;
+      } else formatError();
+      if (!note.endsWith('.md')) formatError();
+      notes.add(note);
+    }
+  }
+  return [...notes];
+}
+// The provenance block's note grammar (oats.okf-maintenance parses it strictly).
+const NOTE = /^notes\/[A-Za-z0-9._/-]+\.md$/;
+const safeNote = note => NOTE.test(note) && note.split('/').every(p => p && p !== '.' && p !== '..' && !p.startsWith('.'));
+
+/** proposal.md → { claim, bytes, body, notes } or E_PROPOSAL_FORMAT. */
+function readProposal(dir) {
+  let bytes;
+  try { bytes = readWithin(dir, join(dir, 'proposal.md'), 'E_PROPOSAL_FORMAT'); }
+  catch (e) { fail('E_PROPOSAL_FORMAT', `proposal.md is missing or unreadable (${e.message})`); }
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { fail('E_PROPOSAL_FORMAT', 'proposal.md is not UTF-8'); }
+  const shown = stripComments(text);
+  const lines = shown.split(/\r?\n/);
+  const first = lines.find(l => l.trim());
+  const claim = /^# OKF proposal:[ \t]*(.+?)\s*$/.exec(first ?? '')?.[1];
+  if (!claim || claim.includes('<one-line claim>')) fail('E_PROPOSAL_FORMAT', 'proposal.md must start with `# OKF proposal: <your one-line claim>`');
+  if (claim.length > 200) fail('E_PROPOSAL_FORMAT', 'the one-line claim is longer than 200 characters');
+  if (/^```(?:okf-proposal|okf-harvest)\b/m.test(shown)) fail('E_PROPOSAL_FORMAT', 'proposal.md must not carry a provenance block: the command writes it');
+  for (const section of ['What', 'Why', 'Evidence']) {
+    const at = lines.flatMap((l, i) => new RegExp(`^##[ \\t]+${section}[ \\t]*$`).test(l) ? [i] : []);
+    if (at.length !== 1) fail('E_PROPOSAL_FORMAT', `proposal.md needs exactly one \`## ${section}\` section`);
+    const next = lines.findIndex((l, i) => i > at[0] && /^#{1,2}[ \t]/.test(l));
+    if (!lines.slice(at[0] + 1, next < 0 ? undefined : next).some(l => l.trim())) fail('E_PROPOSAL_FORMAT', `the \`## ${section}\` section is empty`);
+  }
+  const notes = backingNotes(shown);
+  if (notes.length > MAX_NOTES) fail('E_PROPOSAL_FORMAT', `proposal.md names more than ${MAX_NOTES} backing notes`);
+  for (const note of notes) if (!safeNote(note)) fail('E_PROPOSAL_FORMAT', `backing note ${JSON.stringify(note).slice(0, 120)} is not a plain notes/<path>.md (letters, digits, . _ - / only; no hidden or parent segment)`);
+  return { claim, bytes, body: shown.replace(/\n{3,}/g, '\n\n').trim() + '\n', notes };
+}
+
+/** Hash the named notes; a missing or unreadable one is dropped from evidence
+ *  with a warning (E_NOTE), never hashed silently. */
+function evidence(source, notes) {
+  const out = [], warnings = [];
+  let total = 0;
+  for (const note of notes) {
+    let bytes;
+    try { bytes = readWithin(source.root, join(source.root, note), 'E_NOTE'); }
+    catch (e) { out.push({ note }); warnings.push(`E_NOTE: ${note} is ${e.code === 'ENOENT' ? 'missing' : 'unreadable (a symlink, not a regular file, or over 4 MiB)'}: dropped from evidence, listed without a hash`); continue; }
+    total += bytes.length;
+    if (total > MAX_TOTAL) fail('E_PROPOSAL_FORMAT', 'the named notes exceed 16 MiB');
+    out.push({ note, sha256: sha256(bytes) });
+  }
+  return { evidence: out, warnings };
+}
+
+// ------------------------------------------------------------ Git
+const gitRemote = (cwd, args) => git(cwd, args, { timeout: gitTimeoutMs() });
+function withIndex(clone, fn) {
+  const scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-propose-'));
+  try { return fn({ ...cleanEnv(), GIT_INDEX_FILE: join(scratch, 'index') }, scratch); }
+  finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+}
+/** The tree the clone's working files would publish, without touching its index. */
+function workingTree(clone, accepted) {
+  return withIndex(clone, env => {
+    git(clone, ['read-tree', accepted], { env });
+    git(clone, ['add', '-A', '--', '.'], { env });
+    return git(clone, ['write-tree'], { env });
+  });
+}
+function changes(clone, accepted, treeId) {
+  const raw = git(clone, ['diff-tree', '-r', '-z', '--no-renames', `${accepted}^{tree}`, treeId], { trim: false });
+  const parts = raw.split('\0'), out = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const m = /^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ ([A-Z])/.exec(parts[i]);
+    if (!m) fail('E_SCOPE', 'unreadable tree difference');
+    out.push({ oldMode: m[1], mode: m[2], status: m[3], path: parts[i + 1] });
+  }
+  return out;
+}
+const baseFile = (base, p) => base.root === '.' ? p : `${base.root}/${p}`;
+/** The owned node paths in the accepted okf-base.json, after resolveNodes. */
+function surface(clone, accepted, owned, decl, bindings) {
+  let meta;
+  try { meta = JSON.parse(git(clone, ['show', `${accepted}:${baseFile(owned.base, 'okf-base.json')}`])); }
+  catch { fail('E_CONFIG', `base ${owned.alias}: no readable okf-base.json at the accepted commit`); }
+  if (!object(meta?.nodes) || meta.id !== owned.base.id) fail('E_CONFIG', `base ${owned.alias}: okf-base.json does not match the bound base identity`);
+  const refs = owned.nodes.map(node => `${owned.alias}/${node}`);
+  resolveNodes({ owner: decl.owner, owns: refs, reads: [] }, bindings, { [owned.alias]: { nodes: meta.nodes } });
+  const paths = owned.nodes.map(node => meta.nodes[node].path);
+  const others = Object.entries(meta.nodes).filter(([node]) => !owned.nodes.includes(node)).map(([node, spec]) => ({ node, path: spec.path }));
+  return { paths, others, nodes: refs };
+}
+function checkScope(owned, scope, list) {
+  for (const c of list) {
+    const shown = JSON.stringify(c.path).slice(0, 200);
+    if (owned.base.root !== '.' && !c.path.startsWith(`${owned.base.root}/`)) fail('E_SCOPE', `${shown} is outside base ${owned.alias}'s root`);
+    const rel = owned.base.root === '.' ? c.path : c.path.slice(owned.base.root.length + 1);
+    if (rel.split('/').some(p => p.startsWith('.'))) fail('E_SCOPE', `${shown}: hidden paths are not knowledge`);
+    if (c.status !== 'D' && c.mode !== '100644') fail('E_SCOPE', `${shown}: only regular, non-executable Markdown files may be proposed`);
+    if (rel === 'index.md') continue;
+    const other = scope.others.find(n => rel === n.path || rel.startsWith(`${n.path}/`));
+    if (other) fail('E_OWNER', `${shown} is in node ${owned.alias}/${other.node}, which this soul does not own; leave that claim for the node's owner`);
+    if (!scope.paths.some(p => rel.startsWith(`${p}/`))) fail('E_SCOPE', `${shown} is outside the write surface: the owned nodes (${scope.paths.join(', ')}) and the base root index.md`);
+    if (!rel.endsWith('.md')) fail('E_SCOPE', `${shown} is not a Markdown concept`);
+  }
+}
+function validateTree(clone, owned, treeId) {
+  withIndex(clone, (env, scratch) => {
+    const out = join(scratch, 'tree');
+    fs.mkdirSync(out);
+    git(clone, ['read-tree', treeId], { env });
+    git(clone, [`--work-tree=${out}`, 'checkout-index', '-a', '-q'], { env });
+    try { validateBase(owned.base.root === '.' ? out : join(out, owned.base.root), owned.base); }
+    catch (e) { fail('E_VALIDATION', `base ${owned.alias}: the proposed tree is not a valid OKF base (okf-validate --strict): ${e.message.replaceAll(out, '<clone>')}`); }
+  });
+}
+
+// ------------------------------------------------------------ outgoing texts
+function provenance(source, bases, ev) {
+  return {
+    version: 3,
+    source: {
+      soul: source.soul, owner: source.decl.owner, instance: source.record.instance, incarnation: source.record.createdAt,
+      ownedNodes: source.decl.owns, readNodes: source.decl.reads.filter(r => !source.decl.owns.includes(r)),
+      bases: bases.map(b => ({ alias: b.alias, id: b.base.id, kind: 'git', root: b.base.root, repository: b.base.pr.repository })),
+    },
+    evidence: ev,
+    tasks: { provider: source.tasksProvider, refs: [] },
+    proposer: source.proposer,
+  };
+}
+const commitText = (source, proposal) => `okf-proposal: ${proposal.claim}\n\nSource: instance ${source.record.instance}, soul ${source.soul}\n`;
+const prBody = (proposal, block) => `${proposal.body}\n\`\`\`okf-proposal\n${JSON.stringify(block, null, 2)}\n\`\`\`\n`;
+function termsFile() {
+  const file = settings()['screen-terms-file'];
+  if (file === undefined) return undefined;
+  if (typeof file !== 'string' || !isAbsolute(file) || resolve(file) !== file) fail('E_CONFIG', 'screen-terms-file must be a normalized absolute path');
+  return file;
+}
+/** Run one helper command in process; its refusals keep their codes. */
+function runHelper(command, options) {
+  try { return execute(command, { ...options }); }
+  catch (e) {
+    const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
+    const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) };
+    failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : `the publication helper refused (${code})`, result);
+  }
+}
+
+/** Everything --check verifies and --apply re-verifies. Writes only the
+ *  outgoing texts under the proposal directory; nothing remote. */
+function prepare(source, dir, plan) {
+  const proposal = readProposal(dir);
+  const { evidence: ev, warnings } = evidence(source, proposal.notes);
+  const { git: bases } = ownedBases(source);
+  const terms = termsFile();
+  const outgoing = join(dir, 'outgoing');
+  fs.mkdirSync(outgoing, { recursive: true, mode: 0o700 });
+  const block = provenance(source, bases, ev), body = prBody(proposal, block), message = commitText(source, proposal);
+  const results = [];
+  for (const entry of plan.bases) {
+    const owned = bases.find(b => b.alias === entry.alias);
+    if (!owned) fail('E_SOURCE', `the plan's base ${entry.alias} is no longer an owned Git base; plan a new proposal`);
+    const clone = join(dir, 'work', entry.alias);
+    if (!present(join(clone, '.git'))) fail('E_PROPOSAL_FORMAT', `the clone of ${entry.alias} is missing; plan a new proposal`);
+    const accepted = entry.accepted;
+    const scope = surface(clone, accepted, owned, source.decl, source.bindings);
+    const treeId = workingTree(clone, accepted);
+    const list = changes(clone, accepted, treeId);
+    if (!list.length) { results.push({ alias: entry.alias, clone, accepted, tree: treeId, changed: [] }); continue; }
+    checkScope(owned, scope, list);
+    validateTree(clone, owned, treeId);
+    const commitFile = join(outgoing, `${entry.alias}-commit.txt`), bodyFile = join(outgoing, `${entry.alias}-pr.md`);
+    atomic(commitFile, message); atomic(bodyFile, body);
+    // A throwaway commit of exactly what would be pushed: the helper screens
+    // the full outgoing history, the commit text and the PR body.
+    const probe = git(clone, [...IDENTITY, 'commit-tree', treeId, '-p', accepted], { input: message });
+    runHelper('screen', { repo: clone, base: accepted, head: probe, 'text-file': [commitFile, bodyFile], ...(terms ? { 'terms-file': terms } : {}) });
+    const diff = git(clone, ['diff', '--no-color', '--no-renames', '--no-ext-diff', accepted, probe], { trim: false, maxBuffer: 64 * 1024 * 1024 });
+    results.push({ alias: entry.alias, clone, accepted, tree: treeId, owned, changed: list.map(c => `${c.status} ${c.path}`), diff, commitFile, bodyFile });
+  }
+  if (!results.some(r => r.changed.length)) fail('E_USAGE', 'nothing to propose: no owned base changed. If nothing passed the promotion test, record that in log.md and remove the proposal directory');
+  const digest = hash({ version: 1, bases: results.map(r => ({ alias: r.alias, accepted: r.accepted, tree: r.tree })), proposal: sha256(proposal.bytes), evidence: ev });
+  return { proposal, evidence: ev, warnings, body, message, results, digest, terms };
+}
+
+// ------------------------------------------------------------ the three steps
+/** Open okf-proposal and okf-harvest PRs on the base: duplicate candidates,
+ *  informative only. Best effort: gh absent or failing never refuses a plan. */
+function duplicates(base) {
+  const out = [];
+  for (const label of ['okf-proposal', 'okf-harvest']) {
+    try {
+      const rows = JSON.parse(exec('gh', ['pr', 'list', '--repo', base.pr.repository, '--label', label, '--state', 'open', '--limit', '100', '--json', 'number,title,url'], { timeout: 30000 }));
+      for (const r of Array.isArray(rows) ? rows : []) out.push({ label, number: r.number, title: String(r.title ?? '').slice(0, 200), url: String(r.url ?? '') });
+    } catch { return { unavailable: 'gh pr list failed or gh is absent: open proposals could not be listed; check them by hand' }; }
+  }
+  return out;
+}
+
+export function plan(source, slug) {
+  if (findProposal(source, slug).length) fail('E_PROPOSAL_EXISTS', `a proposal with slug ${slug} already exists under proposals/; choose another slug, or remove the old directory once it is no longer needed`);
+  const { git: bases, skipped } = ownedBases(source);
+  const date = new Date().toISOString().slice(0, 10);
+  const parent = proposalsRoot(source), dir = join(parent, `${date}-${slug}`);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const staging = fs.mkdtempSync(join(parent, `.plan-${slug}-`));
+  try {
+    const rows = [];
+    for (const owned of bases) {
+      const clone = join(staging, 'work', owned.alias);
+      fs.mkdirSync(dirname(clone), { recursive: true, mode: 0o700 });
+      preflightLocalRepository(owned.base, owned.alias);
+      try { gitRemote(dirname(clone), ['clone', '--quiet', '--no-tags', '--single-branch', '--branch', owned.base.acceptedBranch, '--', owned.base.repository, clone]); }
+      catch (e) { unavailable(owned.base, owned.alias, 'clone', e); }
+      const accepted = git(clone, ['rev-parse', '--verify', `refs/remotes/origin/${owned.base.acceptedBranch}^{commit}`]);
+      const scope = surface(clone, accepted, owned, source.decl, source.bindings);
+      rows.push({ alias: owned.alias, accepted, root: owned.base.root, nodes: scope.nodes, surface: [...scope.paths.map(p => `${baseFile(owned.base, p)}/`), baseFile(owned.base, 'index.md')], duplicates: duplicates(owned.base) });
+    }
+    atomic(join(staging, 'proposal.md'), SKELETON);
+    atomic(join(staging, 'plan.json'), JSON.stringify({ version: 1, slug, form: source.form, bases: rows.map(({ alias, accepted }) => ({ alias, accepted })) }, null, 2) + '\n');
+    fs.renameSync(staging, dir);
+    return { proposal: dir, form: source.form, source: { instance: source.record.instance, soul: source.soul, owner: source.decl.owner },
+      bases: rows.map(r => ({ ...r, clone: join(dir, 'work', r.alias) })), skipped,
+      next: `write the knowledge in each clone (owned nodes and the base root index.md only), fill ${join(dir, 'proposal.md')}, then oats okf propose --check --slug ${slug}` };
+  } catch (e) { fs.rmSync(staging, { recursive: true, force: true }); throw e; }
+}
+
+export function check(source, slug) {
+  const dir = proposalDir(source, slug), p = prepare(source, dir, readPlan(dir));
+  return { proposal: dir, digest: p.digest, warnings: p.warnings, evidence: p.evidence,
+    bases: p.results.filter(r => r.changed.length).map(r => ({ alias: r.alias, accepted: r.accepted, changed: r.changed, diff: r.diff })),
+    unchanged: p.results.filter(r => !r.changed.length).map(r => r.alias),
+    commitText: p.message, prBody: p.body,
+    next: `read the complete outgoing diff, commit text and PR body above once as a reviewer would (knowledge-theory's reject list; no personal data, secrets or private paths), then oats okf propose --apply --slug ${slug} --digest ${p.digest}` };
+}
+
+export function apply(source, slug, expected) {
+  if (typeof expected !== 'string' || !/^[0-9a-f]{64}$/.test(expected)) fail('E_USAGE', '--apply needs --digest <the 64-hex digest --check printed>');
+  const dir = proposalDir(source, slug);
+  const p = prepare(source, dir, readPlan(dir));
+  if (p.digest !== expected) fail('E_DIGEST', 'the clone, proposal.md or a named note changed since --check (or the digest is not the one it printed): run --check again and read its diff before --apply');
+  // The publish directory is the attempt marker: one attempt per proposal.
+  const publish = join(dir, 'publish');
+  try { fs.mkdirSync(publish, { mode: 0o700 }); }
+  catch (e) { if (e.code === 'EEXIST') fail('E_PROPOSAL_EXISTS', `this proposal was already applied or attempted (see ${publish}); never retry it: plan a new proposal if knowledge is still missing`); throw e; }
+  const published = [];
+  const stamp = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+  for (const r of p.results.filter(x => x.changed.length)) {
+    const branch = `okf-proposal/${stamp}-${randomUUID()}`;
+    const report = join(publish, `${r.alias}-result.json`);
+    try {
+      git(r.clone, ['update-ref', `refs/heads/${branch}`, r.accepted, '']);
+      git(r.clone, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
+      git(r.clone, ['read-tree', r.accepted]);
+      git(r.clone, ['add', '-A', '--', '.']);
+      if (git(r.clone, ['write-tree']) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the clone changed after the digest was checked; nothing was pushed`);
+      const terms = p.terms ? { 'terms-file': p.terms } : {};
+      const committed = runHelper('commit', { repo: r.clone, base: r.accepted, head: r.accepted, branch, 'commit-file': r.commitFile, ...terms });
+      const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
+        'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': r.bodyFile, ...terms });
+      const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
+      atomic(report, JSON.stringify({ ok: true, ...row }, null, 2) + '\n');
+      published.push(row);
+    } catch (e) {
+      const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
+      const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}) };
+      try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_PUSH_UNCERTAIN', 'E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : ''}`,
+        { published, failed: safe, proposal: dir });
+    }
+  }
+  atomic(join(dir, 'published.json'), JSON.stringify({ version: 1, prs: published }, null, 2) + '\n');
+  return { proposal: dir, prs: published, warnings: p.warnings,
+    next: 'record each PR URL in log.md and go back to work; the knowledge maintainer reviews it (the proposal-review trigger), you never shepherd it' };
+}
+
+// ------------------------------------------------------------ text
+export function render(step, r) {
+  if (step === 'plan') return [`proposal ${r.proposal} (${r.form})`,
+    ...r.bases.flatMap(b => [`base ${b.alias}: clone ${b.clone} at ${b.accepted.slice(0, 12)}`, `  write surface: ${b.surface.join(', ')}`,
+      `  open proposals (duplicate candidates): ${Array.isArray(b.duplicates) ? (b.duplicates.map(d => `#${d.number} [${d.label}] ${d.title}`).join('; ') || 'none') : b.duplicates.unavailable}`]),
+    ...r.skipped.map(s => `skipped: ${s.reason}`), `next: ${r.next}`].join('\n');
+  if (step === 'check') return [`proposal ${r.proposal}`, ...r.warnings.map(w => `warning: ${w}`),
+    ...r.bases.flatMap(b => [`===== base ${b.alias} (onto ${b.accepted.slice(0, 12)}): ${b.changed.length} changed`, ...b.changed.map(c => `  ${c}`), '----- diff', b.diff.trimEnd()]),
+    ...(r.unchanged.length ? [`unchanged: ${r.unchanged.join(', ')} (no PR)`] : []),
+    '===== commit text', r.commitText.trimEnd(), '===== PR body (title: OKF knowledge proposal)', r.prBody.trimEnd(), `===== digest ${r.digest}`, `next: ${r.next}`].join('\n');
+  return [`proposal ${r.proposal}`, ...r.warnings.map(w => `warning: ${w}`), ...r.prs.map(x => `opened ${x.url} (${x.branch} at ${x.head.slice(0, 12)}, onto ${x.base.slice(0, 12)}, base-move recoveries ${x.recovered})`), `next: ${r.next}`].join('\n');
+}
+
+/** `oats okf propose --plan | --check | --apply --slug S [--digest D]`. */
+export function propose(home, flags, env = process.env) {
+  const steps = ['plan', 'check', 'apply'].filter(s => flags[s]);
+  if (steps.length !== 1) fail('E_USAGE', 'give exactly one of --plan, --check or --apply');
+  const [step] = steps;
+  if (typeof flags.slug !== 'string' || !SLUG.test(flags.slug)) fail('E_USAGE', '--slug must be lowercase letters, digits and inner dashes (at most 64), naming this proposal');
+  if (step !== 'apply' && flags.digest !== undefined) fail('E_USAGE', '--digest belongs to --apply');
+  const source = resolveSource(home, env);
+  const result = step === 'plan' ? plan(source, flags.slug) : step === 'check' ? check(source, flags.slug) : apply(source, flags.slug, flags.digest);
+  return { result, text: render(step, result) };
+}
