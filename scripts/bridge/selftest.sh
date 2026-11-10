@@ -28,6 +28,10 @@ expect_ok "bridge --check on the bridged ref" node "$S/bridge.mjs" "$T/c" --pr "
 fresh "$BASE"; node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX" > /dev/null
 git -C "$T/c" add knowledge
 [ -z "$(git -C "$T/c" diff --cached "$BRIDGED" -- knowledge)" ] && echo "ok: fresh generation equals the bridged ref" || { echo "FAIL: fresh generation differs from $BRIDGED"; exit 1; }
+for f in coordination-redesign-precedes-adaptive-onboarding direct-knowledge-proposals-retain-maintainer-review; do
+  F="$T/c/knowledge/nodes/oats-maintainer/stewardship/$f.md"
+  grep -q '^status: decided$' "$F" && grep -q '^decided-by: human$' "$F" && ! grep -q '^status: proposed$' "$F" && echo "ok: override kept on regeneration: $f" || { echo "FAIL: override lost: $f"; exit 1; }
+done
 expect_ok "regenerator check on the fresh generation" node "$REINDEX" "$T/c/knowledge" --check
 expect_fail "bridge: --reindex is required" node "$S/bridge.mjs" "$T/c" --pr "$PR" --check
 fresh "$BRIDGED"; echo '* stale' >> "$T/c/knowledge/subjects/system/oats-okf/index.md"
@@ -63,6 +67,9 @@ node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX" > /dev/null
 fresh "$BASE"; sed -i 's/^title: \(.*\)$/title: "\1"/' "$T/c/$D"
 node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX" > /dev/null
 grep -q '^\* \[A workspace has a default team' "$T/c/knowledge/subjects/workstream/provider-integration/index.md" && echo "ok: a fully quoted title is unquoted in views" || { echo "FAIL: quoted title"; exit 1; }
+fresh "$BASE"; git -C "$T/c" rm -q knowledge/nodes/oats-maintainer/stewardship/direct-knowledge-proposals-retain-maintainer-review.md
+expect_fail "bridge: an override names a missing concept" node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX"
+grep -q 'override names a missing concept' "$T/out" && echo "ok: the missing override fails loudly" || { echo "FAIL: wrong refusal for a missing override"; exit 1; }
 fresh "$BASE"; sed -i 's/^tags: \[/tags: [{x}, /' "$T/c/$D"
 expect_fail "bridge: a tag list the reader cannot parse" node "$S/bridge.mjs" "$T/c" --pr "$PR" --reindex "$REINDEX"
 fresh "$BASE"; sed -i 's/^\(description: .*\)$/\1\nid: dec-000000000000/' "$T/c/$D"

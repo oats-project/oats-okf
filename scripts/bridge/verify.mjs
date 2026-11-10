@@ -23,7 +23,7 @@ const ROOT = path.resolve(checkout);
 const git = (...a) => execFileSync('git', ['-C', ROOT, ...a], { encoding: 'utf8', maxBuffer: 256 << 20 });
 const posix = path.posix;
 const RESERVED = ['claims', 'subjects', 'verdicts'];
-const BRIDGE_KEYS = ['about', 'kind', 'status', 'id'];
+const BRIDGE_KEYS = ['about', 'kind', 'status', 'decided-by', 'id'];
 const failures = [];
 const fail = msg => failures.push(msg);
 

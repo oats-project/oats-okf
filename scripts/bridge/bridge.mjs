@@ -113,7 +113,19 @@ const TYPES = {
   Limitation: ['Insight', 'constraint', null, 'ins'], Reference: ['Reference', null, null, 'ref'],
   Playbook: ['Playbook', null, null, 'pb'],
 };
-const BRIDGE_KEYS = ['about', 'kind', 'status', 'id'];
+const BRIDGE_KEYS = ['about', 'kind', 'status', 'decided-by', 'id'];
+// Reviewed overrides of the type mapping, keyed by base-relative path and applied after it. Each entry is a
+// judgement the base's gate made on the bridge PR; every path must exist (a missing file fails the run).
+// Keys allowed: status, decided-by.
+const OVERRIDES = {
+  // A Roadmap maps to status: proposed, but these two record decisions a human took (the base's gate on #342).
+  'nodes/oats-maintainer/stewardship/coordination-redesign-precedes-adaptive-onboarding.md': { status: 'decided', 'decided-by': 'human' },
+  'nodes/oats-maintainer/stewardship/direct-knowledge-proposals-retain-maintainer-review.md': { status: 'decided', 'decided-by': 'human' },
+};
+for (const [rel, o] of Object.entries(OVERRIDES)) {
+  assert(Object.keys(o).every(k => ['status', 'decided-by'].includes(k)), `override ${rel}: only status and decided-by may be overridden`);
+  assert(fs.existsSync(path.join(BASE, rel)), `override names a missing concept: ${rel} (the reviewed overrides table in bridge.mjs must be updated)`);
+}
 
 // ---------------------------------------------------------------------------------------------------------
 const posix = path.posix;
@@ -206,7 +218,9 @@ for (const rel of conceptPaths) {
   const node = rel.split('/')[1];
   const type = scalar(lines, 'type', rel);
   assert(TYPES[type], `${rel}: unmapped type ${type}`);
-  const [claimType, kind, status, prefix] = TYPES[type];
+  const [claimType, kind, mappedStatus, prefix] = TYPES[type];
+  const override = OVERRIDES[rel] ?? {};
+  const status = override.status ?? mappedStatus;
   const title = scalar(lines, 'title', rel), description = scalar(lines, 'description', rel);
   assert(title && description, `${rel}: title and description are required`);
   assert(!/[\[\]]/.test(title), `${rel}: a title with brackets would break its index link`);
@@ -230,6 +244,7 @@ for (const rel of conceptPaths) {
   const inserted = [`about: ${list(about)}`];
   if (kind) inserted.push(`kind: ${kind}`);
   if (status) inserted.push(`status: ${status}`);
+  if (override['decided-by']) inserted.push(`decided-by: ${override['decided-by']}`);
   inserted.push(`id: ${id}`);
 
   const d = lines.findIndex(l => keyOf(l) === 'description');

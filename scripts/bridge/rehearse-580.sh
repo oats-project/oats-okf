@@ -28,14 +28,14 @@ for side in before after; do
   printf '{"version":1,"stateDir":"%s","bases":{"oats":{"id":"oats-knowledge","kind":"git","repository":"%s","root":"knowledge","acceptedBranch":"rehearsal-%s","pr":{"repository":"oats-project/oats-knowledge"}}}}\n' \
     "$T/state-$side" "$T/kb.git" "$side" > "$T/bindings-$side.json"
 done
-# Only the bridge's block (about, kind, status, id; contiguous, right after description:, in the frontmatter)
+# Only the bridge's block (about, kind, status, decided-by, id; contiguous, right after description:, in the frontmatter)
 # may separate the two outputs.
 cat > "$T/only-bridge-keys.mjs" <<'JS'
 import { readFileSync } from 'node:fs';
 const [a, b] = process.argv.slice(2).map(f => readFileSync(f, 'utf8').split('\n'));
 const close = b.indexOf('---', 1), d = b.findIndex((l, i) => i < close && l.startsWith('description:'));
 let n = 0;
-while (/^(about|kind|status|id): /.test(b[d + 1 + n] ?? '') && d + 1 + n < close) n++;
+while (/^(about|kind|status|decided-by|id): /.test(b[d + 1 + n] ?? '') && d + 1 + n < close) n++;
 const stripped = [...b.slice(0, d + 1), ...b.slice(d + 1 + n)];
 const ok = b[0] === '---' && d > 0 && n >= 2 && b[d + 1].startsWith('about: ') && b[d + n].startsWith('id: ')
   && JSON.stringify(stripped) === JSON.stringify(a);
