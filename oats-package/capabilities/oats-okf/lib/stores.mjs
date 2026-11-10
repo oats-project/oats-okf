@@ -45,10 +45,13 @@ export const baseLock = b => `${b.path}.okf-lock`;
 // publication queue behind them for a bounded time instead of failing.
 const CONSULT_READER_WAIT_MS = 10000;
 export const journalPath = b => `${b.path}.okf-publication.json`;
-export function validateBase(root, base) {
+/** `allow(findings)` (okf 6.0, propose only) returns the findings that still
+ *  refuse: a proposed claim may wait for the maintainer's id. */
+export function validateBase(root, base, { allow = findings => findings } = {}) {
   const files=tree(root,{git:base.kind==='git' && base.root==='.'}); const meta=metadata(files,base);
   const result=JSON.parse(exec(process.execPath,[validator,root,'--strict','--json'],{acceptedStatus:[0,1]}));
-  if(result.errors.length || result.warnings.length) fail('E_VALIDATION', [...result.errors,...result.warnings].join('; '));
+  const findings=allow([...result.errors,...result.warnings]);
+  if(findings.length) fail('E_VALIDATION', findings.join('; '));
   return {files,meta,digest:digest(files),subjects:subjectsOf(files,meta)};
 }
 /** okf 6.0: the subject refs of a base with the subject layout (its subject

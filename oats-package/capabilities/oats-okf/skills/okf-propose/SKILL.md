@@ -172,6 +172,36 @@ sentence above (note file names, task refs and your instance name included),
 and for private paths. A clean screen is a bounded detector, not clearance.
 Fix and run `--check` again until the diff is one you would merge.
 
+### On a base with the subject layout (oats.okf 6.0)
+
+When `--plan` shows `layout: subjects` for a base (its `okf-base.json` lists
+the reserved nodes `claims`, `subjects` and `verdicts`), knowledge is
+organised by **subject** (`oats okf subjects`; the okf-authoring skill has
+the craft):
+
+- **Your soul declares `owns` (okf.json version 1):** write in your owned
+  nodes as above. `--check` adds `about: [<subject>]` to every new claim from
+  the subject whose `legacy-nodes` names that node (`E_SUBJECT` when none
+  does: report it to the knowledge maintainer).
+- **Your soul declares `subjects` (okf.json version 2):** write each claim
+  under `claims/` with `about: [<kind>/<slug>, ...]` (one or more existing
+  subjects). You may also add a new system or project subject file under
+  `subjects/system/` or `subjects/project/` when a claim needs one, and set
+  `status: superseded` on a concept your claim supersedes. Never touch
+  `verdicts/`, `subjects/workstream/`, `okf-base.json`, the root `index.md`
+  by hand, or any other existing concept (`E_SCOPE` names the path and the
+  rule). The tool's check is advisory; the maintainer's review is the gate.
+- **Never write an `id`:** the maintainer stamps it at acceptance. To propose
+  again a claim a verdict rejected, say so with `reconsiders: <id>` and bring
+  new evidence; without it `--check` refuses `E_VERDICT` with the verdict's
+  reason. Before writing, `oats okf verdicts --check <claim file>` answers
+  the same; a title-hash candidate is listed in the PR body for you and the
+  reviewer to resolve.
+- **Never edit a generated index** (`subjects/<kind>/<slug>/index.md`,
+  `subjects/index.md`, `verdicts/index.md`, the root `index.md`'s
+  `## Subjects` section): `--check` regenerates them in the clone, and the
+  printed diff shows it.
+
 ### 3. Apply: `oats okf propose --apply --slug <slug> --digest <digest>`
 
 Use the digest the last `--check` printed. If anything changed since,

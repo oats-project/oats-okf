@@ -174,6 +174,16 @@ base is.
   subject layout; ...` on a plain base). Version 1 keeps working on a
   bridged base. The portable binding stays version 1 and refuses a subjects
   payload with `E_CONFIG` naming the limit.
+- **The write surface in `oats okf propose --check`** on a bridged base: a
+  version-1 soul's new claims get `about:` from `legacy-nodes`
+  (`E_SUBJECT` when none names the node); the generated indexes are
+  regenerated in the clone; a version-2 soul may write `claims/**`, new
+  `subjects/system/**` and `subjects/project/**` files and `status:
+  superseded` (`E_SCOPE` otherwise, every path and rule named; advisory, the
+  maintainer's review is the gate); a proposed claim may lack `id`; verdict
+  lanes 1 and 2 (`E_VERDICT`, PR-body candidates). A version-2 soul proposes
+  to the bound Git bases with the layout, its provenance carrying
+  `source.subjects`.
 - **The spawn brief** of a version-2 soul lists one line per subject (at
   most eight) with claim counts from its generated index.
 - **Subject verbs**, each reading committed indexes with the usual receipt:
@@ -184,7 +194,7 @@ base is.
   `reconsiders:` refuses `E_VERDICT` with the reason; exact title hash:
   candidates). On a plain base they answer `E_USAGE: base <alias> has no
   subject layout`. `bases` and `inspect` report the layout and subjects.
-- **Skills**: `okf-consultation` (the version-2 walk: index of subjects →
+- **Skills**: `okf-propose` (proposing on a bridged base), `okf-consultation` (the version-2 walk: index of subjects →
   subject pages → claims → bodies), `okf-authoring` (writing on a bridged
   base, the regenerator) and `knowledge-review` (the write-surface checklist
   item, stamping ids, regenerating before merge, recording verdicts).

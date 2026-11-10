@@ -358,6 +358,36 @@ oats okf verdicts --check <claim file>
   `<kind>/<slug>` argument reads a subject unless its kind is a bound alias.
 - `--type` and `--kind` match case-insensitively.
 
+### Proposing on a bridged base
+
+`oats okf propose --check` (see [How knowledge is proposed](#how-knowledge-is-proposed))
+does more on a base whose **accepted** `okf-base.json` has the layout:
+
+- a version-1 soul's new claims in its owned nodes get `about:` from the
+  subject whose `legacy-nodes` names the node (`E_SUBJECT` when none does);
+- every generated index is regenerated in the clone (the diff shows it);
+- the **write surface**: a version-1 soul writes its owned nodes and the root
+  `index.md`, as before (`E_OWNER`, `E_SCOPE`); a version-2 soul may add or
+  change files under `claims/**`, add files under `subjects/system/**` and
+  `subjects/project/**`, and set `status: superseded` on a concept it
+  supersedes; never `verdicts/**`, `subjects/workstream/**`,
+  `okf-base.json`, the root `index.md` beyond its generated section, a
+  deletion, or another old-node file. For both, a generated index must be
+  exactly the regenerator's output. Outside it: `E_SCOPE`, naming every path
+  and its rule. The check is advisory (it runs with the proposer's push
+  rights); the knowledge maintainer's review is the gate;
+- a claim the proposal adds or changes may lack `id` (the maintainer stamps
+  it); every other validator finding still refuses (`E_VALIDATION`);
+- verdict lanes 1 and 2 over the proposal's claims, from the clone's
+  `verdicts/`: `E_VERDICT`, or title-hash candidates in a `## Verdict
+  candidates` section of the PR body.
+
+A version-2 soul's plan clones only the bound Git bases with the layout
+(`E_CONFIG: base <alias> has no subject layout; ...` when none has it), and
+its provenance block carries `source.subjects` with `owner: null`. A
+pre-push base-move recovery replays the delta onto the moved tip without
+regenerating: the maintainer regenerates before merge in any case.
+
 ### The verdict check
 
 `oats okf verdicts --check <claim file>` reads a local claim file and the
@@ -867,7 +897,11 @@ unknown operation.
 - **Give proposing hosts branch-create access** on the knowledge repository
   (their `gh`/Git account), or use the fork flow; never accepted-branch push.
 - **Optional:** `screen-terms-file`, a host deny list for the content screen.
-- **No change** to bindings, `okf.json`, `okf-base.json`, the soul opt-out
+- **The subject layout** (see [The subject layout](#the-subject-layout-bridged-bases)):
+  nothing a deployment must change. A base is read by subject only once it
+  is bridged; a soul moves to `okf.json` version 2 when its base is. Readers
+  on 5.x keep working on a bridged base.
+- **No change** to bindings, `okf.json` version 1, `okf-base.json`, the soul opt-out
   (now also spelled `publish: off`) or any handled error code. A soul
   `knowledge.propose` key is refused at spawn (`E_CONFIG`). Open
   `okf-harvest` PRs (provenance version 2) stay reviewable and mergeable.
@@ -1138,6 +1172,12 @@ package's CLI:
   with a v3 block the maintenance parser accepts, a pre-push base move
   recovered, a publication failure retained and never retried) and the
   operator form on a retirement recovery copy.
+- `okf6-subjects-propose`: `propose` on a bridged base: a version-1 soul's
+  claim gets `about:` from `legacy-nodes` and the indexes are regenerated
+  and published, `E_SUBJECT` and `E_OWNER`; a version-2 soul's claim under
+  `claims/` with provenance v3 `subjects`; `E_SCOPE` for `verdicts/`, a
+  workstream subject and an old-node file; `E_VERDICT` and the PR body's
+  verdict candidates; a version-2 plan on a plain base refused;
 - `okf6-subjects`: the subject layout on a bridged fixture base (a small
   version-1 base plus the reserved nodes, two subjects, three claims with
   `about` and one verdict, its indexes written by the regenerator): validator
@@ -1148,7 +1188,9 @@ package's CLI:
   index, `okf.json` version 2 resolves (and refuses on a plain base or an
   unknown subject) at spawn and readiness, the brief, each verb's output and
   `E_USAGE` on a plain base, a version-1 soul's `index` unchanged on the
-  bridged base, the verdict lanes, and the portable binding's refusal.
+  bridged base, the verdict lanes, the write-surface rule (each refusal, the
+  regenerator requirement, a proposal's missing ids) and the portable
+  binding's refusal.
 
 `okf5-real-kernel` runs only when `OATS_OKF_REAL_CLI` names a kernel; CI's
 `real-kernel-0692` job installs the released **OATS 0.69.2** in a disposable
