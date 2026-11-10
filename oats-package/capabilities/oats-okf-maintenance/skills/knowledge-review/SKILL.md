@@ -87,9 +87,10 @@ Fetch and pin the current accepted branch tip. A PR can be behind it without
 being invalid: read the accepted tip's indexes, neighbours and intervening
 changes too (for example `git show <accepted-oid>:<path>`), not only the old PR
 checkout. The helper screens from the unique fork with that tip and keeps the
-live tip/head checks. A behind `merge` refuses with `E_REWRITE_REQUIRED`: v2
-must materialize an exact screened replacement using `rewrite` and receive a
-fresh verdict before merge; a behind legacy v1 PR closes for a new v2 proposal.
+live tip/head checks. A behind `merge` refuses with `E_REWRITE_REQUIRED`: a v3
+or v2 PR must materialize an exact screened replacement using `rewrite` and
+receive a fresh verdict before merge; a behind legacy v1 PR closes for
+re-proposal (`oats okf propose`, a v3 PR).
 Do not pretend a stale base OID is current or certify hosted merge semantics.
 
 Then read, in the checkout:
@@ -229,7 +230,10 @@ The verdicts:
 - **merge**: every check passes.
 - **amend+merge**: fixable problems. Fix them in your checkout (supersession
   edits, index/log entries, wording or citations), validate the whole base and
-  stage the sanitized PR changes. For **v2**, use `rewrite` below: it applies
+  stage the sanitized PR changes. For **v3** and **v2**, use `rewrite` below
+  (the replacement body keeps the PR's own provenance: a v3 PR's body keeps
+  its `okf-proposal` block, a v2 PR's its `okf-harvest` block; the other
+  version refuses `E_PROVENANCE`): it applies
   the fork-to-staged delta to the current accepted tree with three-way text
   merging, preserving intervening accepted work. It never merely reparents the
   old full checkout. The result is one new commit from the accepted tip, never
@@ -263,7 +267,7 @@ human-accepted concept.
 Use these commands from home, filling only record-checked values. The base
 and head are full OIDs, not symbolic refs; the base is the fetched current
 accepted tip and the head is the reviewed PR head. The remote is the recorded
-clone locator. A behind head is supported for v2 replacement via its unique fork
+clone locator. A behind head is supported for v3 or v2 replacement via its unique fork
 with the base, never for direct merge. Do not change the accepted branch or
 refresh an OID merely to bypass a refusal.
 For an amendment, write a safe commit message and safe PR body first:
@@ -276,7 +280,7 @@ node '<okf-authoring skill dir>/scripts/okf-publication.mjs' rewrite \
 ```
 
 For permitted legacy additions use `amend-legacy` instead of `rewrite`. For a
-v2 rewrite, fetch and check out the returned OID, verify the remote branch
+v3 or v2 rewrite, fetch and check out the returned OID, verify the remote branch
 points to it with a single current-accepted-tip parent, validate the reconciled
 whole base and review it again, including preservation of intervening work.
 Compare the sanitized delta against the previously reviewed head with
@@ -305,7 +309,7 @@ exact OID/old-head lease, sends immutable text bytes, and never uses an
 automatic merge summary of prior commits. It rechecks the screened head tree
 and that the accepted pin is current before merge. A moved accepted tip refuses
 again with `E_REWRITE_REQUIRED`, even after a completed rewrite; do not retry by
-automatically recomposing. A moved head also refuses. Prior accepted-branch advancement requires the v2 rewrite/fresh-review
+automatically recomposing. A moved head also refuses. Prior accepted-branch advancement requires the v3/v2 rewrite/fresh-review
 path, or closing a legacy v1 PR for re-proposal; no approximate local squash
 stands in for the exact tree being published. Its merge result is a submission: read back that the PR actually merged before reporting
 acceptance or retiring. A queued merge is not a completed review. A partial
