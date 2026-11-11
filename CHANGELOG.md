@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 6.0.1 — 2026-11-11
+
+Requires OATS >=0.69.2, unchanged. Fixes the four follow-ups from the release
+lane's sign-off on #132 (oats-project/oats-okf#136), the 6.0.0 known limit among
+them. Nothing a deployment must change.
 
 ### Fixed (6.0 follow-ups from the release lane's sign-off on #132)
 
