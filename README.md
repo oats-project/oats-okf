@@ -355,7 +355,9 @@ unprotected accepted branch lets a proposal be merged directly). The spawn
 `W_INDEX_STALE` line. `propose --check` reports such an accepted claim in
 its `warnings` the same way and goes on; the claims it proposes still carry
 no `id`. `okf-validate.mjs --strict` (an error), migration and publication
-still refuse it. Every other finding still refuses every reader.
+still refuse it. Every other finding still refuses the spawn and reads
+`INVALID` in `bases`; the subject verbs, as before, answer from the
+committed indexes and warn only for the tolerated kinds.
 `oats okf bases` agrees with the readers: a base whose only findings are
 these tolerated kinds is `valid`, with the warning lines under it (and
 `warnings` on the row and the answer in `--json`); any other finding reads

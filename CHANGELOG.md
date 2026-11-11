@@ -15,7 +15,8 @@
   `warnings` in `--json`) read the base and warn `W_ID_MISSING: N claims lack
   an id at <alias@commit>; the maintainer stamps them (knowledge-review)`.
   `propose --check` reports such an accepted claim in its `warnings` instead
-  of refusing the proposal. Every other finding still refuses;
+  of refusing the proposal. Every other finding still refuses the spawn
+  (the subject verbs stay best-effort, as before);
   `okf-validate.mjs --strict`, `okf-reindex.mjs --check`, migration and
   publication are unchanged. Cached validations move to version 4 (they
   carry the count), so a 6.0.0/6.0.1 verdict that cached such a commit as

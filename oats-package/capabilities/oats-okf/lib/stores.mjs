@@ -52,7 +52,9 @@ export const journalPath = b => `${b.path}.okf-publication.json`;
 // warns (W_INDEX_STALE). okf 6.0.2 (#138): it also tolerates one error, a
 // claims/ concept merged without the maintainer's id stamp, and warns
 // (W_ID_MISSING). Every writer (propose, migration, publication) keeps the
-// default, strict: what it writes is refused until regenerated or stamped.
+// default, strict: what it writes is refused until regenerated or stamped;
+// propose alone lets through, by its `allow`, the missing ids of its own claims
+// and (6.0.2) of accepted claims/ concepts it leaves untouched, as a warning.
 const INDEX_WARNING=/: generated index is (stale|missing|orphan); run okf-reindex\.mjs$/;
 const ID_WARNING=/: missing 'id' \(stamped by the maintainer at acceptance\)$/;
 /** The validator's error for a claims/ concept without `id` (one claim each). */

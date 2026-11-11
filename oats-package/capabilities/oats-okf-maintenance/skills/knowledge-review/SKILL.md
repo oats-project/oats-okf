@@ -349,8 +349,9 @@ and `verdicts` is read by subject (the okf-authoring skill, and the README's
 - **Regenerate and validate the whole base before you merge:**
   `okf-reindex.mjs <base>` then `OKF_STRICT_EXIT=1 okf-validate.mjs <base>
   --strict`. A stale index or a missing id on the accepted branch fails
-  this gate and every writer; readers only warn (`W_INDEX_STALE`,
-  `W_ID_MISSING`) until you repair it.
+  this gate, migration and publication; readers only warn
+  (`W_INDEX_STALE`, `W_ID_MISSING`) until you repair it, and `oats okf
+  propose` reports an accepted claim's missing id as `W_ID_MISSING` too.
 - **Verdict candidates.** The PR body lists the proposer's
   `oats okf verdicts --check` candidates (an exact title hash): resolve each
   to its canonical id, and judge whether the claim is the same, a
