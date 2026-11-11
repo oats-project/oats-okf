@@ -388,8 +388,10 @@ oats okf index workstream/knowledge  # any soul: that subject's generated index
 oats okf verdicts --check <claim file>
 ```
 
-- Each verb reads committed generated indexes (one blob each, plus the
-  subject file for `subject`), never scans the base, and keeps the receipt
+- Each verb answers from committed generated indexes (one blob each, plus
+  the subject file for `subject`), never from a scan of the base; only the
+  first read of a commit no spawn or `bases` has validated validates the
+  whole base once, for `W_INDEX_STALE` (above). It keeps the receipt
   (`alias@oid`): cite as before, `alias/path@oid`. A committed index is
   untrusted input: it is parsed in linear time (a filter is compared once per
   distinct type and kind; text over 16,000 characters is keyed by its sha256),

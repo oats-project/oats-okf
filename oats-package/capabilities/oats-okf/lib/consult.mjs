@@ -619,8 +619,9 @@ export function search(source, flags, positionals) {
     text: `${text || `no matches for ${JSON.stringify(query)}`}${more ? `\n… and ${more} more (narrow with --node or a longer query)` : ''}\n${footer(receipts)}` };
 }
 // ---------------------------------------------------------------- subject layout (okf 6.0)
-// The verbs read committed generated indexes (one blob each), never scan the
-// base. A base without the reserved nodes answers E_USAGE.
+// The verbs answer from committed generated indexes (one blob each), never
+// from a scan of the base (the staleness check validates an unvalidated
+// commit once: noteStale). A base without the reserved nodes answers E_USAGE.
 // A version-2 soul has no nodes: a <kind>/<slug> is always a subject. A
 // version-1 soul keeps alias/node precedence for a kind that is a bound alias.
 const isSubjectArg = (source, p) => SUBJECT_REF.test(p) && (source.decl.version === 2 || !Object.hasOwn(source.bindings.bases, p.split('/')[0]));
