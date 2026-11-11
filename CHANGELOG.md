@@ -204,6 +204,68 @@ The hand steps, from the deployment directory:
    retained one's claims by step 1 (the source, or the operator form on the
    harvester's source's recovery).
 
+### 6.0: the subject layout (spec `docs/design/2026-11-10-subject-layer-in-oats-okf.md`)
+
+Nothing a deployment must change for the layout: a base is read by subject
+only once it is bridged, and a soul moves to `okf.json` version 2 when its
+base is.
+
+- **Bridged bases.** A version-1 `okf-base.json` that lists the reserved
+  nodes `claims`, `subjects` and `verdicts` (each at its own path, owner the
+  sentinel `00000000-0000-0000-0000-000000000000`) is read as the subject
+  layout: subject files `subjects/<kind>/<slug>.md`, `about:` on every claim,
+  stable `id`s, the verdict record under `verdicts/`, and generated indexes.
+  Any other base is a plain version-1 base, served as before. The unchanged
+  5.8.0 validator accepts a bridged base (the suite proves it on its
+  fixture).
+- **Validator v2** (`okf-validate.mjs`, every shipped copy identical): flow
+  lists, and on a bridged base the `about`, subject, verdict and `id` checks
+  and, with `--strict`, generated-index freshness. A plain base gets exactly
+  5.8's findings. Readers (spawn, `bases`, the subject verbs) tolerate a stale
+  generated index and an old-node claim without `id` on a bridged base and
+  warn `W_INDEX_STALE`; `propose --check` and the maintainer's `--strict`
+  gate still refuse them. The 6.0 view format is final.
+- **The regenerator** `okf-reindex.mjs` (new, no dependencies, shipped beside
+  the validator; refuses a base holding a symlink, a non-regular or a
+  multiply-linked file, and writes through temporary files renamed in place): writes each subject's index, `subjects/index.md`,
+  `verdicts/index.md` and the root index's `## Subjects` section
+  deterministically, reading legacy types as claim types (Lesson,
+  Conclusion, Limitation → Insight; Roadmap → Decision) without rewriting a
+  file; `--check` exits 1 on a difference.
+- **`okf.json` version 2**, `{"version":2,"subjects":[...]}`: reading
+  defaults with no owner, owns or reads, resolved at spawn and readiness
+  (`E_CONFIG: unresolved subject: <ref>`; `E_CONFIG: base <alias> has no
+  subject layout; ...` on a plain base). Version 1 keeps working on a
+  bridged base. The portable binding stays version 1 and refuses a subjects
+  payload with `E_CONFIG` naming the limit.
+- **The write surface in `oats okf propose --check`** on a bridged base: a
+  version-1 soul's new claims get `about:` from `legacy-nodes`
+  (`E_SUBJECT` when none names the node); the generated indexes are
+  regenerated in the clone; a version-2 soul may write `claims/**`, new
+  `subjects/system/**` and `subjects/project/**` files and `status:
+  superseded` on a concept one of its claims supersedes (`E_SCOPE` otherwise, every path and rule named; advisory, the
+  maintainer's review is the gate); a proposed claim may lack `id`; verdict
+  lanes 1 and 2 (`E_VERDICT`, PR-body candidates). A version-2 soul proposes
+  to the bound Git bases with the layout, its provenance carrying
+  `source.subjects`.
+- **The spawn brief** of a version-2 soul lists one line per subject (at
+  most eight) with claim counts from its generated index.
+- **Subject verbs**, each reading committed indexes with the usual receipt:
+  `oats okf subjects [--kind K]`, `oats okf subject KIND/SLUG`,
+  `oats okf claims --about KIND/SLUG [--type T] [--kind K]`,
+  `oats okf index [KIND/SLUG]` (a version-2 soul's subjects with no argument),
+  and `oats okf verdicts --check CLAIM-FILE` (identity: a rejected id without
+  `reconsiders:` refuses `E_VERDICT` with the reason; exact title hash:
+  candidates). On a plain base they answer `E_USAGE: base <alias> has no
+  subject layout`. `bases` and `inspect` report the layout and subjects.
+- **Skills**: `okf-propose` (proposing on a bridged base), `okf-consultation` (the version-2 walk: index of subjects →
+  subject pages → claims → bodies), `okf-authoring` (writing on a bridged
+  base, the regenerator) and `knowledge-review` (the write-surface checklist
+  item, stamping ids, regenerating before merge, recording verdicts).
+- This repository's soul keeps `okf.json` version 1 until the bridge PR on
+  its base is accepted; `souls/oats-okf-expert/okf.json.v2` waits beside it.
+- Verdict validation caches move to version 2 (they now carry the base's
+  subjects); a cached 5.x verdict is judged again once.
 
 ### Retired 4.x sources (unreleased on 5.x; superseded by 6.0's removal of the harvester)
 

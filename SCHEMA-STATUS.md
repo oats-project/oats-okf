@@ -13,7 +13,7 @@ repository's `schemas/`:
 | Schema | Describes |
 |---|---|
 | `okf-bindings.schema.json` | the bindings document (`version: 1`, `stateDir`, `bases`; no `cron`/`tz`) |
-| `okf-soul.schema.json` | a soul's `okf.json` (`version: 1`, `owner`, `owns`, `reads`) |
+| `okf-soul.schema.json` | a soul's `okf.json`: `version: 1` (`owner`, `owns`, `reads`) or, 6.0, `version: 2` (`subjects`) |
 | `okf-base.schema.json` | a base's `okf-base.json` (`version: 1`, `id`, `nodes`) |
 | `okf-portable-declaration.schema.json` | the portable `knowledge` envelope, `oats.okf.locations@1` |
 | `okf-portable-payload.schema.json` | the ProviderBinding1 OKF payload, **payloadVersion 2** (`owner`, `stores`, `reads`, `owns`, `runtime`; no `execution`) |
@@ -27,10 +27,10 @@ A knowledge PR's provenance block has no JSON Schema; its parser
 match the version, and accepts:
 
 - **version 3** (6.0, fence `okf-proposal`): `source {soul, owner, instance,
-  incarnation, subjects?, ownedNodes, readNodes, bases}` (`subjects` is
-  format only in 6.0: a `<kind>/<slug>` list for a soul declared by subjects,
-  a later release; with it `owner` may be `null` and the node lists are then
-  empty; 6.0 itself reads only a version 1 `okf.json` and never writes it),
+  incarnation, subjects?, ownedNodes, readNodes, bases}` (`subjects` is the
+  `<kind>/<slug>` list of a soul declared by subjects, an `okf.json`
+  version 2; 6.0 writes it for such a soul, with `owner` `null` and empty node
+  lists),
   the same `evidence` and
   `tasks`, and `proposer {form: live | recovery, instance (null only in the
   recovery form), alias}`;

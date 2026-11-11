@@ -108,6 +108,43 @@ node <skill-dir>/scripts/okf-validate.mjs <bundle-dir> --strict   # + producer l
 
 Lints in a bundle you're *consuming* are noise — read on regardless.
 
+## The subject layout (bridged bases, oats.okf 6.0)
+
+A base whose `okf-base.json` lists the reserved nodes `claims`, `subjects`
+and `verdicts` (each at its own path, owned by the sentinel
+`00000000-0000-0000-0000-000000000000`) is read by subject. There, in
+addition:
+
+- **Every claim and document carries `about: [<kind>/<slug>, ...]`**, one or
+  more subjects that have a file `subjects/<kind>/<slug>.md`; `kind:` where
+  its type has kinds (`Lesson` → `lesson`, `Conclusion` → `finding`,
+  `Limitation` → `constraint`, `Roadmap` → `direction`); and a stable
+  `id:`. Ids are stamped by the knowledge maintainer at acceptance, never by
+  a proposer; a claim under `claims/` without one does not validate, an
+  old-node claim without one is a `--strict` warning. A claim that proposes
+  again what a verdict rejected says so with `reconsiders: <id>`.
+- **Subjects** are `subjects/<system|workstream|project>/<slug>.md` with
+  `type: System | Workstream | Project`; `legacy-nodes: [...]` names the old
+  per-soul nodes a subject absorbs. Workstreams are structure and change only
+  on a person's cited acceptance.
+- **Verdicts** are `verdicts/<id>.md`, `type: Verdict`, written only by the
+  maintainer (fields in the README's "The subject layout").
+- Frontmatter stays flat: scalars and flow lists `[a, "b"]`.
+- **The indexes under `subjects/`, `verdicts/index.md` and the root
+  `index.md`'s `## Subjects` section are generated.** Never edit them by
+  hand: run the regenerator after any change, and commit what it writes.
+
+```bash
+node <skill-dir>/scripts/okf-reindex.mjs <bundle-dir>           # write the generated indexes
+node <skill-dir>/scripts/okf-reindex.mjs <bundle-dir> --check   # exit 1 when stale
+```
+
+On such a base the validator also refuses a missing, empty or unknown
+`about`, a misplaced or mistyped subject or verdict, a duplicate `id`, and
+(with `--strict`) a generated index that differs from the regenerator's
+output. A base on the accepted branch with a `--strict` warning is invalid for
+every 6.0 reader, so regenerate and validate the whole base before a merge.
+
 ## Screening and publication
 
 Structural validation is not a content screen. Before publishing, read
