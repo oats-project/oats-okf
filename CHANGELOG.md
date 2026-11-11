@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A claim merged without the maintainer's id stamp took every version-2
+  soul off the air** (oats-project/oats-okf#138). On an unprotected accepted
+  branch a proposal can be merged directly, leaving a `claims/` concept
+  without `id`: every spawn on the base refused `E_VALIDATION`, `oats okf
+  bases` said `INVALID`, and running homes read on with no warning. Readers
+  now tolerate it as they tolerate a stale generated index: the spawn (brief
+  line and hook warning) and the subject verbs (`subjects`, `subject`,
+  `claims`, `index` for a version-2 soul, `verdicts --check`; stderr and
+  `warnings` in `--json`) read the base and warn `W_ID_MISSING: N claims lack
+  an id at <alias@commit>; the maintainer stamps them (knowledge-review)`.
+  `propose --check` reports such an accepted claim in its `warnings` instead
+  of refusing the proposal. Every other finding still refuses the spawn
+  (the subject verbs stay best-effort, as before);
+  `okf-validate.mjs --strict`, `okf-reindex.mjs --check`, migration and
+  publication are unchanged. Cached validations move to version 4 (they
+  carry the count), so a 6.0.0/6.0.1 verdict that cached such a commit as
+  invalid is judged again once.
+- **`oats okf bases` agrees with the readers.** A base whose only findings
+  are the kinds readers tolerate reads `valid`, with the readers' warning
+  lines (`W_INDEX_STALE`, `W_ID_MISSING`) under it and in `warnings` (on the
+  row and the answer) in `--json`; before, `W_ID_MISSING`'s case read
+  `INVALID` and `W_INDEX_STALE` was not shown.
+- **The knowledge-review skill** says how the maintainer stamps a claim
+  merged without its id (a reviewed PR adding `id:` computed as at
+  acceptance, regenerated and merged through the gate), and that readers
+  warn `W_ID_MISSING` meanwhile.
+- **README: `protection` on a private plan.** On a private repository whose
+  GitHub plan refuses the rulesets read (403 "Upgrade to GitHub Pro or make
+  this repository public"), the field reads `unknown`, not `none`.
+
 ## 6.0.1 — 2026-11-11
 
 Requires OATS >=0.69.2, unchanged. Fixes the four follow-ups from the release

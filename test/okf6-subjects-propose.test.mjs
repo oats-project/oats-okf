@@ -39,12 +39,13 @@ if (a[0] === 'pr' && a[1] === 'view') {
 }
 console.error('unsupported fixture gh call'); process.exit(97);
 `;
+const UNSTAMPED = 'claims/insights/merged-unstamped.md';
 const V1 = { version: 1, owner: 'source', owns: ['kb/expert'], reads: ['kb/peer'] };
 const V2 = { version: 2, subjects: ['system/okf', 'workstream/knowledge'] };
 
 /** One Git base `kb` (the bridged fixture, or the plain one), the soul `source`
  *  with the given okf.json, and its live home `src`. */
-function fixture(t, { decl = V1, plain = false, ident = false, identTitle = false, large = false } = {}) {
+function fixture(t, { decl = V1, plain = false, ident = false, identTitle = false, large = false, unstamped = false } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf6-subjects-propose-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const d = join(dir, 'deployment'), home = join(d, 'agents', 'source', 'instances', 'src'), soul = join(d, 'agents', 'source', 'souls', 'abc');
@@ -53,6 +54,8 @@ function fixture(t, { decl = V1, plain = false, ident = false, identTitle = fals
   writePlainBase(seed, { id: 'kb-1', owners: { expert: 'source', peer: 'other' } }); if (!plain) bridge(seed);
   if (ident) fs.appendFileSync(join(seed, 'peer/lesson.md'), '\n$Id$\n');
   if (large) fs.appendFileSync(join(seed, 'peer/lesson.md'), `\n${'Long accepted body. '.repeat(900000)}\n`);
+  // okf 6.0.2 (#138): an accepted claim merged without the maintainer's id stamp.
+  if (unstamped) { write(join(seed, UNSTAMPED), '---\ntype: Insight\ntitle: Merged without its id\ndescription: x\nabout: [system/okf]\n---\n\n# Merged without its id\n'); reindex(seed); }
   if (identTitle) {
     const f = join(seed, 'claims/insights/consult-reads-one-blob.md');
     fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('title: Consult reads one committed index', 'title: Consult reads one committed index $Id$'));
@@ -130,6 +133,27 @@ test('version 2: plan shows the subject write surface; a claim under claims/ (no
   assert.equal(block.valid, true, JSON.stringify(block.problems));
   assert.deepEqual([block.value.source.owner, block.value.source.subjects, block.value.source.ownedNodes, block.value.source.readNodes, block.value.source.bases.map(b => b.alias)],
     [null, ['system/okf', 'workstream/knowledge'], [], [], ['kb']]);
+});
+
+test('version 2 on a base holding a claim merged without id (#138): check and apply work; the accepted unstamped claim is a W_ID_MISSING warning, not E_VALIDATION; the proposal\'s own claim still needs no id', t => {
+  const f = fixture(t, { decl: V2, unstamped: true }), plan = ok(f.run(['--plan', '--slug', 'pin']));
+  const at = plan.bases[0].accepted.slice(0, 12), w = `W_ID_MISSING: 1 claim lacks an id at kb@${at}; the maintainer stamps it (knowledge-review)`;
+  edit(plan, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]'));
+  const checked = ok(f.run(['--check', '--slug', 'pin']));
+  assert.deepEqual(checked.warnings, [w]);
+  assert.deepEqual(checked.bases[0].changed, ['A claims/decisions/pin.md', 'M subjects/system/okf/index.md'], 'the accepted unstamped claim is not touched');
+  const applied = ok(f.run(['--apply', '--slug', 'pin', '--digest', checked.digest]));
+  assert.deepEqual([applied.warnings, applied.prs.length], [[w], 1]);
+});
+
+test('version 1 on a base holding a claim merged without id (#138): check warns W_ID_MISSING; another validation finding still refuses E_VALIDATION', t => {
+  const f = fixture(t, { unstamped: true }), plan = ok(f.run(['--plan', '--slug', 'pin']));
+  const clone = edit(plan, 'expert/pin.md', CLAIM());
+  fs.appendFileSync(join(clone, 'expert/index.md'), '* [Pin owners before the first read](pin.md) - The owner is pinned before any consult read.\n');
+  assert.deepEqual(ok(f.run(['--check', '--slug', 'pin'])).warnings, [`W_ID_MISSING: 1 claim lacks an id at kb@${plan.bases[0].accepted.slice(0, 12)}; the maintainer stamps it (knowledge-review)`]);
+  write(join(clone, 'expert/pin.md'), CLAIM('\nid: dec-000000000001'));
+  const error = refused(f.run(['--check', '--slug', 'pin']), 'E_VALIDATION', /id dec-000000000001 is also/);
+  assert.doesNotMatch(error.message, /missing 'id'/, 'the tolerated finding is not among the refusals');
 });
 
 test('version 2: E_SCOPE for verdicts/, a workstream subject, an old-node file and a supersession no claim makes', t => {
