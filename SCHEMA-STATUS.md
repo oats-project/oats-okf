@@ -1,6 +1,6 @@
 # Schema and verification status
 
-oats.okf (6.0 unreleased; manifests read 5.8.0) requires **OATS >=0.69.2**,
+oats.okf 6.0.0 requires **OATS >=0.69.2**,
 the first kernel that reads the `background:` key used by the
 `knowledge-maintainer` soul and the `knowledge-harvester` stub (removed in 6.0; it refuses every spawn until 7.0).
 Version declarations are not evidence of a published release.
