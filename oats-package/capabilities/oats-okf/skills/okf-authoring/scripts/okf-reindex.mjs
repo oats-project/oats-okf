@@ -158,14 +158,17 @@ export function isBridgedMeta(m) {
 /** Whether the base at root declares the subject layout: false when it has
  *  no okf-base.json or one that is not valid JSON (every consumer refuses that
  *  base on its own). okf-base.json is read only as a regular single-link file,
- *  never through a link or from a FIFO, and never above METADATA_LIMIT;
- *  anything else is refused (E_PATH, E_TOO_LARGE), so no reader can see a
- *  layout another reader does not. */
-/** The one size limit every reader applies to okf-base.json (the validator,
- *  the regenerator, propose and consult): above it the metadata is refused,
- *  never read as a plain base by one reader and a bridged one by another. */
+ *  never through a link or from a FIFO (E_PATH otherwise). It is read whole,
+ *  as 5.8 read a plain base's metadata, and classified by its content alone,
+ *  so no reader can see a layout another reader does not; metadata that
+ *  declares the subject layout above METADATA_LIMIT is then refused. */
+/** The one size limit every reader applies to the metadata of a base with the
+ *  subject layout (the validator, the regenerator, propose and consult): above
+ *  it that metadata is refused, never read as a plain base by one reader and a
+ *  bridged one by another. A plain base's okf-base.json is not bounded by it:
+ *  6.0 keeps 5.8's behaviour there. */
 export const METADATA_LIMIT = 16 * 1024 * 1024;
-export const metadataTooLarge = () => Object.assign(new Error(`okf-base.json is larger than ${METADATA_LIMIT} bytes; base metadata is a short JSON document`), { code: "E_TOO_LARGE" });
+export const metadataTooLarge = () => Object.assign(new Error(`okf-base.json is larger than ${METADATA_LIMIT} bytes; the metadata of a base with the subject layout is a short JSON document`), { code: "E_TOO_LARGE" });
 export function bridged(root) {
   const file = join(root, "okf-base.json");
   const unsafe = (why) => { throw Object.assign(new Error(`okf-base.json: ${why}; the base metadata must be a regular single-link file`), { code: "E_PATH" }); };
@@ -173,16 +176,23 @@ export function bridged(root) {
   try { st = lstatSync(file); } catch (e) { if (e.code === "ENOENT") return false; throw e; }
   if (!st.isFile()) unsafe(st.isSymbolicLink() ? "a symlink" : "not a regular file");
   if (st.nlink !== 1) unsafe("a file with more than one link");
-  if (st.size > METADATA_LIMIT) throw metadataTooLarge();
   const fd = openSync(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
   let text;
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile() || opened.ino !== st.ino || opened.dev !== st.dev) unsafe("replaced while it was opened");
-    if (opened.size > METADATA_LIMIT) throw metadataTooLarge();
     text = readFileSync(fd, "utf8");
   } finally { closeSync(fd); }
-  try { return isBridgedMeta(JSON.parse(text)); } catch { return false; }
+  return layoutOf(text);
+}
+/** The layout okf-base.json's whole text declares: true for the subject
+ *  layout (E_TOO_LARGE above METADATA_LIMIT), false for a plain base, of any
+ *  size, or text that is not JSON. Every reader classifies through this. */
+export function layoutOf(text) {
+  let layout;
+  try { layout = isBridgedMeta(JSON.parse(text)); } catch { return false; }
+  if (layout && Buffer.byteLength(text) > METADATA_LIMIT) throw metadataTooLarge();
+  return layout;
 }
 export const subjectRef = (kind, slug) => `${kind}/${slug}`;
 /** subjects/<kind>/<slug>.md → { kind, slug, ref }, else null. */

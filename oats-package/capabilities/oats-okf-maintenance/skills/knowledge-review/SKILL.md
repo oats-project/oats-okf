@@ -333,8 +333,8 @@ and `verdicts` is read by subject (the okf-authoring skill, and the README's
   version 1 soul may change only its owned nodes and the root `index.md`, and
   each new claim carries `about:` from the subject whose `legacy-nodes` names
   that node. A proposal from a version 2 soul may add or change files under
-  `claims/**`, add files under `subjects/system/**` and
-  `subjects/project/**`, set `status: superseded` on a concept one of its
+  `claims/**`, add Markdown subject files under `subjects/system/**` and
+  `subjects/project/**` (never a reserved `index.md` or `log.md`), set `status: superseded` on a concept one of its
   claims supersedes (`supersedes:` naming its path or id), and must carry the regenerated indexes; it never touches
   `verdicts/**`, `subjects/workstream/**`, `okf-base.json`, the root
   `index.md` by hand, or another old-node file. An out-of-surface change is

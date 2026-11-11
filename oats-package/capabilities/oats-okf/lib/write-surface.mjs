@@ -8,7 +8,8 @@
 //     bridged base every new claim gets `about:` from the subject whose
 //     `legacy-nodes` names its node (E_SUBJECT when none does).
 //   version 2 soul (a bridged base): add or change files under claims/**, add
-//     files under subjects/system/** and subjects/project/**, set
+//     Markdown files under subjects/system/** and subjects/project/** (never
+//     a reserved index.md or log.md), set
 //     `status: superseded` on a concept it supersedes; never verdicts/**,
 //     subjects/workstream/**, okf-base.json, the root index.md by hand, or any
 //     other old-node file.
@@ -137,7 +138,12 @@ export function checkWriteSurface({ root, decl, ownedNodes, changes, before }) {
     if (status === 'D') { problems.push(`${p}: a proposal deletes nothing; supersede a concept with status: superseded`); continue; }
     if (under(p, 'claims')) { if (!p.endsWith('.md')) problems.push(`${p}: claims/ holds Markdown concepts only`); continue; }
     if (under(p, 'subjects/system') || under(p, 'subjects/project')) {
-      if (status !== 'A') problems.push(`${p}: a proposal adds system and project subjects; it never changes an existing one`);
+      // As claims/: Markdown only; and a reserved name (a node's index.md or
+      // log.md) is never a subject, at any depth (the generated views were
+      // judged above).
+      if (!p.endsWith('.md')) problems.push(`${p}: subjects/system/ and subjects/project/ hold Markdown subject files only`);
+      else if (isReservedFile(p)) problems.push(`${p}: ${p.split('/').pop()} is a reserved name; a proposal adds subject files subjects/<system|project>/<slug>.md`);
+      else if (status !== 'A') problems.push(`${p}: a proposal adds system and project subjects; it never changes an existing one`);
       continue;
     }
     if (under(p, 'verdicts')) { problems.push(`${p}: only the knowledge maintainer writes verdicts/`); continue; }
