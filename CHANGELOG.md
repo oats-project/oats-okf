@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 6.0.2 — 2026-11-11
+
+Requires OATS >=0.69.2, unchanged. A claim merged without the maintainer's
+id stamp no longer takes version-2 spawns down (oats-project/oats-okf#138,
+#139): readers warn `W_ID_MISSING`; writers and strict checks still refuse.
+Nothing a deployment must change.
 
 ### Fixed
 

@@ -1,6 +1,6 @@
 {
   "package": "oats.okf",
-  "version": "6.0.1",
+  "version": "6.0.2",
   "description": "Official OATS knowledge operations on Open Knowledge Format bases: the working-soul knowledge slot (consultation, instance knowledge and proposing knowledge by PR with `oats okf propose`), the knowledge maintainer capability and package soul that gates every merge, the proposal-review trigger template (and, through 6.x, harvest-review for 5.x okf-harvest PRs), and, until 7.0, the removed knowledge harvester's stub soul and capability, whose spawn always refuses with E_REMOVED naming the fix.",
   "compatibility": {
     "oats": ">=0.69.2"
