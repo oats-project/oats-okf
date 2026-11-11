@@ -1,8 +1,8 @@
 # oats.okf 6 — external knowledge, consulted remotely, proposed by PR at checkpoints
 
 The official OKF (Open Knowledge Format) knowledge package for OATS,
-requiring **OATS >=0.69.2**. This branch is the unreleased 6.0 change ("no
-harvesters"; the manifests still read 5.8.0 until the release lane cuts it).
+requiring **OATS >=0.69.2**. This is oats.okf **6.0.0**: no harvesters, and
+the subject layout for bridged bases.
 CI runs it against the released OATS 0.69.2 kernel (see
 [Tests and CI](#tests-and-ci)).
 
@@ -49,7 +49,7 @@ capability's `schemas/`, with copies in the repository's `schemas/`.
 
 ## Configuration
 
-A workspace declares the package (`packages: { oats.okf: v5.8.0 }`) and
+A workspace declares the package (`packages: { oats.okf: v6.0.0 }`) and
 selects it as the knowledge capability (`defaults: { knowledge: { oats.okf:
 { from: package } } }`, or per soul). Each deployment points it at its
 bindings file in its own `oats-local.yaml`:

@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 6.0.0 — 2026-11-11
+
+Requires OATS >=0.69.2, unchanged. A major release in two parts, below: the
+knowledge harvester is removed (oats-project/oats-okf#131), and a bridged base is
+read by subject (oats-project/oats-okf#132). A deployment changes nothing for
+the subject layout until its base is bridged; the harvester's removal is
+what the first part's upgrade steps cover. Existing homes keep their composed
+version until they are respawned or upgraded.
 
 ### 6.0: no harvesters — the instance proposes its knowledge by PR, the maintainer gates
 
@@ -222,8 +229,9 @@ base is.
   lists, and on a bridged base the `about`, subject, verdict and `id` checks
   and, with `--strict`, generated-index freshness. A plain base gets exactly
   5.8's findings. Readers (spawn, `bases`, the subject verbs) tolerate a stale
-  generated index and an old-node claim without `id` on a bridged base and
-  warn `W_INDEX_STALE`; `propose --check` and the maintainer's `--strict`
+  generated index and an old-node claim without `id` on a bridged base;
+  spawn and the subject verbs warn `W_INDEX_STALE`, and `bases` reports the
+  layout without that warning; `propose --check` and the maintainer's `--strict`
   gate still refuse them. The 6.0 view format is final.
 - **The regenerator** `okf-reindex.mjs` (new, no dependencies, shipped beside
   the validator; refuses a base holding a symlink, a non-regular or a
@@ -264,8 +272,12 @@ base is.
   item, stamping ids, regenerating before merge, recording verdicts).
 - This repository's soul keeps `okf.json` version 1 until the bridge PR on
   its base is accepted; `souls/oats-okf-expert/okf.json.v2` waits beside it.
-- Verdict validation caches move to version 2 (they now carry the base's
-  subjects); a cached 5.x verdict is judged again once.
+- Verdict validation caches move to version 3 (they now carry the base's
+  subjects and the stale count); a cached 5.x verdict is judged again once.
+- **Known limit:** on a Git base, the subject verbs warn `W_INDEX_STALE` from
+  the validation cached for the current commit. After `--fresh`, or a fetch
+  that moves the commit, they read the committed views without that warning
+  until a spawn or `oats okf bases` validates the new commit.
 
 ### Retired 4.x sources (unreleased on 5.x; superseded by 6.0's removal of the harvester)
 
