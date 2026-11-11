@@ -310,8 +310,10 @@ also refuses a file name holding a backslash, and never links a path that a
 reader would resolve to another file (spaces, parentheses, angle brackets,
 `?`, `#` or `%`): such a base does not validate with `--strict`. Every
 reader (validator, regenerator, `propose` and the subject verbs) classifies a
-base the same way: an `okf-base.json` that is a link, not a regular
-single-link file, or larger than 16 MiB is refused, never read as plain.
+base the same way, from the whole `okf-base.json`: one that is a link or
+not a regular single-link file is refused, and one that declares the subject
+layout and is larger than 16 MiB is refused, never read as plain. A plain
+base's `okf-base.json` has no such bound, as in 5.8.
 
 On a bridged base the validator also errors on: a malformed flow list (a
 value starting with `[` that is not a flat list, or has no `]` at all; a
@@ -335,7 +337,10 @@ a stale (missing, orphaned) generated index and an old-node claim without
 `id`. Readers read the committed indexes as they are and warn: the spawn
 brief ends with `W_INDEX_STALE: N generated files stale at <alias@commit>;
 the maintainer regenerates (okf-reindex.mjs)`, and each subject verb writes
-that line to stderr (and `warnings` in `--json`). `propose --check`, the
+that line to stderr (and `warnings` in `--json`). A verb that reads a commit
+no spawn or `bases` has validated (after `--fresh`, or a fetch that moved
+the accepted branch) validates it first, as spawn does, so the first read of
+a new commit warns. `propose --check`, the
 maintainer's `--strict` gate and `okf-reindex.mjs --check` still refuse
 them: the knowledge maintainer stamps ids and regenerates before every
 merge. The 6.0 view format is final: any later change to the regenerator's
@@ -415,8 +420,9 @@ does more on a base whose **accepted** `okf-base.json` has the layout:
 - every generated index is regenerated in the clone (the diff shows it);
 - the **write surface**: a version-1 soul writes its owned nodes and the root
   `index.md`, as before (`E_OWNER`, `E_SCOPE`); a version-2 soul may add or
-  change files under `claims/**`, add files under `subjects/system/**` and
-  `subjects/project/**`, and set `status: superseded` on a concept one of
+  change files under `claims/**`, add Markdown subject files under
+  `subjects/system/**` and `subjects/project/**` (never a reserved
+  `index.md` or `log.md`), and set `status: superseded` on a concept one of
   its claims supersedes (`supersedes: [/<path>]` or the concept's id); never `verdicts/**`, `subjects/workstream/**`,
   `okf-base.json`, the root `index.md` beyond its generated section, a
   deletion, or another old-node file. For both, a generated index must be
@@ -858,7 +864,9 @@ stages the base before writing any record, refuses a non-empty destination
 node, rewrites bundle-root links into the node, and validates the base.
 Cutover requires accepted delivery, unchanged original bytes and current
 bindings still mapping the alias to the delivered base; it renames the
-original into custody and updates `okf.json`. Skills are never changed.
+original into custody and updates `okf.json`. A version-2 `okf.json` has no
+owner or nodes to update: cutover refuses it (`E_MIGRATION`, naming the
+version and the fix) and changes nothing. Skills are never changed.
 
 **unlock** releases a directory base lock left by a dead local holder; the
 `E_LOCKED` error names the command:

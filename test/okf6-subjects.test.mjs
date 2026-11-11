@@ -12,7 +12,7 @@ import { verdictLanes } from '../oats-package/capabilities/oats-okf/lib/verdicts
 import { resolveBasePath } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { validateBase } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
 import { acceptedReader } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
-import { migrate } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
+import { migrate, deliverMigration, cutoverMigration } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { handleBindingRequest } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { normalizeKnowledgeDeclaration } from '../oats-package/capabilities/oats-okf/lib/portable-binding.mjs';
 import { prepareSubjectProposal, checkWriteSurface, proposalFindings, proposalVerdicts, verdictSection, legacyMap } from '../oats-package/capabilities/oats-okf/lib/write-surface.mjs';
@@ -262,6 +262,33 @@ test('okf-base.json above the shared metadata limit is refused by the validator,
   assert.equal(s.out.error.code,'E_TOO_LARGE',s.text.slice(0,500));
 });
 
+test('a plain base keeps 5.8\'s behaviour with an okf-base.json above the subject layout\'s metadata limit: it validates, spawns and is read as plain',t=>{
+  const f=deployment(t,{plain:true,decl:{version:1,owner:'owner-1',owns:['project/expert'],reads:['project/peer']}});
+  fs.appendFileSync(join(f.repo,'okf-base.json'),' '.repeat(17*1024*1024));
+  assert.ok(fs.statSync(join(f.repo,'okf-base.json')).size>16*1024*1024);
+  const old=join(f.dir,'okf-validate-5.8.0.mjs');
+  fs.writeFileSync(old,spawnSync('git',['-C',ROOT,'show','v5.8.0:oats-package/capabilities/oats-okf/lib/okf-validate.mjs'],{encoding:'utf8'}).stdout);
+  const now=validate(f.repo,{env:{OKF_STRICT_EXIT:'1'}}),then=validate(f.repo,{validator:old,env:{OKF_STRICT_EXIT:'1'}});
+  assert.equal(now.status,0,now.text.slice(0,500));assert.equal(now.out.layout,'plain');
+  assert.deepEqual([now.status,now.out.errors,now.out.warnings],[then.status,then.out.errors,then.out.warnings],'the same findings as v5.8.0');
+  assert.equal(validateBase(f.repo,{id:'base-1',kind:'git',root:'.'}).subjects,null,'a writer validates it as plain');
+  const r=spawnSync(process.execPath,[REINDEX,f.repo,'--check'],{encoding:'utf8'});
+  assert.equal(r.status,2);assert.match(r.stderr,/has no subject layout/);assert.doesNotMatch(r.stderr,/E_TOO_LARGE/);
+  assert.deepEqual(prepareSubjectProposal({root:f.repo,decl:validateDeclaration({version:1,owner:'owner-1',owns:['project/expert'],reads:[]}),ownedNodes:{expert:'expert'},changes:[]}),{about:[],regenerated:[]});
+  f.git('add','-A');f.git('commit','-q','-m','padded');
+  const spawned=hook(f,'spawn');
+  assert.equal(spawned.status,0,spawned.text.slice(0,500));
+  const bases=run(f,['bases','--json']);
+  assert.equal(bases.status,0,bases.text.slice(0,500));
+  assert.deepEqual([bases.out.result.bases[0].validated,bases.out.result.bases[0].layout],[{ok:true},'plain']);
+  const index=run(f,['index','expert','--json']);
+  assert.equal(index.status,0,index.text.slice(0,500));
+  for(const args of [['subjects'],['subjects','--base','project','--fresh']]) {
+    const s=run(f,[...args,'--json']);
+    assert.equal(s.out.error.code,'E_USAGE',s.text.slice(0,500));assert.match(s.out.error.message,/base project has no subject layout/);
+  }
+});
+
 test('the shipped copies of the validator and the regenerator are byte-identical',()=>{
   for(const name of ['okf-validate.mjs','okf-reindex.mjs']) {
     const lib=fs.readFileSync(join(CAPS,'oats-okf/lib',name));
@@ -335,6 +362,31 @@ test('readers tolerate stale generated indexes (an older view format, a missing 
   assert.equal(validateBase(f.repo,{id:'base-1',kind:'git',root:'.'},{reader:true}).stale,2);
 });
 
+/** The two subject views rendered by an older format (stale), committed: the accepted branch moves. */
+function staleCommit(f) {
+  for(const ref of ['system/okf','workstream/knowledge']) edit(join(f.repo,`subjects/${ref}/index.md`),'## Insight','## Lesson');
+  f.git('add','-A');f.git('commit','-q','-m','older views');
+  return f.git('rev-parse','HEAD').slice(0,12);
+}
+test('W_INDEX_STALE on a moved commit: the first read of a commit no spawn or `bases` validated validates it and warns (after --fresh, and after a due fetch)',t=>{
+  const claim=f=>{const file=join(f.dir,'claim.md');write(file,'---\ntype: Decision\ntitle: New\ndescription: x\nabout: [system/okf]\n---\n');return file;};
+  const verbs=[()=>['subjects'],()=>['subject','system/okf'],()=>['claims','--about','system/okf'],()=>['index'],()=>['index','system/okf'],f=>['verdicts','--check',claim(f)]];
+  for(const make of verbs) {
+    for(const how of ['--fresh','due']) {
+      const f=deployment(t),verb=make(f),extra=how==='due'?{OATS_SETTINGS:JSON.stringify({'bindings-file':f.bindingsFile,'consult-max-age':0})}:{},args=verb;
+      const first=run(f,[...verb,'--json'],{extra});
+      assert.equal(first.status,0,first.text);assert.equal(first.out.result.warnings,undefined,`${args[0]} ${how}: the clean commit warns nothing`);
+      const at=staleCommit(f);
+      const moved=run(f,[...verb,...(how==='--fresh'?['--fresh']:[]),'--json'],{extra});
+      assert.equal(moved.status,0,moved.text);
+      assert.deepEqual(moved.out.result.warnings,[`W_INDEX_STALE: 2 generated files stale at project@${at}; the maintainer regenerates (okf-reindex.mjs)`],`${args[0]} ${how}: ${moved.text}`);
+      assert.match(moved.stderr,/^W_INDEX_STALE: 2 generated files stale at /m);
+      const again=run(f,[...verb,'--json']);
+      assert.equal(again.out.result.warnings?.length,1,`${args[0]} ${how}: the cached validation warns again`);
+    }
+  }
+});
+
 test('writers stay strict: a migration that would leave a subject index stale is refused before the accepted base is touched',t=>{
   const dir=tmp(t,'okf6-migrate-'),basePath=join(dir,'base');writePlainBase(basePath);bridge(basePath);
   fs.rmSync(join(basePath,'expert/decision.md'));fs.writeFileSync(join(basePath,'expert/index.md'),'# expert\n');reindex(basePath);
@@ -347,6 +399,23 @@ test('writers stay strict: a migration that would leave a subject index stale is
     e=>e.code==='E_VALIDATION' && /subjects\/system\/okf\/index\.md: generated index is stale/.test(e.message));
   assert.equal(fs.existsSync(join(basePath,'expert/migrated.md')),false,'nothing accepted');
   assert.equal(fs.readFileSync(join(basePath,'subjects/system/okf/index.md'),'utf8'),before);
+});
+
+test('migrate --cutover names the version for a version-2 soul (E_MIGRATION, nothing changed); a version-1 owner mismatch is still E_OWNER',t=>{
+  const dir=tmp(t,'okf6-cutover-'),basePath=join(dir,'base');writePlainBase(basePath);
+  fs.rmSync(join(basePath,'expert/decision.md'));fs.writeFileSync(join(basePath,'expert/index.md'),'# expert\n');
+  const soul=join(dir,'soul'),legacy=join(soul,'knowledge');
+  write(join(legacy,'index.md'),'# Migrated knowledge\n\n* [Migrated decision](migrated.md) - A migrated decision.\n');
+  write(join(legacy,'migrated.md'),'---\ntype: Decision\ntitle: Migrated decision\ndescription: A migrated decision.\n---\n\n# Migrated decision\n');
+  const staged=migrate({bases:{kb:{id:'base-1',kind:'directory',path:basePath}},stateDir:join(dir,'state')},{legacy,alias:'kb',node:'expert',output:join(dir,'stage')});
+  assert.equal(deliverMigration(staged.migration).status,'accepted');
+  const decl=join(soul,'okf.json'),v2=JSON.stringify({version:2,subjects:['system/okf']})+'\n';
+  fs.writeFileSync(decl,v2);
+  assert.throws(()=>cutoverMigration(staged.migration,soul),e=>e.code==='E_MIGRATION' && e.message===`${decl} is version 2 (subjects): a version-2 soul has no owner, owns or reads, so the cutover has nowhere to add kb/expert. Nothing was changed. To finish the cutover, replace it with a version-1 declaration ({"version":1,"owner":"owner-1","owns":[],"reads":[]}) and rerun this command, then put the version-2 declaration back (a version-2 soul reads its subjects, not the node)`,'names the version, not E_OWNER');
+  assert.equal(fs.readFileSync(decl,'utf8'),v2);assert.ok(fs.existsSync(join(legacy,'migrated.md')),'the legacy bundle stays');
+  assert.equal(fs.existsSync(join(soul,'.okf-cutover.json')),false);assert.equal(JSON.parse(fs.readFileSync(staged.migration,'utf8')).cutover,undefined);
+  fs.writeFileSync(decl,JSON.stringify({version:1,owner:'someone-else',owns:[],reads:[]}));
+  assert.throws(()=>cutoverMigration(staged.migration,soul),e=>e.code==='E_OWNER' && e.message==='existing soul declaration owner differs');
 });
 
 test('spawn: a version-2 soul\'s brief lists one line per subject with counts from its generated index',t=>{
@@ -979,6 +1048,11 @@ const SCOPE=[
   ['okf-base.json',r=>{const f=join(r,'okf-base.json'),m=JSON.parse(fs.readFileSync(f,'utf8'));m.nodes.extra={path:'extra',owner:'x'};fs.writeFileSync(f,JSON.stringify(m));},/okf-base\.json: a proposal never changes okf-base\.json/],
   ['the root index.md by hand',r=>edit(join(r,'index.md'),'The peer node.','The peer\'s node.'),/index\.md: a version-2 proposal changes the root index\.md only through the regenerator's Subjects section/],
   ['a deletion',r=>fs.rmSync(join(r,'claims/insights/consult-reads-one-blob.md')),/consult-reads-one-blob\.md: a proposal deletes nothing/],
+  ['a non-Markdown file under subjects/system/',r=>write(join(r,'subjects/system/notes.txt'),'not a subject\n'),/subjects\/system\/notes\.txt: subjects\/system\/ and subjects\/project\/ hold Markdown subject files only/],
+  ['a non-Markdown file under subjects/project/',r=>write(join(r,'subjects/project/x/data.json'),'{}\n'),/subjects\/project\/x\/data\.json: subjects\/system\/ and subjects\/project\/ hold Markdown subject files only/],
+  ['subjects/project/log.md (a reserved name)',r=>write(join(r,'subjects/project/log.md'),'# project log\n'),/subjects\/project\/log\.md: log\.md is a reserved name; a proposal adds subject files subjects\/<system\|project>\/<slug>\.md/],
+  ['subjects/system/index.md (a reserved name)',r=>write(join(r,'subjects/system/index.md'),'# system\n'),/subjects\/system\/index\.md: index\.md is a reserved name/],
+  ['a reserved name deeper under subjects/system/',r=>write(join(r,'subjects/system/okf/log.md'),'# okf log\n'),/subjects\/system\/okf\/log\.md: log\.md is a reserved name/],
 ];
 for(const [name,mutate,rule] of SCOPE) test(`propose --check, version 2: E_SCOPE for ${name}`,t=>{
   const p=proposal(t);mutate(p.root);

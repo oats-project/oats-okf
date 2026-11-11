@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash, exec } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes, resolveSubjects } from './config.mjs';
 import { git, gitEnv, validateBase, staleWarning, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
-import { isBridgedMeta, METADATA_LIMIT, metadataTooLarge, parseFrontmatter, parseView, plainText, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
+import { layoutOf, parseFrontmatter, parseView, plainText, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
 import { verdictLanes } from './verdicts.mjs';
 
 const HIT_LIMIT = 50, SNIPPET = 200, FRONTMATTER_BYTES = 8 * 1024, TEXT_BYTES = 64 * 1024 * 1024;
@@ -628,14 +628,14 @@ function subjectArg(ref) {
   if (typeof ref !== 'string' || !SUBJECT_REF.test(ref)) fail('E_USAGE', `expected a subject <system|workstream|project>/<slug>, got ${JSON.stringify(ref ?? null)}`);
   return ref;
 }
-/** The layout as the validator classifies it: no okf-base.json or invalid
- *  JSON is plain; metadata above the shared limit is refused, never plain. */
+/** The layout as the validator classifies it (layoutOf, on the whole text):
+ *  no okf-base.json or invalid JSON is plain; subject-layout metadata above
+ *  the shared limit is refused, never plain; a plain base's metadata has no
+ *  such limit (consult's own read bound, as 5.8's for every okf-base.json read). */
 export function hasSubjectLayout(ctx) {
   const e = entry(ctx, 'okf-base.json');
   if (!e || e.type !== 'file') return false;
-  const text = read(ctx, 'okf-base.json', e, { limit: METADATA_LIMIT + 1 });
-  if (Buffer.byteLength(text) > METADATA_LIMIT) throw metadataTooLarge();
-  try { return isBridgedMeta(JSON.parse(text)); } catch { return false; }
+  return layoutOf(read(ctx, 'okf-base.json', e));
 }
 /** fn(ctx) on the base a subject verb reads: --base, the only bound base, or
  *  the only bound base with the subject layout. */
@@ -652,19 +652,23 @@ export function withLayout(source, flags, fn) {
 }
 // okf 6.0: the subject verbs read the committed generated indexes as they are.
 // A base whose indexes are stale is not refused: each verb warns once per base
-// (stderr, and `warnings` in --json) when the base's validation says so (the
-// validation a spawn or `oats okf bases` cached for this commit; a directory
-// base is judged now). Never a fetch or a whole-base read for the warning.
+// (stderr, and `warnings` in --json) when the base's validation says so. A
+// directory base is judged now. A Git base's validation is cached per commit;
+// when none is cached for the commit read (after --fresh, or a fetch that
+// moved the accepted branch), the verb validates and caches it as spawn does,
+// so the first read of a new commit warns. An offline context (the spawn
+// brief) never fetches for it: missing objects leave the warning to the next
+// read. A validation that cannot run (the base unavailable) gives no warning
+// and caches nothing, so the next read tries again; the read itself goes on.
 const warned = [];
 export const takeWarnings = () => warned.splice(0);
 function noteStale(ctx) {
   let n = 0;
   if (ctx.kind === 'directory') { try { n = validateBase(ctx.base.path, ctx.base, { reader: true }).stale; } catch { return; } }
   else {
-    const file = validationFile(ctx);
-    if (!fs.existsSync(file)) return;
-    const c = readJSON(file);
-    if (c?.version === 3 && c.ok && c.commit === ctx.commit && c.root === ctx.base.root) n = c.stale ?? 0;
+    let v;
+    try { v = verdict(ctx, { fetchMissing: !ctx.offline }); } catch { return; }
+    if (v.ok) n = v.stale ?? 0;
   }
   if (n > 0) { const w = staleWarning(n, short(ctx.receipt)); if (!warned.includes(w)) warned.push(w); }
 }

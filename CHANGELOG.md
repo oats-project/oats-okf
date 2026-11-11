@@ -267,6 +267,34 @@ base is.
 - Verdict validation caches move to version 2 (they now carry the base's
   subjects); a cached 5.x verdict is judged again once.
 
+### 6.0 follow-ups (the release lane's sign-off on #132)
+
+- **`W_INDEX_STALE` on a moved commit.** The subject verbs (`subjects`,
+  `subject`, `claims`, `index` for a version-2 soul, `verdicts --check`)
+  warned only from the validation a spawn or `bases` had cached for the
+  commit they read, so after `--fresh`, or a fetch that moved the accepted
+  branch, a stale base read silently until the next spawn or `bases`. A
+  verb that finds no cached validation for its commit now validates it and
+  caches it, as spawn does, and the first read of the new commit warns. The
+  spawn brief still never fetches for it; a validation that cannot run
+  (the base unavailable) warns nothing and is tried again on the next read.
+- **The version-2 write surface under `subjects/`.** `propose --check`
+  accepted any added file under `subjects/system/**` and
+  `subjects/project/**`. It now refuses, with `E_SCOPE` as `claims/` does, a
+  non-Markdown file and a reserved name (`index.md`, `log.md`, at any depth;
+  the generated subject views are still checked against the regenerator).
+- **`migrate --cutover` for a version-2 soul** answered `E_OWNER` ("existing
+  soul declaration owner differs"). It now refuses `E_MIGRATION`, naming the
+  version (a version-2 `okf.json` has no owner, owns or reads to add the
+  node to) and the fix, and changes nothing. A version-1 owner mismatch is
+  still `E_OWNER`.
+- **A plain base's `okf-base.json` above 16 MiB** is served as 5.8 served it.
+  The 16 MiB metadata bound applies only to metadata that declares the
+  subject layout: every reader (validator, regenerator, `propose`, the
+  subject verbs) reads `okf-base.json` whole and classifies it by content, so
+  no reader sees a layout another does not; such a plain base validates,
+  spawns and answers the subject verbs `E_USAGE` (no subject layout).
+
 ### Retired 4.x sources (unreleased on 5.x; superseded by 6.0's removal of the harvester)
 
 Requires OATS >=0.69.2, unchanged. Toward awebai/oats-okf#125: a retired seat
