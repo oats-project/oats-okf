@@ -387,6 +387,104 @@ test('W_INDEX_STALE on a moved commit: the first read of a commit no spawn or `b
   }
 });
 
+// okf 6.0.2 (#138): a claims/ concept merged without the maintainer's id stamp
+// (the PR merged directly on an unprotected branch). Readers read and warn
+// W_ID_MISSING; `bases` agrees with them; the strict surfaces still report it.
+const UNSTAMPED='claims/insights/merged-unstamped.md';
+function unstampedCommit(f) {
+  write(join(f.repo,UNSTAMPED),"---\ntype: Insight\ntitle: Merged without its id\ndescription: A proposal merged without the maintainer's stamp.\nabout: [system/okf]\nkind: finding\n---\n\n# Merged without its id\n\nOne click on an unprotected branch.\n");
+  reindex(f.repo);
+  f.git('add','-A');f.git('commit','-q','-m','merged without the maintainer');
+  return f.git('rev-parse','HEAD').slice(0,12);
+}
+const idWarning=at=>`W_ID_MISSING: 1 claim lacks an id at project@${at}; the maintainer stamps it (knowledge-review)`;
+const claimFile=f=>{const file=join(f.dir,'claim.md');write(file,'---\ntype: Decision\ntitle: New\ndescription: x\nabout: [system/okf]\n---\n');return file;};
+const VERBS=[()=>['subjects'],()=>['subject','system/okf'],()=>['claims','--about','system/okf'],()=>['index'],f=>['verdicts','--check',claimFile(f)]];
+const MISSING_ID=`${UNSTAMPED}: missing 'id' (stamped by the maintainer at acceptance)`;
+
+test('readers tolerate a claims/ concept merged without id: spawn succeeds and warns W_ID_MISSING, the five subject verbs answer with one warning each, `bases` says valid with the warning; okf-validate --strict still reports it',t=>{
+  const f=deployment(t),at=unstampedCommit(f),w=idWarning(at);
+  const strict=validate(f.repo);
+  assert.equal(strict.status,1,strict.text);
+  assert.deepEqual(strict.out.errors,[MISSING_ID],'okf-validate --strict reports it, as an error');
+  assert.equal(reindex(f.repo,'--check').status,0,'okf-reindex --check: the generated indexes are current');
+  assert.throws(()=>validateBase(f.repo,{id:'base-1',kind:'git',root:'.'}),e=>e.code==='E_VALIDATION' && e.message===MISSING_ID,'writers stay strict');
+  const reader=validateBase(f.repo,{id:'base-1',kind:'git',root:'.'},{reader:true});
+  assert.deepEqual([reader.unstamped,reader.stale],[1,0]);
+  const spawned=hook(f,'spawn');
+  assert.equal(spawned.status,0,spawned.text);
+  assert.ok(spawned.out.brief.endsWith(`\n${w}`),spawned.out.brief);
+  assert.equal(spawned.out.warning,`oats-okf: ${w}`);
+  assert.match(spawned.out.brief,/- system\/okf — The knowledge provider package\. \(1 decision, 2 insights\)/,'the unstamped claim is read');
+  for(const make of VERBS) {
+    const args=make(f),r=run(f,[...args,'--json']);
+    assert.equal(r.status,0,r.text);
+    assert.deepEqual(r.out.result.warnings,[w],args.join(' '));
+    assert.equal(r.stderr,`${w}\n`,args.join(' '));
+  }
+  assert.ok(run(f,['claims','--about','system/okf','--json']).out.result.claims.some(c=>c.path===UNSTAMPED),'claims lists it');
+  const text=run(f,['claims','--about','system/okf']);
+  assert.equal(text.status,0,text.text);assert.equal(text.stderr,`${w}\n`);assert.doesNotMatch(text.stdout,/W_ID_MISSING/);
+  const bases=run(f,['bases','--json']);
+  assert.equal(bases.status,0,bases.text);
+  const [row]=bases.out.result.bases;
+  assert.deepEqual([row.validated,row.layout,row.warnings,bases.out.result.warnings],[{ok:true},'subjects',[w],[w]]);
+  const shown=run(f,['bases']);
+  assert.equal(shown.status,0,shown.text);
+  assert.ok(shown.stdout.includes(`; valid OKF base, subject layout (2 subjects), with warnings:\n  ${w}\n  owns: -; reads: -`),shown.stdout);
+  assert.doesNotMatch(shown.stdout,/INVALID/);
+});
+
+test('W_ID_MISSING: a validation cached by 6.0.0/6.0.1 (version 3, invalid) is judged again; spawn, the verbs and `bases` agree on one commit',t=>{
+  const f=deployment(t),at=unstampedCommit(f),w=idWarning(at);
+  assert.equal(run(f,['bases','--json']).status,0);
+  const dir=fs.readdirSync(join(f.stateDir,'cache')).map(n=>join(f.stateDir,'cache',n,'okf-validation')).find(d=>fs.existsSync(d));
+  const [file]=fs.readdirSync(dir),cached=JSON.parse(fs.readFileSync(join(dir,file),'utf8'));
+  assert.deepEqual([cached.version,cached.ok,cached.unstamped],[4,true,1]);
+  // What 6.0.1 cached for this commit: invalid, version 3.
+  json(join(dir,file),{version:3,ok:false,error:{code:'E_VALIDATION',message:MISSING_ID},commit:cached.commit,root:cached.root,at:cached.at});
+  const spawned=hook(f,'spawn');
+  assert.equal(spawned.status,0,spawned.text);
+  const seen=[spawned.out.brief.split('\n').at(-1),run(f,['bases','--json']).out.result.bases[0].warnings?.[0],...VERBS.map(make=>run(f,[...make(f),'--json']).out.result.warnings?.[0])];
+  assert.deepEqual(seen,Array(seen.length).fill(w),'the three surfaces agree');
+});
+
+test('both tolerated kinds on one base: every reader warns W_INDEX_STALE then W_ID_MISSING, `bases` included; any other error still refuses spawn and reads INVALID in `bases`',t=>{
+  const f=deployment(t);
+  unstampedCommit(f);
+  for(const ref of ['system/okf','workstream/knowledge']) edit(join(f.repo,`subjects/${ref}/index.md`),'## Decision','## Roadmap');
+  f.git('add','-A');f.git('commit','-q','-m','older views');
+  const head=f.git('rev-parse','HEAD').slice(0,12),both=[`W_INDEX_STALE: 2 generated files stale at project@${head}; the maintainer regenerates (okf-reindex.mjs)`,idWarning(head)];
+  const spawned=hook(f,'spawn');
+  assert.equal(spawned.status,0,spawned.text);
+  assert.ok(spawned.out.brief.endsWith(`\n${both.join('\n')}`),spawned.out.brief);
+  assert.equal(spawned.out.warning,`oats-okf: ${both.join('; ')}`);
+  for(const make of VERBS) assert.deepEqual(run(f,[...make(f),'--json']).out.result.warnings,both,make(f).join(' '));
+  const bases=run(f,['bases','--json']);
+  assert.deepEqual([bases.out.result.bases[0].validated,bases.out.result.bases[0].warnings,bases.out.result.warnings],[{ok:true},both,both]);
+  // Another error beside the tolerated ones: a claim about a subject with no file.
+  write(join(f.repo,'claims/insights/stray.md'),'---\ntype: Insight\ntitle: Stray\ndescription: x\nabout: [system/nope]\nid: ins-0000000000ff\n---\n');
+  f.git('add','-A');f.git('commit','-q','-m','a stray claim');
+  // `bases --fresh` fetches the new commit; spawn then reads it from the host cache.
+  const invalid=run(f,['bases','--fresh','--json']);
+  assert.deepEqual([invalid.out.result.bases[0].validated.ok,invalid.out.result.bases[0].warnings,invalid.out.result.warnings],[false,undefined,undefined]);
+  assert.match(run(f,['bases']).stdout,/INVALID: .*stray\.md: about names/);
+  const refusedSpawn=hook(f,'spawn');
+  assert.notEqual(refusedSpawn.status,0,refusedSpawn.text);
+  assert.match(refusedSpawn.out.warning,/^oats-okf E_VALIDATION: base "project" at project@[0-9a-f]{12}: claims\/insights\/stray\.md: about names "system\/nope"/);
+  assert.doesNotMatch(refusedSpawn.out.warning,/missing 'id'|generated index is stale/,'only the findings that refuse are named');
+});
+
+test('W_ID_MISSING on a directory base: the reader counts claims/ concepts without id; an old-node concept without id is not counted',t=>{
+  const dir=bridged(t);
+  write(join(dir,UNSTAMPED),'---\ntype: Insight\ntitle: One\ndescription: x\nabout: [system/okf]\n---\n');
+  write(join(dir,'claims/decisions/two.md'),'---\ntype: Decision\ntitle: Two\ndescription: x\nabout: [system/okf]\n---\n');
+  edit(join(dir,'peer/lesson.md'),'id: ins-000000000002\n','');reindex(dir);
+  const v=validateBase(dir,{id:'base-1',kind:'directory'},{reader:true});
+  assert.deepEqual([v.unstamped,v.stale],[2,0]);
+  assert.throws(()=>validateBase(dir,{id:'base-1',kind:'directory'}),e=>e.code==='E_VALIDATION');
+});
+
 test('writers stay strict: a migration that would leave a subject index stale is refused before the accepted base is touched',t=>{
   const dir=tmp(t,'okf6-migrate-'),basePath=join(dir,'base');writePlainBase(basePath);bridge(basePath);
   fs.rmSync(join(basePath,'expert/decision.md'));fs.writeFileSync(join(basePath,'expert/index.md'),'# expert\n');reindex(basePath);

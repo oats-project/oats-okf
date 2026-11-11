@@ -346,6 +346,21 @@ them: the knowledge maintainer stamps ids and regenerates before every
 merge. The 6.0 view format is final: any later change to the regenerator's
 output costs every bridged base a regeneration PR.
 
+From 6.0.2 (#138) readers tolerate one error the same way: a claim under
+`claims/` without `id`, merged without the maintainer's stamp (an
+unprotected accepted branch lets a proposal be merged directly). The spawn
+(brief and hook warning) and the subject verbs (stderr, `warnings` in
+`--json`) read the base and warn `W_ID_MISSING: N claims lack an id at
+<alias@commit>; the maintainer stamps them (knowledge-review)`, after any
+`W_INDEX_STALE` line. `propose --check` reports such an accepted claim in
+its `warnings` the same way and goes on; the claims it proposes still carry
+no `id`. `okf-validate.mjs --strict` (an error), migration and publication
+still refuse it. Every other finding still refuses every reader.
+`oats okf bases` agrees with the readers: a base whose only findings are
+these tolerated kinds is `valid`, with the warning lines under it (and
+`warnings` on the row and the answer in `--json`); any other finding reads
+`INVALID`. Validations cached by 6.0.0 and 6.0.1 are judged again once.
+
 ### okf.json version 2
 
 ```json
@@ -807,6 +822,11 @@ no direct push and reads `none` too); `unknown` when no read shows such a rule
 and either read cannot be made (`gh` absent, 404 `Not Found` or 403 for a
 caller without admin read, a failure), or the base is not on GitHub. It is read-only,
 best-effort and bounded by `git-timeout`, never a refusal.
+On a private repository whose GitHub plan refuses the rulesets read (403
+"Upgrade to GitHub Pro or make this repository public"), the field reads
+`unknown`, not `none`, even when the branch has no protection: protect such
+a base by other means (and know that the provider cannot confirm it), or
+make the repository public.
 
 The maintainer is spawned per PR by the **`proposal-review` trigger
 template** (`oats.okf:proposal-review`, definition id `okf-proposal-review`):
