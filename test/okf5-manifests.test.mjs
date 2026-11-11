@@ -30,13 +30,13 @@ test('validate-manifests passes',()=>{
   assert.equal(r.status,0,r.stdout+r.stderr);
 });
 
-test('every manifest is version 6.0.0 with the >=0.69.2 kernel floor',()=>{
-  assert.equal(readJson(join(ROOT,'package.json')).version,'6.0.0');
+test('every manifest is version 6.0.1 with the >=0.69.2 kernel floor',()=>{
+  assert.equal(readJson(join(ROOT,'package.json')).version,'6.0.1');
   const pkg=readJson(join(PKG,'oats-package.json'));
-  assert.equal(pkg.version,'6.0.0');
+  assert.equal(pkg.version,'6.0.1');
   assert.deepEqual(pkg.compatibility,{oats:'>=0.69.2'});
   for(const name of CAPS) {
-    assert.equal(cap(name).version,'6.0.0',name);
+    assert.equal(cap(name).version,'6.0.1',name);
     assert.deepEqual(cap(name).compatibility,{oats:'>=0.69.2'},name);
   }
 });
