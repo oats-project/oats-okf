@@ -70,6 +70,8 @@ try {
     const labels = { 'okf-harvest': 'OKF harvest PR (oats.okf)', 'okf-proposal': 'OKF knowledge proposal PR (oats.okf)' };
     assert.ok(Object.hasOwn(labels, a[2]));
     assert.deepEqual(a, ['label', 'create', a[2], '--repo', repo, '--force', '--color', '0E8A16', '--description', labels[a[2]]]); kind = 'label';
+  } else if (a[0] === 'api') {
+    assert.deepEqual(a, ['api', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
   } else if (a[0] === 'pr' && a[1] === 'view') {
     assert.deepEqual(a, ['pr', 'view', pr, '--repo', repo, '--json', 'state,headRefOid,headRefName,baseRefName,isCrossRepository,title,body']); kind = 'view';
   } else if (a[0] === 'pr' && a[1] === 'create') {
@@ -96,7 +98,7 @@ try {
   process.exit(97);
 }
 const input = a.includes('--body-file') ? fs.readFileSync(0, 'utf8') : null;
-const entry = { kind, argv: a, input, write: kind !== 'view', effect: false };
+const entry = { kind, argv: a, input, write: kind !== 'view' && kind !== 'preflight', effect: false };
 let response = '';
 if (s.fail === kind) {
   fs.appendFileSync(log, JSON.stringify(entry) + '\n');
@@ -105,7 +107,9 @@ if (s.fail === kind) {
 // gh create/close have no atomic head predicate. A before-write race may
 // legitimately change their target; only a subsequent read can detect it.
 hook('before-' + kind);
-if (kind === 'view') {
+if (kind === 'preflight') {
+  response = s.preflightText ?? String(s.push ?? true);
+} else if (kind === 'view') {
   response = JSON.stringify({ state: s.state, headRefOid: s.overrideHead || head(), headRefName: s.headRefName,
     baseRefName: s.baseRefName, isCrossRepository: s.isCrossRepository, title: s.title, body: s.body });
 } else if (kind === 'merge' && a[7] !== head()) {
@@ -175,6 +179,7 @@ function fixture(t, { seed } = {}) {
   const calls = () => jsonLines(ghLog);
   const options = (command, head, extra) => {
     const common = { repo, remote, github: GITHUB, base, 'base-branch': 'main', head };
+    if (command === 'preflight') return { github: GITHUB, ...extra };
     if (command === 'screen') return { repo, base, head, ...extra };
     if (command === 'screen-tree') return { repo, head, ...extra };
     if (command === 'commit') return { repo, base, head, branch: BRANCH, 'commit-file': commitFile, ...extra };
@@ -496,7 +501,7 @@ process.stdin.on('end', () => process.exit(sent ? 0 : 97));
     assert.deepEqual(Object.keys(r.out).sort(), ['code', 'diagnostic', 'ok']);
     for (const value of [...DIAGNOSTIC_STDERR, locator, f.root, head]) assert.ok(!r.stdout.includes(value));
     assert.equal(jsonLines(calls).filter(x => x.receive).length, 1, 'one actual Git push, never a retry');
-    assert.deepEqual(f.calls(), [], 'no gh publication after rejected push');
+    assert.deepEqual(f.calls().map(c => c.kind), ['preflight'], 'no gh publication after rejected push');
     assert.deepEqual(retainedInputs({ ...f, old: head }), retained);
     assert.deepEqual(f.snapshot(), before, 'local transport stores no objects or refs');
   });
@@ -533,7 +538,7 @@ test('clean create publishes the supplied OID, screened stdin body and fixed tit
   const f = fixture(t), head = f.change(), out = success(f.run('create', head));
   assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, status: 'created' });
   assert.equal(f.git(f.remote, 'rev-parse', REF), head); assert.equal(f.git(f.remote, 'rev-parse', 'main'), f.base);
-  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['label', 'create', 'view']);
+  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['preflight', 'label', 'create', 'view']); calls.shift();
   assert.equal(calls[1].input, fs.readFileSync(f.bodyFile, 'utf8'));
   assert.equal(calls[1].argv[calls[1].argv.indexOf('--body-file') + 1], '-');
 });
@@ -544,7 +549,7 @@ test('create publishes an okf-proposal/ branch with a v3 body under the okf-prop
   const out = success(f.run('create', head, { branch: PROPOSAL_BRANCH }));
   assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: PROPOSAL_BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, status: 'created' });
   assert.equal(f.git(f.remote, 'rev-parse', `refs/heads/${PROPOSAL_BRANCH}`), head);
-  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['label', 'create', 'view']);
+  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['preflight', 'label', 'create', 'view']); calls.shift();
   assert.equal(calls[0].argv[2], 'okf-proposal');
   assert.equal(calls[1].argv[calls[1].argv.indexOf('--label') + 1], 'okf-proposal');
   assert.equal(calls[1].input, fs.readFileSync(f.bodyFile, 'utf8'));
@@ -710,7 +715,7 @@ for (const collision of ['different', 'identical']) {
     refusal(r, collision === 'identical' ? 'E_CREATE_NOT_CONFIRMED' : 'E_PUSH_UNCERTAIN');
     assert.equal(f.git(f.remote, 'rev-parse', REF), existing);
     assert.deepEqual(f.snapshot().objects, before.objects, 'no candidate object upload on a stale/identical lease');
-    assert.deepEqual(f.calls(), [], 'a non-new destination must never create a PR');
+    assert.deepEqual(f.calls().map(c => c.kind), ['preflight'], 'a non-new destination must never create a PR');
   });
 }
 
@@ -1222,6 +1227,71 @@ test('create reports E_PR_UNCERTAIN and stops after the branch moves at the gh l
   assert.ok(f.calls().some(c => c.kind === 'label' && c.effect), 'push and label may already have happened');
   assert.deepEqual(f.calls().filter(c => c.kind === 'create'), [], 'a detected label-boundary move must stop before PR creation');
   refusal(r, 'E_PR_UNCERTAIN');
+  assert.deepEqual(r.out.published, { branch: BRANCH, head }, 'a failure after the push names what this run published');
+});
+
+// #148: the gh precondition is decided before the push. A refusal publishes
+// nothing; a failure after the push says what it published.
+for (const [reason, patch] of [
+  ['gh-failed', { fail: 'preflight', failureText: DIAGNOSTIC_STDERR.join('\n') }],
+  // Only an explicit true passes: an unknown answer establishes no permission.
+  ['gh-failed', { preflightText: 'null' }],
+  ['gh-failed', { preflightText: '' }],
+  ['gh-failed', { preflightText: '{"push":true}' }],
+  ['gh-failed', { preflightText: 'TRUE' }],
+  ['no-write-permission', { push: false }],
+]) test(`create refuses E_GH_UNAVAILABLE (${reason}: ${JSON.stringify(patch).slice(0, 40)}) before any push or gh write`, t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot();
+  f.patchGh(patch);
+  const r = f.run('create', head); refusal(r, 'E_GH_UNAVAILABLE');
+  assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } });
+  unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
+  assert.deepEqual(f.run('preflight').out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } });
+});
+
+test('create refuses E_GH_UNAVAILABLE (gh-absent) on a host without gh, before any push', t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot();
+  fs.rmSync(join(f.bin, 'gh'));
+  // No other gh on this PATH: this node and the host's git, nothing else.
+  const tools = join(f.root, 'tools'); fs.mkdirSync(tools);
+  fs.symlinkSync(process.execPath, join(tools, 'node'));
+  fs.symlinkSync(spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim(), join(tools, 'git'));
+  f.env.PATH = `${f.bin}:${tools}`;
+  const r = f.run('create', head); refusal(r, 'E_GH_UNAVAILABLE');
+  assert.deepEqual(r.out.diagnostic, { phase: 'preflight', reason: 'gh-absent' });
+  unchanged(f, before); assert.deepEqual(f.calls(), []);
+});
+
+test('preflight passes only when GitHub says the credential may push, read-only', t => {
+  const f = fixture(t), before = f.snapshot();
+  assert.deepEqual(success(f.run('preflight')), { ok: true, github: GITHUB, status: 'gh-available' });
+  unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
+});
+
+test('a readback that fails after a push that ran is E_PUSH_UNCERTAIN, never a bare E_GIT', t => {
+  const f = fixture(t), head = f.change();
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { cwd: f.root, env: f.env, encoding: 'utf8' }).stdout.trim();
+  const ran = join(f.root, 'push-ran');
+  // Real Git pushes; only the remote reads after it fail (the link dropped).
+  fs.writeFileSync(join(f.bin, 'git'), `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = push ]; then '${realGit}' "$@"; status=$?; : > '${ran}'; exit $status; fi
+  if [ "$arg" = ls-remote ] && [ -e '${ran}' ]; then echo 'fatal: ${SECRET}' >&2; exit 128; fi
+done
+exec '${realGit}' "$@"
+`, { mode: 0o755 });
+  const r = f.run('create', head); refusal(r, 'E_PUSH_UNCERTAIN');
+  assert.equal(r.out.diagnostic.phase, 'readback-failed'); assert.equal(r.out.published, undefined, 'unconfirmed is not reported as confirmed');
+  assert.equal(f.git(f.remote, 'rev-parse', REF), head, 'the branch is on the remote');
+  assert.deepEqual(f.calls().filter(c => c.write), [], 'no gh write after an uncertain push');
+});
+
+for (const kind of ['label', 'create']) test(`create names the pushed branch when gh ${kind} fails after the push`, t => {
+  const f = fixture(t), head = f.change();
+  f.patchGh({ fail: kind, failureText: DIAGNOSTIC_STDERR.join('\n') });
+  const r = f.run('create', head); refusal(r, 'E_GH');
+  assert.deepEqual(r.out, { ok: false, code: 'E_GH', published: { branch: BRANCH, head } });
+  assert.equal(f.git(f.remote, 'rev-parse', REF), head, 'the named branch is on the remote');
 });
 
 for (const boundary of ['before-create', 'create']) {
@@ -1803,7 +1873,7 @@ function recoveredPr(f, out, head, tip) {
   assert.equal(f.git(f.remote, 'show', `${out.head}:expert/decision.md`), '# Synthetic proposed decision');
   assert.equal(f.git(f.remote, 'show', '-s', '--format=%B', out.head), f.git(f.repo, 'show', '-s', '--format=%B', head));
   assert.equal(f.git(f.repo, 'rev-parse', `refs/heads/${BRANCH}`), out.head, 'the local branch moved by compare-and-swap');
-  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['label', 'create', 'view']);
+  const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['preflight', 'label', 'create', 'view']); calls.shift();
   assert.equal(calls[1].argv[7], BRANCH);
 }
 function notRecovered(r, attempts, reason) {
@@ -1862,7 +1932,7 @@ test('create stops after three recoveries when the accepted tip moves a fourth t
   assert.deepEqual(f.snapshot().objects, before.objects, 'nothing was pushed');
   assert.equal(f.rawGit(f.remote, ['rev-parse', '--verify', '--quiet', REF]).status, 1, 'no publication ref');
   assert.equal(f.git(f.remote, 'rev-parse', 'main'), tips[3]);
-  assert.deepEqual(f.calls(), []);
+  assert.deepEqual(f.calls().map(c => c.kind), ['preflight'], 'only the read-only preflight reached gh');
 });
 
 test('create refuses a recovery whose replay conflicts with the moved accepted tip', t => {

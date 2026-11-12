@@ -24,6 +24,45 @@
   must change: a 6.0.x maintainer merges such a proposal as before (without
   the trailers), and a proposal made by 6.0.x merges with `Proposal:` alone.
 
+### Fixed
+
+- **`oats okf propose --apply` pushed before its first `gh` call, so a host
+  without `gh` half-published** (oats-project/oats-okf#148): a pushed branch
+  with no PR, and a proposal that could not be applied again. Now `--apply`
+  makes one read-only `gh` call per changed base (`gh api repos/<repo> --jq
+  .permissions.push`) before it pushes anything and before it marks the
+  proposal as attempted. New refusal `E_GH_UNAVAILABLE`, with `result.reason`
+  `gh-absent`, `gh-failed` (not signed in, the repository is not visible, or
+  GitHub does not state the credential's permission) or `no-write-permission`
+  (GitHub says it may not push), and the fix in the
+  message. Nothing is pushed and the proposal is unchanged: once the host is
+  fixed, the same `--apply --digest` publishes. With several bases, every
+  base is checked before the first push. The check is bounded: it cannot
+  tell whether a narrowly scoped token may open a PR.
+- **A publication that stops after its push says what it published.** An
+  `E_GH` or `E_PR_UNCERTAIN` after a confirmed push now carries `published:
+  { branch, head }` (in `result.failed`, in `publish/<alias>-result.json` and
+  in the helper's JSON), and the message names the branch, the command that
+  shows whether a PR exists, the one that opens it from the retained PR body
+  and the one that removes the branch. `E_PUSH_UNCERTAIN` names the `git
+  ls-remote` that shows whether the branch exists. The commands' arguments
+  are shell-quoted. The agent's rule is unchanged: report it, never retry,
+  never clean up.
+- A push that ran and whose readback could not be made (the remote became
+  unreachable in between) answered a bare `E_GIT` that named no branch. It is
+  now `E_PUSH_UNCERTAIN` with diagnostic phase `readback-failed`, and
+  `close-unsafe`'s delete answers `E_DELETE_UNCERTAIN` the same way.
+- `E_GH_UNAVAILABLE` is only ever the refusal before the attempt. If `gh`
+  passes that check and then fails the helper's own check before its push,
+  the proposal is already marked as attempted: that is `E_GH`, and its
+  message says nothing was pushed for that base.
+- A receipt that cannot be written after a PR is confirmed
+  (`publish/<alias>-result.json`, `published.json`) no longer turns a
+  successful publication into an error that names no PR: the PR is reported,
+  with a `W_RECEIPT` warning.
+- The publication helper (both copies) has a read-only `preflight --github
+  OWNER/REPO` command, and its `create` makes the same check before its push.
+
 ## 6.0.3 — 2026-11-12
 
 Requires OATS >=0.69.2, unchanged. A lock a recreated container left can be

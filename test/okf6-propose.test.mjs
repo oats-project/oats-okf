@@ -33,6 +33,9 @@ fs.appendFileSync(process.env.FIXTURE_GH_LOG, JSON.stringify({ argv: a, input })
 const save = () => fs.writeFileSync(state, JSON.stringify(s));
 if (process.env.FIXTURE_GH_FAIL === a.slice(0, 2).join(' ')) { console.error('fixture gh failure'); process.exit(9); }
 if (a[0] === 'pr' && a[1] === 'list') { console.log(JSON.stringify(s.open || [])); process.exit(0); }
+if (a[0] === 'api' && process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT
+  && fs.readFileSync(process.env.FIXTURE_GH_LOG, 'utf8').trim().split('\n').filter(l => JSON.parse(l).argv[0] === 'api').length === Number(process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT)) { console.error('fixture gh failure'); process.exit(9); }
+if (a[0] === 'api') { console.log(process.env.FIXTURE_GH_PUSH ?? 'true'); process.exit(0); }
 if (a[0] === 'label' && a[1] === 'create') process.exit(0);
 if (a[0] === 'pr' && a[1] === 'create') {
   const head = a[a.indexOf('--head') + 1], label = a[a.indexOf('--label') + 1];
@@ -314,11 +317,105 @@ test('apply recovers an accepted branch that moved before the push (#130) and re
 test('a publication failure retains the clone and artefacts, reports safely and refuses a retry', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
   const { digest } = ok(f.run(['--check', '--slug', 'x']));
-  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH', /retained.*Do not retry.*never assume it does not/);
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH', /retained.*Do not retry.*was pushed to acme\/kb and no PR is confirmed, never assume there is none/);
   assert.equal(e.result.failed.code, 'E_GH'); assert.deepEqual(e.result.published, []);
+  // It says what it published and how to finish or remove it (#148).
+  const pushed = e.result.failed.published;
+  assert.match(pushed.branch, /^okf-proposal\/\d{8}-[0-9a-f-]{36}$/);
+  assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pushed.branch}`), pushed.head, 'the named branch is the one on the remote');
+  // Every argument is shell-quoted: a home path with a space stays one argument.
+  assert.ok(e.message.includes(`gh pr create --repo 'acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal --title 'OKF knowledge proposal' --body-file '${join(plan.proposal, 'publish', 'kb-pr.md')}'`), 'how to finish');
+  assert.ok(e.message.includes(`git -C '${join(plan.proposal, 'work', 'kb')}' push origin --delete '${pushed.branch}'`), 'how to remove');
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed);
   for (const p of ['work/kb', 'outgoing/kb-commit.txt', 'outgoing/kb-pr.md', 'publish/kb-result.json']) assert.ok(fs.existsSync(join(plan.proposal, p)), p);
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
   refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
+  // An attempted proposal is never called untouched, even when gh is now unusable (it is not re-appliable).
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'api repos/acme/kb' } }), 'E_PROPOSAL_EXISTS');
+});
+
+// #148: every gh precondition is decided before the push and before the
+// attempt marker, so the refusal changes nothing and the same --apply works.
+const remoteBranches = f => f.git(f.dir, '--git-dir', f.origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/');
+for (const [reason, breakGh, fix] of [
+  ['gh-absent', f => fs.rmSync(join(f.dir, 'ghbin', 'gh')), /gh is not installed on this host/],
+  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'api repos/acme/kb' }), /gh could not read the repository or its permission on it: sign gh in/],
+  ['no-write-permission', () => ({ FIXTURE_GH_PUSH: 'false' }), /less than write permission/],
+  // GitHub did not say: nothing establishes write, so the attempt never begins.
+  ['gh-failed', () => ({ FIXTURE_GH_PUSH: 'null' }), /or its permission on it/],
+  ['gh-failed', () => ({ FIXTURE_GH_PUSH: '' }), /or its permission on it/],
+]) test(`apply refuses E_GH_UNAVAILABLE (${reason}) before anything is pushed, and the same apply works once fixed`, t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const gh = fs.readFileSync(join(f.dir, 'ghbin', 'gh'));
+  // No other gh on this PATH: the wrapped git, this node, nothing else.
+  const nodeBin = join(f.dir, 'nodebin'); fs.mkdirSync(nodeBin); fs.symlinkSync(process.execPath, join(nodeBin, 'node'));
+  const PATH = `${join(f.dir, 'bin')}:${join(f.dir, 'ghbin')}:${nodeBin}`;
+  const extra = { PATH, ...(breakGh(f) || {}) };
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra }), 'E_GH_UNAVAILABLE', fix);
+  assert.match(e.message, /^base kb \(acme\/kb\): .*Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again$/);
+  assert.deepEqual(e.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false });
+  assert.equal(remoteBranches(f), 'refs/heads/main', 'nothing was pushed');
+  assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'no attempt marker');
+  assert.deepEqual(f.calls().filter(c => c.argv[0] !== 'api' && !(c.argv[0] === 'pr' && c.argv[1] === 'list')), [], 'no gh write');
+  // The host is fixed: the same command publishes.
+  fs.writeFileSync(join(f.dir, 'ghbin', 'gh'), gh, { mode: 0o755 });
+  const [pr] = ok(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { PATH } })).prs;
+  assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pr.branch}`), pr.head);
+});
+
+test('a gh that fails only at the helper\'s own check, after the attempt marker, is a publication error and not the re-appliable refusal', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  // The gate before the marker passes (call 1); create's own check fails (call 2).
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_PREFLIGHT_FAIL_AT: '2' } }), 'E_GH', /Do not retry.*gh stopped answering after the proposal was marked as attempted \(gh-failed\): nothing was pushed for base kb$/);
+  assert.equal(e.result.failed.code, 'E_GH'); assert.equal(e.result.failed.published, undefined);
+  assert.equal(remoteBranches(f), 'refs/heads/main', 'nothing was pushed');
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
+});
+
+test('a receipt that cannot be written after the PR is confirmed is a warning: the PR is still reported', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'r' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'r' }).result;
+    const publish = join(plan.proposal, 'publish'), wrapped = publication.execute;
+    publication.execute = (command, o) => { const out = wrapped(command, o); if (command === 'create') fs.chmodSync(publish, 0o500); return out; };
+    let result; try { result = propose(f.home, { apply: true, slug: 'r', digest }).result; } finally { publication.execute = wrapped; if (fs.existsSync(publish)) fs.chmodSync(publish, 0o700); }
+    assert.equal(result.prs.length, 1); assert.equal(result.prs[0].url, 'https://github.com/acme/kb/pull/1');
+    assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${result.prs[0].branch}`), result.prs[0].head);
+    assert.equal(result.warnings.filter(w => /^W_RECEIPT: the PR for base kb is open/.test(w)).length, 1);
+    assert.ok(!fs.existsSync(join(publish, 'kb-result.json')));
+  });
+});
+
+test('a gate that fails while another apply of the same proposal began reports it as attempted, not as untouched', async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'c' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'c' }).result;
+    const publish = join(plan.proposal, 'publish'), wrapped = publication.execute;
+    // The other apply creates the marker while this one's gh call is out; then this call fails.
+    publication.execute = (command, o) => { if (command !== 'preflight') return wrapped(command, o); fs.mkdirSync(publish); throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'gh-failed' } }); };
+    let error; try { propose(f.home, { apply: true, slug: 'c', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
+    assert.equal(error?.code, 'E_PROPOSAL_EXISTS'); assert.match(error.message, /already applied or attempted/);
+  });
+});
+
+test('a snapshot that cannot be written after the attempt began fails inside the publication envelope, with the published rows', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 's' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 's' }).result;
+    // The lib's fs is node's default export: the one object this patches.
+    const { default: nodeFs } = await import('node:fs'); const { syncBuiltinESMExports: sync } = await import('node:module');
+    const publish = join(plan.proposal, 'publish'), mkdir = nodeFs.mkdirSync;
+    nodeFs.mkdirSync = (path, ...rest) => { const out = mkdir(path, ...rest); if (path === publish) fs.chmodSync(publish, 0o500); return out; }; sync();
+    let error; try { propose(f.home, { apply: true, slug: 's', digest }); } catch (e) { error = e; } finally { nodeFs.mkdirSync = mkdir; sync(); if (fs.existsSync(publish)) fs.chmodSync(publish, 0o700); }
+    assert.equal(error?.code, 'E_PUBLICATION'); assert.match(error.message, /publication of base kb stopped \(E_PUBLICATION\).*Do not retry/);
+    assert.deepEqual(error.result.published, []); assert.equal(error.result.failed.alias, 'kb');
+    assert.equal(remoteBranches(f), 'refs/heads/main', 'nothing was pushed');
+  });
 });
 
 test('the commit names the proposer in trailers: the messaging identity and its attributed human, read by slot as the kernel reads attributedHuman', t => {
@@ -472,8 +569,10 @@ test('condition 1: --check and --apply feed the shipped helper exactly the harve
       const [pr] = propose(f.home, { apply: true, slug: 'same', digest: checked.digest }).result.prs;
       // --apply: the same screen again (it re-verifies before any write), then exactly the
       // harvester's commit and create, with its flags bound to the same values.
-      assert.deepEqual(calls.map(([c]) => c), ['screen', 'commit', 'create']);
-      const [[, rescreen, rescreened], [, commit, committedText], [, create, createdText]] = calls;
+      // The gh preflight sits between them: before the attempt marker and the commit.
+      assert.deepEqual(calls.map(([c]) => c), ['screen', 'preflight', 'commit', 'create']);
+      assert.deepEqual(calls[1][1], { github: 'acme/kb' });
+      const [[, rescreen, rescreened], , [, commit, committedText], [, create, createdText]] = calls;
       assert.deepEqual({ ...rescreen, head: undefined, 'text-file': undefined }, { ...screen, head: undefined, 'text-file': undefined });
       assert.deepEqual(rescreened, screened);
       assert.equal(f.git(clone, 'rev-parse', `${rescreen.head}^{tree}`), f.git(clone, 'rev-parse', `${screen.head}^{tree}`));

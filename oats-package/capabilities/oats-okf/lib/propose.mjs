@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
-import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail } from './io.mjs';
+import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail, quote } from './io.mjs';
 import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
 import { git as rawGit, gitEnv, preflightLocalRepository, unavailable, validateBase, ID_WARNING, unstampedWarning } from './stores.mjs';
 import { consultSource } from './sources.mjs';
@@ -597,9 +597,36 @@ function runHelper(command, options) {
   try { return publication.execute(command, { ...options }); }
   catch (e) {
     const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-    const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) };
+    const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) };
     failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : `the publication helper refused (${code})`, result);
   }
+}
+
+const GH_FIX = {
+  'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
+  'gh-failed': 'gh could not read the repository or its permission on it: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
+  'no-write-permission': "gh's account has less than write permission on the repository (the label and the PR need it): use an account with write",
+};
+/** The one publish predicate: this deployment's credential can publish to
+ *  this base (today: gh is present, reads the repository and GitHub says its
+ *  credential may push). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
+export function checkPublish(alias, base) {
+  const repository = base.pr.repository;
+  try { publication.execute('preflight', { github: repository }); }
+  catch (e) {
+    if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
+    const reason = e.diagnostic?.reason;
+    failWith('E_GH_UNAVAILABLE', `base ${alias} (${repository}): ${GH_FIX[reason] ?? 'gh is not usable'}`, { reason, alias, repository, pushed: false });
+  }
+}
+/** How a publication that stopped after a step it cannot undo is finished or
+ *  removed, for whoever the instance reports to (the instance never does it). */
+function aftermath(code, r, branch, bodyFile, pushed, late) {
+  const repository = r.owned.base.pr.repository, q = quote;
+  if (late) return `; gh stopped answering after the proposal was marked as attempted (${late}): nothing was pushed for base ${r.alias}`;
+  if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: \`gh pr list --repo ${q(repository)} --head ${q(pushed.branch)} --state all\` shows whether a PR exists; to finish, \`gh pr create --repo ${q(repository)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(pushed.branch)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\`; to remove it, \`git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}\``;
+  if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not: \`git -C ${q(r.clone)} ls-remote origin ${q(`refs/heads/${branch}`)}\` shows whether it does`;
+  return ['E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : '';
 }
 
 /** Everything --check verifies and --apply re-verifies. Writes only the
@@ -761,8 +788,22 @@ export function apply(source, slug, expected) {
   if (p.digest !== expected) fail('E_DIGEST', 'the clone, proposal.md, a named note or the generated commit text or PR body changed since --check (or the digest is not the one it printed): run --check again and read its diff before --apply');
   // The publish directory is the attempt marker: one attempt per proposal.
   const publish = join(dir, 'publish');
+  const attempted = () => fail('E_PROPOSAL_EXISTS', `this proposal was already applied or attempted (see ${publish}); never retry it: plan a new proposal if knowledge is still missing`);
+  // An attempted proposal refuses as such, before the gate below could call it untouched.
+  if (present(publish)) attempted();
+  // Every gh precondition, for every base, before the attempt marker.
+  for (const r of p.results.filter(x => x.changed.length)) {
+    try { checkPublish(r.alias, r.owned.base); }
+    catch (e) {
+      // Another --apply of this proposal may have begun while gh was asked:
+      // then it is attempted, and never reported as untouched.
+      if (present(publish)) attempted();
+      if (e?.code === 'E_GH_UNAVAILABLE') e.message += '. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again';
+      throw e;
+    }
+  }
   try { fs.mkdirSync(publish, { mode: 0o700 }); }
-  catch (e) { if (e.code === 'EEXIST') fail('E_PROPOSAL_EXISTS', `this proposal was already applied or attempted (see ${publish}); never retry it: plan a new proposal if knowledge is still missing`); throw e; }
+  catch (e) { if (e.code === 'EEXIST') attempted(); throw e; }
   const published = [];
   const stamp = new Date().toISOString().slice(0, 10).replaceAll('-', '');
   for (const r of p.results.filter(x => x.changed.length)) {
@@ -771,8 +812,10 @@ export function apply(source, slug, expected) {
     // The digest bound these exact texts in memory: snapshot them into this
     // attempt's own directory (a concurrent --check rewrites outgoing/).
     const commitFile = join(publish, `${r.alias}-commit.txt`), bodyFile = join(publish, `${r.alias}-pr.md`);
-    atomic(commitFile, p.message); atomic(bodyFile, p.body);
     try {
+      // Inside the envelope: a failed snapshot after an earlier base's PR
+      // still reports that PR.
+      atomic(commitFile, p.message); atomic(bodyFile, p.body);
       git(r.clone, ['update-ref', `refs/heads/${branch}`, r.accepted, '']);
       git(r.clone, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
       // The checked tree is staged as is (the helper commits the index); the
@@ -789,17 +832,27 @@ export function apply(source, slug, expected) {
       const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
         'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
-      atomic(report, JSON.stringify({ ok: true, ...row }, null, 2) + '\n');
+      // The PR is confirmed: a receipt that cannot be written is a warning,
+      // never a reason to report the publication as failed or unknown.
       published.push(row);
+      try { atomic(report, JSON.stringify({ ok: true, ...row }, null, 2) + '\n'); }
+      catch { p.warnings.push(`W_RECEIPT: the PR for base ${r.alias} is open, but its receipt could not be written under ${publish}: record the URL from this output`); }
     } catch (e) {
-      const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-      const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}) };
+      // The helper's own check before its push repeats the gate above. A
+      // refusal there comes after the attempt marker (and perhaps after
+      // another base's PR), so it is a publication error, not the
+      // re-appliable E_GH_UNAVAILABLE.
+      const late = e.code === 'E_GH_UNAVAILABLE' ? (e.result?.diagnostic?.reason ?? 'gh-failed') : null;
+      const code = late ? 'E_GH' : /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
+      const pushed = e.result?.published;
+      const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}), ...(pushed ? { published: pushed } : {}) };
       try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
-      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_PUSH_UNCERTAIN', 'E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : ''}`,
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${aftermath(code, r, branch, bodyFile, pushed, late)}`,
         { published, failed: safe, proposal: dir });
     }
   }
-  atomic(join(dir, 'published.json'), JSON.stringify({ version: 1, prs: published }, null, 2) + '\n');
+  try { atomic(join(dir, 'published.json'), JSON.stringify({ version: 1, prs: published }, null, 2) + '\n'); }
+  catch { p.warnings.push(`W_RECEIPT: every PR is open, but published.json could not be written under ${dir}: record the URLs from this output`); }
   return { proposal: dir, prs: published, warnings: p.warnings,
     next: 'record each PR URL in log.md and go back to work; the knowledge maintainer reviews it (the proposal-review trigger), you never shepherd it' };
 }
