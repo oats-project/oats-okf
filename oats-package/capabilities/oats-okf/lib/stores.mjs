@@ -54,9 +54,12 @@ export const journalPath = b => `${b.path}.okf-publication.json`;
 // (W_ID_MISSING). Every writer (propose, migration, publication) keeps the
 // default, strict: what it writes is refused until regenerated or stamped;
 // propose alone lets through, by its `allow`, the missing ids of its own claims
-// and (6.0.2) of accepted claims/ concepts it leaves untouched, as a warning.
+// and (6.0.2) of accepted claims/ concepts it leaves untouched, as a warning;
+// from 6.0.3 (#140) also of accepted old-node concepts it leaves untouched.
 const INDEX_WARNING=/: generated index is (stale|missing|orphan); run okf-reindex\.mjs$/;
-const ID_WARNING=/: missing 'id' \(stamped by the maintainer at acceptance\)$/;
+/** The validator's finding for any concept without `id`: an error under
+ *  claims/, a strict warning in an old node. */
+export const ID_WARNING=/: missing 'id' \(stamped by the maintainer at acceptance\)$/;
 /** The validator's error for a claims/ concept without `id` (one claim each). */
 export const UNSTAMPED_ERROR=/^claims\/.+\.md: missing 'id' \(stamped by the maintainer at acceptance\)$/;
 /** `allow(findings)` (okf 6.0, propose only) returns the findings that still
