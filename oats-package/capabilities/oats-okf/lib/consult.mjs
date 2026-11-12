@@ -141,7 +141,10 @@ function resolveGit(bindings, alias, base, { fresh = false, preferCached = false
       return gitContext(bindings, alias, base, cache, state);
     }, { waitMs: state ? Math.min(gitTimeoutMs(), 60000) : gitTimeoutMs() }); // a cached commit can be served sooner
   } catch (e) {
-    if (e.code === 'E_LOCKED' && state) return gitContext(bindings, alias, base, cache, { ...state, error: `host cache lock is busy (${lock}); serving the last fetched accepted commit` });
+    if (e.code === 'E_LOCKED' && state) return gitContext(bindings, alias, base, cache, { ...state, error: e.otherHost
+      // #142: a lock another host left never clears by itself; say how it is released.
+      ? `serving the last fetched accepted commit: ${e.message}`
+      : `host cache lock is busy (${lock}); serving the last fetched accepted commit` });
     throw e;
   }
 }

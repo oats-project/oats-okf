@@ -18,7 +18,10 @@
   command. `--host-gone` is refused for a lock this host owns (the process
   check applies) and for a host other than the owner's. A lock with no
   readable `owner.json` is refused with `E_LOCKED` and its fix instead of a
-  raw read error. The error code, the lock's format and the `{unlocked}`
+  raw read error, a path that is not a lock directory with `E_USAGE`, and a
+  missing one with `E_NOT_FOUND`. A consult read whose host cache lock is
+  held by another host still serves the last fetched commit, and its `STALE`
+  reason now carries that refusal and command. The error code, the lock's format and the `{unlocked}`
   result are unchanged.
 
 ## 6.0.2 — 2026-11-11

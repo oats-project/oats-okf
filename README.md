@@ -914,7 +914,11 @@ oats okf unlock --lock /absolute/path/to/lock --token TOKEN_FROM_OWNER_JSON --ho
 `--host-gone` must equal the `host` in the lock's `owner.json`; it is the
 operator's statement that the host is gone, so the owner's process is not
 probed. It is refused for a lock this host owns, where the process check
-applies. Never remove a publication journal by hand.
+applies. A recreated container that keeps its hostname is this host to the
+lock: `--host-gone` does not apply, and the process check does. A consult
+read that finds the host cache lock held by another host serves the last
+fetched commit, marked `STALE` with the same refusal and command. Never
+remove a publication journal by hand.
 
 ## Portable binding (payloadVersion 2)
 

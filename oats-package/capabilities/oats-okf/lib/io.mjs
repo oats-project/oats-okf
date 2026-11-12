@@ -85,7 +85,7 @@ export function withLock(path, fn, { waitMs = 0, reclaimDead = false } = {}) {
         const owner = lockOwner(join(path, 'owner.json'));
         if(owner?.host === hostname() && !pidAlive(owner.pid)) fail('E_LOCKED', `abandoned lock: ${path} is held by process ${owner.pid}, which is gone; once no oats okf process is running, release it with: oats okf unlock --lock ${quote(path)} --token ${quote(owner.token)} --soul <soul>`);
         if(owner?.host === hostname()) fail('E_LOCKED', `busy lock: ${path} is held by running process ${owner.pid}; try again once it finishes`);
-        if(owner) fail('E_LOCKED', otherHost(path, owner));
+        if(owner) throw Object.assign(new Error(otherHost(path, owner)), { code: 'E_LOCKED', otherHost: true });
         fail('E_LOCKED', `busy or abandoned lock: ${path}; inspect owner.json, never reclaim by age`);
       }
       pause(Math.max(1, Math.min(delay, deadline - Date.now())));
@@ -142,7 +142,14 @@ const otherHost = (path, owner) => `lock ${path} is held by process ${owner.pid}
  *  another host's, so it is not probed. */
 export function unlock(path, token, hostGone) {
   safePath(path); const o = lockOwner(join(path, 'owner.json'));
-  if (!o) fail('E_LOCKED', `lock ${path} has no readable owner.json (token, pid and host), so no token can release it; nothing was released. Once no oats okf process that shares it is running, on this or any other host, remove the lock directory by hand`);
+  if (!o) {
+    // Never advise removing a path that is not plainly a lock (#142 review):
+    // a mistyped --lock may name the base itself.
+    let stat = null; try { stat = fs.lstatSync(path); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (!stat) fail('E_NOT_FOUND', `no lock at ${path}; nothing to release`);
+    if (!stat.isDirectory() || !/\.(okf-)?lock$/.test(path)) fail('E_USAGE', `${path} is not an oats okf lock (a directory named *.okf-lock or *.lock that holds owner.json); nothing was released`);
+    fail('E_LOCKED', `lock ${path} has no readable owner.json (token, pid and host), so no token can release it; nothing was released. Once no oats okf process that shares it is running, on this or any other host, remove that lock directory by hand`);
+  }
   if (!token || o.token !== token) fail('E_LOCKED', 'explicit matching lock token required: --token is the token in the lock\'s owner.json');
   const local = o.host === hostname();
   if (hostGone !== undefined) {
