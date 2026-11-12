@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A lock left by a recreated container could not be released**
+  (oats-project/oats-okf#142). A lock records its owner's hostname, and a
+  recreated container has a new one: `oats okf unlock` refused every lock
+  whose owner was another host (`explicit matching local lock token
+  required`), and a taker's refusal only said to inspect `owner.json`. New:
+  `oats okf unlock --lock PATH --token TOKEN --host-gone HOST` releases a
+  lock owned by another host when `HOST` equals the `host` in its
+  `owner.json`, the operator's statement that the host is gone for good; the
+  owner's process, which belongs to that host, is not probed. Nothing
+  releases such a lock automatically or by age. A taker's `E_LOCKED` and the
+  plain `unlock`'s now name the owner's process and host and the full
+  command. `--host-gone` is refused for a lock this host owns (the process
+  check applies) and for a host other than the owner's. A lock with no
+  readable `owner.json` is refused with `E_LOCKED` and its fix instead of a
+  raw read error, a path that is not a lock directory with `E_USAGE`, and a
+  missing one with `E_NOT_FOUND`. A consult read whose host cache lock is
+  held by another host still serves the last fetched commit, and its `STALE`
+  reason now carries that refusal and command. The error code, the lock's format and the `{unlocked}`
+  result are unchanged.
+
 ## 6.0.2 — 2026-11-11
 
 Requires OATS >=0.69.2, unchanged. A claim merged without the maintainer's
