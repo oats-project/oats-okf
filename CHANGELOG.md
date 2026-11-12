@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **An old-node concept merged without its id refused every proposal on the
+  base** (oats-project/oats-okf#140). 6.0.2 let `propose --check` report an
+  accepted `claims/` concept without `id` as `W_ID_MISSING`; a concept under
+  an old node merged the same way (a version-1 soul's proposal merged without
+  the maintainer's amend-and-merge) still refused with `E_VALIDATION` for
+  every proposer. `propose --check` and `--apply` now count it in the same
+  `W_ID_MISSING` warning when the proposal leaves it untouched.
+  `okf-validate.mjs --strict` still reports it, and the readers' count is
+  unchanged (`claims/` only).
+- **The subject verbs said nothing on a base that fails validation**
+  (oats-project/oats-okf#140). When a base has a finding no reader
+  tolerates, the spawn refuses and `oats okf bases` reads `INVALID`, but
+  `subjects`, `subject`, `claims`, `index` for a version-2 soul and
+  `verdicts --check` in a running home answered from the committed indexes
+  with no warning. They still answer, as `cat`, `ls` and `search` do, and now
+  warn on stderr and in `warnings` in `--json`: ``W_BASE_INVALID:
+  <alias@commit> fails validation: <first finding> (and N more); answers come
+  from the committed indexes as they are; the maintainer repairs the base
+  (`oats okf bases`)``. The spawn, every writer and `bases` are unchanged;
+  `bases --json` carries the same `validated.error` as before.
+- **Skills:** okf-consultation says what `W_BASE_INVALID` means for a
+  reader; knowledge-review names it and the old-node case.
+
 ## 6.0.2 — 2026-11-11
 
 Requires OATS >=0.69.2, unchanged. A claim merged without the maintainer's
