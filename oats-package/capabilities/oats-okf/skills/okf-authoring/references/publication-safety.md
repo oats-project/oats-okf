@@ -165,7 +165,9 @@ or malformed file is `E_CONTENT_INPUT`, never "no terms".
 ## Create
 
 `oats okf propose --apply` runs the exact create sequence. Its local-only `commit`
-step snapshots screened commit text, fixes author and committer explicitly
+step snapshots screened commit text (from 6.1 it ends in the proposer's
+trailers: `Proposed-by`, and where the home recorded them `Proposer-identity`
+and `Attributed-human`), fixes author and committer explicitly
 (overriding more-specific Git settings after clearing inherited selectors),
 checks the staged tree, and updates only the current new branch with a local
 old-head compare-and-swap. No raw commit summary is printed. `create` preserves its

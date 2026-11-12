@@ -207,7 +207,12 @@ the craft):
 
 Use the digest the last `--check` printed. If anything changed since,
 `E_DIGEST`: check again and read the new diff. On success it commits with the
-package's fixed author text, pushes a new `okf-proposal/<date>-<uuid>` branch
+package's fixed author text and the commit text `--check` printed, whose
+trailers name you (`Proposed-by`, and where your home records them your
+messaging identity and the human it is attributed to; the maintainer's merge
+copies them into the accepted history; a `W_ATTRIBUTION` warning means one was
+left out because the content screen refuses its value, and needs nothing from
+you), pushes a new `okf-proposal/<date>-<uuid>` branch
 (create-only, never the accepted branch), labels it `okf-proposal`, opens one
 PR per changed base and prints each PR's URL, head, branch, the accepted
 commit it is parented on and `recovered` (how often an accepted branch that

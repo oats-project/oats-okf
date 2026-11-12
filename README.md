@@ -599,7 +599,9 @@ Then, from its instance home, in five steps:
    personal-data sentence, before the next step. Nothing remote changes.
 4. **Apply:** `oats okf propose --apply --slug <slug> --digest <digest>`. It
    refuses `E_DIGEST` if anything changed since the check, then commits (the
-   package's fixed author text), pushes create-only to a fresh
+   package's fixed author text; the commit text `--check` printed, which
+   names the proposer in its trailers: see
+   [Who proposed a change](#who-proposed-a-change)), pushes create-only to a fresh
    `okf-proposal/<UTC date>-<uuid>` branch through the publication helper's
    `create` (which replays the proposal onto an accepted branch that moved
    before the push, up to three times, unless the base's `okf-base.json`
@@ -665,6 +667,56 @@ the spawn or the workspace set is ignored and named in `--plan`'s
 The source record is consistency, not authorship: any caller that can run the
 command can name a home. What bounds a proposal is the soul's owned nodes, the
 OKF validation, the content screen and the maintainer's review.
+
+### Who proposed a change
+
+From 6.1 the proposal's commit ends in Git trailers that name the proposer,
+and the maintainer's merge copies them into the squash commit, so the
+accepted branch's history names the agent that proposed each change:
+
+```text
+okf-proposal: <claim>
+
+Source: instance <instance>, soul <soul>
+
+Proposed-by: <instance> (soul <soul>)
+Proposer-identity: <the instance's messaging address, else its alias>
+Attributed-human: <label>
+```
+
+- `Proposed-by` is always written.
+- `Proposer-identity` is written when the home's record holds a messaging
+  identity. `Attributed-human` is written when that identity is attributed to
+  a human, read as OATS reads `attributedHuman` for a status row: only the
+  identity the messaging-layer capability recorded counts, only attribution
+  mode `human` names one, and the label is one line of at most 200 characters
+  with no control or bidi character. One difference from the status row: the
+  identity and the label are trimmed, and a blank one is absent. A missing or
+  malformed attribution is simply absent: it never refuses or warns.
+- In the operator form, `Proposed-by` names the retired source and
+  `Published-by` names the caller's instance, or `operator` from the
+  deployment.
+- The trailers are in the commit text `--check` prints and inside the digest,
+  and they pass the content screen like the rest. An identity or a label the
+  screen refuses is left out, with a `W_ATTRIBUTION` warning that names the
+  trailer and never its value; the proposal is otherwise unchanged.
+- The squash commit the maintainer's merge writes is
+  `Reviewed OKF head: <head>`, then a trailer block: `Proposal: <the PR's
+  URL>` and the trailers above, copied from the reviewed head's own commit
+  message (one row per key; a key that appears twice is not copied). A
+  proposal made by 6.0.x has none, and its merge carries `Proposal:` alone. A
+  6.0.x maintainer merges a 6.1 proposal as before, without the trailers.
+  Nothing parses them.
+
+**They are a record, not proof.** The forge's own record (the commit's
+author and committer, the account that opened and merged the PR) shows the
+package's fixed text and the deployment's credential, not the agent. The
+trailers are written by the proposing process from the home it was given,
+and inside one trust group any agent can name any home. What they give is an
+accepted history that says which agent claims each change and points at the
+reviewed pull request, which is the reviewable record. A deployment that
+needs proof needs a signature by the proposer's own key, which oats.okf does
+not have (see `KERNEL-API-NEEDS.md`).
 
 ### What is enforced and what is an instruction
 

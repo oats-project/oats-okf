@@ -39,6 +39,37 @@ const present = p => { try { fs.lstatSync(p); return true; } catch (e) { if (e.c
 const failWith = (code, message, result) => { throw Object.assign(new Error(message), { code, ...(result ? { result } : {}) }); };
 const parseJson = (bytes, label) => { try { return JSON.parse(bytes); } catch { return fail('E_SOURCE', `${label} is not readable JSON`); } };
 
+// ------------------------------------------------------------ attribution
+// The kernel's refused set and one-line rule for text it did not write (a
+// waiting claim's message): what `attributedHuman` is held to on a status row.
+const REFUSED_TEXT = /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069\u200B\u2060\uFEFF\u{E0000}-\u{E007F}]/u;
+const oneLine = v => typeof v === 'string' && v.trim().length > 0 && [...v].length <= 200 && !REFUSED_TEXT.test(v);
+/** Who the home's record says proposes: the messaging identity it serves and
+ *  the human that identity is attributed to, read as the kernel reads
+ *  `attributedHuman` (feature spawn-attribution): by slot, never by name. Only
+ *  the identity a capability whose layer is "messaging" recorded counts; only
+ *  mode "human" names one; a malformed or absent attribution reads as absent.
+ *  One difference from the kernel, for a trailer's sake: the address, alias
+ *  and label are trimmed, and a blank one is absent.
+ *  A self-declared record, never proof: any caller can name a home. */
+export function attribution(record) {
+  const none = { identity: null, human: null };
+  const meta = record?.capabilityMeta, runtime = record?.capabilityRuntime;
+  if (!object(meta) || !Array.isArray(runtime)) return none;
+  for (const c of runtime.filter(c => c && c.layer === 'messaging')) {
+    const identity = meta[c.id]?.identity;
+    if (!object(identity)) continue;
+    const name = [identity.address, identity.alias].find(oneLine)?.trim() ?? null;
+    const a = identity.attribution;
+    if (!object(a) || !['human', 'none', 'unknown'].includes(a.mode)) return { identity: name, human: null };
+    const human = a.human ?? null, parent = a.parent ?? null, id = v => typeof v === 'string' && v.length > 0;
+    if (human !== null && !(object(human) && id(human.id) && typeof human.label === 'string')) return { identity: name, human: null };
+    if (parent !== null && !(object(parent) && id(parent.id))) return { identity: name, human: null };
+    return { identity: name, human: a.mode === 'human' && human && oneLine(human.label) ? human.label.trim() : null };
+  }
+  return none;
+}
+
 // ------------------------------------------------------------ safe reads
 // Every component below a trusted directory is checked; neither a symlinked
 // note directory nor a FIFO is a file to read. Descriptor checks close a leaf
@@ -119,10 +150,11 @@ export function resolveSource(home, env = process.env) {
   const capabilities = [record.capabilities, record.capabilityRuntime].flatMap(l => Array.isArray(l) ? l : []);
   const tasksProvider = capabilities.find(c => c?.layer === 'tasks')?.id ?? null;
   const messaging = capabilities.some(c => c?.layer === 'messaging');
+  const attributed = attribution(record);
   const proposer = form === 'live'
     ? { form, instance: record.instance, alias: messaging ? record.instance : null }
     : { form, instance: typeof env.OATS_INSTANCE === 'string' && NAME.test(env.OATS_INSTANCE) ? env.OATS_INSTANCE : null, alias: null };
-  return { form, home, root, record, soul, decl, bindings, tasksProvider: typeof tasksProvider === 'string' ? tasksProvider : null, proposer, legacyKeysIgnored };
+  return { form, home, root, record, soul, decl, bindings, tasksProvider: typeof tasksProvider === 'string' ? tasksProvider : null, proposer, attributed, legacyKeysIgnored };
 }
 
 /** A retired seat with no spawn-recorded duty (spawned on 4.x or 5.0/5.1),
@@ -538,7 +570,21 @@ export function provenance(source, bases, ev) {
     proposer: source.proposer,
   };
 }
-const commitText = (source, proposal) => `okf-proposal: ${proposal.claim}\n\nSource: instance ${source.record.instance}, soul ${source.soul}\n`;
+/** The commit's trailer block: who proposed, as the home's record says. The
+ *  forge's own record shows only the deployment's credential, so the accepted
+ *  history carries these (the maintainer's merge copies them). `optional`
+ *  rows are the record's free text: one the content screen refuses is left
+ *  out (`screened` decides), never a refusal the proposer cannot fix. */
+function trailers(source, screened) {
+  const rows = [`Proposed-by: ${source.record.instance} (soul ${source.soul})`], withheld = [];
+  for (const [key, value] of [['Proposer-identity', source.attributed.identity], ['Attributed-human', source.attributed.human]]) {
+    if (value === null) continue;
+    if (screened(`${key}: ${value}`)) rows.push(`${key}: ${value}`); else withheld.push(key);
+  }
+  if (source.form === 'recovery') rows.push(`Published-by: ${source.proposer.instance ?? 'operator'}`);
+  return { rows, withheld };
+}
+const commitText = (source, proposal, rows) => `okf-proposal: ${proposal.claim}\n\nSource: instance ${source.record.instance}, soul ${source.soul}\n\n${rows.join('\n')}\n`;
 const prBody = (proposal, block, candidates = '') => `${proposal.body}${candidates ? `\n${candidates}` : ''}\n\`\`\`okf-proposal\n${JSON.stringify(block, null, 2)}\n\`\`\`\n`;
 function termsFile() {
   const file = settings()['screen-terms-file'];
@@ -565,7 +611,20 @@ function prepare(source, dir, plan) {
   const terms = termsFile();
   const outgoing = join(dir, 'outgoing');
   fs.mkdirSync(outgoing, { recursive: true, mode: 0o700 });
-  const message = commitText(source, proposal);
+  // One trailer line at a time through the same screen the whole commit text
+  // meets below, so a withheld line is named and the rest still publishes.
+  const attributed = trailers(source, line => {
+    const scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-propose-trailer-'));
+    try {
+      const file = join(scratch, 'trailer.txt');
+      fs.writeFileSync(file, `${line}\n`, { mode: 0o600 });
+      // Through runHelper: any other failure (an unreadable terms file) keeps its message and findings.
+      try { runHelper('screen-text', { 'text-file': [file], ...(terms ? { 'terms-file': terms } : {}) }); return true; }
+      catch (e) { if (e?.code === 'E_CONTENT_REFUSED') return false; throw e; }
+    } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+  });
+  for (const key of attributed.withheld) warnings.push(`W_ATTRIBUTION: the ${key} trailer is left out of the commit: the content screen refuses its value (this home's recorded messaging identity); the proposal is otherwise unchanged`);
+  const message = commitText(source, proposal, attributed.rows);
   const results = [], checked = [], verdicts = [];
   for (const entry of plan.bases) {
     const owned = bases.find(b => b.alias === entry.alias);
