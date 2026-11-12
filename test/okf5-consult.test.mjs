@@ -416,3 +416,22 @@ test('all tree paths/modes are checked before starting the batch, including unre
   assert.equal(trace.calls().some(a=>a.includes('--batch')),false);
   assert.equal(fs.readdirSync(join(f.stateDir,'cache')).some(n=>n.startsWith('.validate-')),false);
 });
+
+// #142: a host cache lock left by another host (a recreated container) is
+// never taken. The read serves the last fetched commit, and its STALE reason
+// carries the refusal and the explicit release, not only "busy".
+test('a host cache lock owned by another host: the read serves the last fetched commit, STALE with the --host-gone release; the release lets the next read fetch',t=>{
+  const f=fixture(t),lock=join(f.stateDir,'cache','base-1.lock'),token='11111111-2222-4333-8444-555555555555';
+  assert.equal(run(f,['index','--json']).status,0);
+  json(join(lock,'owner.json'),{token,pid:process.pid,host:'old-container'});
+  const settings={'consult-max-age':0,'git-timeout':1};
+  const read=run(f,['index','--json'],{settings});
+  assert.equal(read.status,0,read.stdout);
+  const receipt=read.out.result.indexes[0].receipt;
+  assert.equal(receipt.stale,true);
+  assert.match(receipt.reason,/^serving the last fetched accepted commit: lock .* is held by process \d+ on host "old-container", not this host/);
+  assert.ok(receipt.reason.includes(`oats okf unlock --lock '${lock}' --token '${token}' --host-gone 'old-container' --soul <soul>`),receipt.reason);
+  assert.ok(fs.existsSync(join(lock,'owner.json')),'the lock is kept');
+  assert.equal(run(f,['unlock','--lock',lock,'--token',token,'--host-gone','old-container','--json']).status,0);
+  assert.equal(run(f,['index','--json'],{settings}).out.result.indexes[0].receipt.stale,false);
+});

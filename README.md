@@ -909,8 +909,26 @@ version and the fix) and changes nothing. Skills are never changed.
 oats okf unlock --lock /absolute/path/to/lock --token TOKEN_FROM_OWNER_JSON --soul domain-expert --json
 ```
 
-It refuses living holders and other hosts. Never remove a publication
-journal by hand.
+It refuses a living holder. A lock whose owner is another host is never
+released automatically or by age, because that host's process cannot be
+checked from here: a taker and the plain `unlock` both refuse with
+`E_LOCKED`, naming the owner's process and host and the explicit release.
+When that host is gone for good (a recreated container gets a new hostname,
+so the lock it left names a host that no longer exists) and no `oats okf`
+process uses the lock, the operator releases it by naming the host:
+
+```sh
+oats okf unlock --lock /absolute/path/to/lock --token TOKEN_FROM_OWNER_JSON --host-gone HOST_FROM_OWNER_JSON --soul domain-expert --json
+```
+
+`--host-gone` must equal the `host` in the lock's `owner.json`; it is the
+operator's statement that the host is gone, so the owner's process is not
+probed. It is refused for a lock this host owns, where the process check
+applies. A recreated container that keeps its hostname is this host to the
+lock: `--host-gone` does not apply, and the process check does. A consult
+read that finds the host cache lock held by another host serves the last
+fetched commit, marked `STALE` with the same refusal and command. Never
+remove a publication journal by hand.
 
 ## Portable binding (payloadVersion 2)
 
