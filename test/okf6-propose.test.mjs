@@ -180,7 +180,7 @@ test('check validates, scopes and screens the edits, then prints the complete ou
   const [b] = r.bases;
   assert.deepEqual(b.changed.sort(), ['A expert/retry-budget.md', 'M expert/index.md']);
   assert.match(b.diff, /^\+Retry budget is per request, not per connection\.$/m);
-  assert.match(r.commitText, /^okf-proposal: retry budget is per request\n\nSource: instance src, soul source\n$/);
+  assert.match(r.commitText, /^okf-proposal: retry budget is per request\n\nSource: instance src, soul source\n\nProposed-by: src \(soul source\)\n$/);
   assert.doesNotMatch(r.prBody, /<!--/, 'skeleton guidance is not published');
   const block = parseProvenance(r.prBody);
   assert.equal(block.valid, true, block.problems.join('; '));
@@ -357,6 +357,31 @@ for (const [reason, breakGh, fix] of [
   assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pr.branch}`), pr.head);
 });
 
+test('the commit names the proposer in trailers: the messaging identity and its attributed human, read by slot as the kernel reads attributedHuman', t => {
+  const record = (identity, runtime = [{ id: 'oats.aweb', layer: 'messaging' }]) => ({ capabilityRuntime: runtime, capabilityMeta: { 'oats.aweb': { identity } } });
+  const text = extra => { const f = fixture(t, extra), plan = ok(f.run(['--plan', '--slug', 'who'])); edit(f, plan); return ok(f.run(['--check', '--slug', 'who'])); };
+  const tail = r => r.commitText.split('\n\n').at(-1);
+  // No recorded identity: the proposer alone. Absence never warns.
+  const bare = text({});
+  assert.equal(tail(bare), 'Proposed-by: src (soul source)\n'); assert.deepEqual(bare.warnings, []);
+  // The address when the identity has one, else its alias; the human only in mode "human".
+  assert.equal(tail(text({ record: record({ mode: 'local', alias: 'src', address: null }) })), 'Proposed-by: src (soul source)\nProposer-identity: src\n');
+  assert.equal(tail(text({ record: record({ alias: 'src', address: 'acme/src', attribution: { mode: 'human', human: { id: 'h-1', label: 'Ada Example' }, parent: null } }) })),
+    'Proposed-by: src (soul source)\nProposer-identity: acme/src\nAttributed-human: Ada Example\n');
+  for (const attribution of [{ mode: 'none', human: { id: 'h-1', label: 'Ada Example' } }, { mode: 'unknown' }, { mode: 'person', human: { id: 'h-1', label: 'Ada Example' } },
+    { mode: 'human', human: { label: 'Ada Example' } }, { mode: 'human', human: { id: 'h-1', label: 'two\nlines' } }, { mode: 'human', human: { id: 'h-1', label: 'x'.repeat(201) } },
+    { mode: 'human', human: { id: 'h-1', label: 'Ada Example' }, parent: { id: 7 } }, 'human']) {
+    assert.equal(tail(text({ record: record({ alias: 'src', attribution }) })), 'Proposed-by: src (soul source)\nProposer-identity: src\n', JSON.stringify(attribution));
+  }
+  // By slot: an identity a non-messaging capability recorded names nobody.
+  assert.equal(tail(text({ record: record({ alias: 'other', attribution: { mode: 'human', human: { id: 'h-1', label: 'Ada Example' } } }, [{ id: 'oats.aweb', layer: 'tasks' }]) })), 'Proposed-by: src (soul source)\n');
+  // A value the content screen refuses is left out with a warning; the proposal still checks.
+  const withheld = text({ record: record({ alias: 'src', attribution: { mode: 'human', human: { id: 'h-1', label: SECRET } } }) });
+  assert.equal(tail(withheld), 'Proposed-by: src (soul source)\nProposer-identity: src\n');
+  assert.equal(withheld.warnings.length, 1); assert.match(withheld.warnings[0], /^W_ATTRIBUTION: the Attributed-human trailer is left out/);
+  assert.ok(!withheld.warnings[0].includes(SECRET), 'the warning never echoes the value');
+});
+
 test('the operator form reads a retirement recovery copy and names the form in the provenance', t => {
   const f = fixture(t);
   const recovery = join(f.d, 'agents', 'source', 'instances', '.oats-retirement', 'recovery', 'src-AbC123');
@@ -368,6 +393,7 @@ test('the operator form reads a retirement recovery copy and names the form in t
   const r = ok(f.run(['--check', '--slug', 'x', '--home', recovery], { cwd: f.d, as: 'operator' }));
   const block = parseProvenance(r.prBody).value;
   assert.deepEqual(block.proposer, { form: 'recovery', instance: null, alias: null });
+  assert.equal(r.commitText.split('\n\n').at(-1), 'Proposed-by: src (soul source)\nPublished-by: operator\n');
   assert.equal(block.source.incarnation, CREATED);
   assert.ok(block.evidence[0].sha256, 'the recovered notes are read');
   const [pr] = ok(f.run(['--apply', '--slug', 'x', '--home', recovery, '--digest', r.digest], { cwd: f.d, as: 'operator' })).prs;

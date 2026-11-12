@@ -454,6 +454,22 @@ function verdict(bytes, head, allowed) {
   } catch { fail('E_VERDICT'); }
   if (v.headSha !== head || !allowed.includes(v.verdict)) fail('E_VERDICT');
 }
+// oats.okf 6.1: the squash commit names the proposer. A proposal's commit
+// ends in a trailer block (Proposed-by, and where the proposer's home recorded
+// them Proposer-identity, Attributed-human, Published-by); the accepted
+// history would otherwise hold only the merging account. Copied from the
+// reviewed head's own message, one row per key, never from the PR body. They
+// are the proposer's own statement, not proof.
+const CARRIED = ['Proposed-by', 'Proposer-identity', 'Attributed-human', 'Published-by'];
+const UNPRINTABLE = /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069\u200B\u2060\uFEFF\u{E0000}-\u{E007F}]/u;
+function proposerTrailers(o) {
+  const raw = text(object(o.repo, o.head, 'commit')), split = raw.indexOf('\n\n');
+  const block = (split < 0 ? '' : raw.slice(split + 2)).trimEnd().split('\n\n').at(-1).split('\n');
+  return CARRIED.flatMap(key => {
+    const rows = block.filter(row => row.startsWith(`${key}: `));
+    return rows.length === 1 && [...rows[0]].length <= 300 && !UNPRINTABLE.test(rows[0]) ? rows : [];
+  });
+}
 function comment(o, bytes) {
   gh(o, ['pr', 'comment', o.pr, '--repo', o.github, '--body-file', '-'], bytes);
 }
@@ -567,12 +583,15 @@ export function execute(command, o) {
     if (forkPoint(o.repo, o.base, o.head) !== o.base) fail('E_REWRITE_REQUIRED');
     const screenedTree = oid(text(git(o.repo, ['rev-parse', `${o.head}^{tree}`])).trim());
     checked(screenRange(o.repo, o.base, o.head));
+    // Built and screened before the verdict comment: a refusal publishes nothing.
+    const mergeText = `Reviewed OKF head: ${o.head}\n\n${[`Proposal: https://github.com/${o.github}/pull/${o.pr}`, ...proposerTrailers(o)].join('\n')}\n`;
+    checked(screenText(mergeText, 'merge commit text', { commit: true }));
+    const mergeBody = Buffer.from(mergeText);
     const confirmScreenedTree = () => {
       verifyBase(o, 'E_REWRITE_REQUIRED');
       if (oid(text(git(o.repo, ['rev-parse', `${o.head}^{tree}`])).trim()) !== screenedTree) fail('E_HEAD_MOVED');
     };
     confirmScreenedTree(); view(o); comment(o, body); view(o); confirmScreenedTree();
-    const mergeBody = Buffer.from(`Reviewed OKF head: ${o.head}\n`);
     gh(o, ['pr', 'merge', o.pr, '--repo', o.github, '--squash', '--match-head-commit', o.head,
       '--subject', 'OKF knowledge proposal', '--body-file', '-'], mergeBody);
     return { head: o.head, status: 'merge-submitted' };

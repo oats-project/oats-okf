@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added
+
+- **A knowledge change names the agent that proposed it**
+  (oats-project/oats-okf#151). Every proposal commit had the same fixed
+  author, the pull request was opened by the deployment's shared account, and
+  after the squash merge the accepted history named neither the agent nor
+  the pull request. Now the proposal's commit text ends in Git trailers:
+  `Proposed-by: <instance> (soul <soul>)` always; `Proposer-identity:` when
+  the home records a messaging identity (its address, else its alias);
+  `Attributed-human:` when that identity is attributed to a human, read as
+  OATS reads `attributedHuman` (by the messaging slot, mode `human` only, a
+  one-line label; absent or malformed is absent and never refuses);
+  `Published-by:` in the operator form. `--check` prints them and the digest
+  covers them. A value the content screen refuses is left out with a
+  `W_ATTRIBUTION` warning. The maintainer's merge writes them, and
+  `Proposal: <PR URL>`, into the squash commit after `Reviewed OKF head:`.
+  They are the proposer's own statement, not proof, and the README says so
+  ("Who proposed a change"). The commit's author and committer, the `Source:`
+  line and the version 3 provenance block are unchanged. Nothing a deployment
+  must change: a 6.0.x maintainer merges such a proposal as before (without
+  the trailers), and a proposal made by 6.0.x merges with `Proposal:` alone.
+
 ### Fixed
 
 - **`oats okf propose --apply` pushed before its first `gh` call, so a host
