@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A proposer credential separate from the maintainer's**
+  (oats-project/oats-okf#149). In a container every agent reads every
+  credential, and knowledge writes used whatever `git` and `gh` found, which
+  could be the maintainer's own login. New host-only setting
+  `github-token-file` (`settings.oats.okf` in `oats-local.yaml` only; the
+  manifest declares it `hostOnly`, and a value from a soul, a workspace or a
+  spawn flag refuses with `E_CONFIG`, naming the layer and the move): the
+  absolute path of a file holding one GitHub token. When set, every remote
+  `git` call and every `gh` call of the package is given that token
+  (credential helpers cleared, `gh`'s login and inherited token variables
+  not consulted, transports other than HTTPS refused), read at each use;
+  every Git base must be bound by its `https://github.com/` URL; a missing,
+  unreadable, empty or malformed file, or another locator, refuses with the
+  new `E_CREDENTIAL`, naming the whole fix. `propose --apply`'s check before
+  the push judges that file's token, on both of its routes, and its
+  `E_GH_UNAVAILABLE` fixes then name the token and its identity
+  (`result.credential` `file`). The publication helper takes the same file
+  as `--token-file`, on `preflight` too. The README's new "The proposer
+  credential" states what the package guarantees inside one trust group and
+  what a deployment provisions on GitHub for a real gate. **Not set, nothing
+  changes:** the user's own `git` and `gh` login, as before.
+  - **A stated limit:** the package does not isolate Git from the host's own
+    configuration. A netrc entry for github.com, an authorization header
+    (`http.extraHeader`) or a URL rewrite (`insteadOf`, `pushInsteadOf`) in
+    the system or user Git configuration answers before the package's
+    credential helper is asked. A deployment that sets `github-token-file`
+    keeps none of them for github.com in the agents' container.
+  - **Not proven in a live run.** No rehearsal against GitHub was made for
+    this change, and no test claims these: (1) a proposal opened through
+    `github-token-file` on a real private repository (the token carrying the
+    clone, the push and the pull request); (2) GitHub refusing that
+    write-role-only credential a direct push to the accepted branch and a
+    merge, under the documented ruleset; (3) what GitHub reports for such a
+    token (its role, its permissions, the branch's protection), which the
+    bring-up check reads. The tests prove what the package hands `git` (the
+    real `git credential fill`) and `gh` (a fake), and nothing about
+    GitHub's answers.
+
+### Changed
+
+- **A repository GitHub does not show an installation reads as a refusal,
+  with the fix that names access** (follow-up to #157). In the publish
+  check's installation route, a 404 for the push advertisement was "could
+  not check", whose fix names the network. It is now
+  `installation-cannot-push`: give the installation access to the
+  repository.
+
 ## 6.1.0 — 2026-11-13
 
 Requires OATS >=0.69.2, unchanged. A knowledge change names the agent that

@@ -104,6 +104,8 @@ try {
 }
 const input = a.includes('--body-file') ? fs.readFileSync(0, 'utf8') : null;
 const entry = { kind, argv: a, input, write: kind !== 'view' && kind !== 'preflight' && kind !== 'installation' && kind !== 'token', effect: false };
+// The credential gh was handed in its own environment (the token-file mode); the fixture's own environment holds none.
+if (process.env.GH_TOKEN !== undefined) entry.ghToken = process.env.GH_TOKEN;
 let response = '';
 if (s.fail === kind) {
   fs.appendFileSync(log, JSON.stringify(entry) + '\n');
@@ -1326,6 +1328,7 @@ const s = http.createServer((q, r) => {
   if (q.url === '/redirect') { r.writeHead(302, { location: '/repo' }); r.end(); }
   else if (q.url === '/plain') { r.writeHead(200, { 'content-type': 'text/plain' }); r.end('ok'); }
   else if (q.url === '/missing') { r.writeHead(404); r.end(); }
+  else if (q.url === '/teapot') { r.writeHead(418); r.end(); }
   else if (a === basic('can-push')) { r.writeHead(200, ad); r.end('001f# service=git-receive-pack'); }
   else if (a === basic('read-only')) { r.writeHead(403); r.end(); }
   else { r.writeHead(401, { 'www-authenticate': 'Basic realm="x"' }); r.end(); }
@@ -1338,9 +1341,39 @@ s.listen(0, '127.0.0.1', () => console.log(s.address().port));`], { stdio: ['ign
   assert.equal(receivePack(at('/repo'), 'unknown-token'), 'refused');
   // Could not check: a redirect (never followed, even to an accepting URL), a
   // 200 that is no advertisement, any other status, nothing listening.
-  for (const path of ['/redirect', '/plain', '/missing']) assert.equal(receivePack(at(path), 'can-push'), 'unknown', path);
+  // A repository GitHub does not show the credential answers 404: a refusal, whose fix is access to it.
+  assert.equal(receivePack(at('/missing'), 'can-push'), 'refused');
+  for (const path of ['/redirect', '/plain', '/teapot']) assert.equal(receivePack(at(path), 'can-push'), 'unknown', path);
   assert.equal(receivePack('http://127.0.0.1:1/repo', 'can-push'), 'unknown');
   assert.equal(receivePack('not a url', 'can-push'), 'unknown');
+});
+
+// oats.okf 6.2 (#149): with a token file, the credential judged is the file's.
+// These prove what the package hands gh and the request, against a fake gh
+// and a stubbed request; what GitHub answers such a token is not tested here.
+test('with a token file the preflight judges that token: gh holds it in its own environment, and the installation route sends it without asking gh', t => {
+  const f = fixture(t), before = f.snapshot(), file = f.artifact('proposer-token', 'the-file-token\n');
+  const user = f.answered('preflight', undefined, 'accepted', { 'token-file': file });
+  assert.deepEqual(user.out, { ok: true, github: GITHUB, status: 'gh-available' }); assert.deepEqual(user.asked, []);
+  assert.deepEqual(f.calls().map(c => [c.kind, c.ghToken]), [['preflight', 'the-file-token']]);
+  f.patchGh({ push: false, installation: 1, token: 'the-login-gh-holds' });
+  const app = f.answered('preflight', undefined, 'accepted', { 'token-file': file });
+  assert.deepEqual(app.out, { ok: true, github: GITHUB, status: 'gh-available' });
+  assert.deepEqual(app.asked, [{ url: ADVERTISEMENT_URL, token: 'the-file-token' }], "never gh's stored login");
+  assert.deepEqual(f.calls().slice(1).map(c => [c.kind, c.ghToken]), [['preflight', 'the-file-token'], ['installation', 'the-file-token']], 'gh auth token is not asked');
+  assert.deepEqual(f.answered('preflight', undefined, 'refused', { 'token-file': file }).out, unavailable('installation-cannot-push'));
+  assert.deepEqual(f.answered('preflight', undefined, 'unknown', { 'token-file': file }).out, unavailable('installation-check-failed'));
+  // Without the file nothing is handed over: the mode is opt-in.
+  f.patchGh({ push: true, installation: undefined }); f.answered('preflight', undefined, 'accepted');
+  assert.equal(Object.hasOwn(f.calls().at(-1), 'ghToken'), false);
+  unchanged(f, before);
+});
+test('an unusable token file refuses the preflight with E_CREDENTIAL before gh is started', t => {
+  const f = fixture(t), before = f.snapshot();
+  for (const [file, reason] of [[join(f.root, 'absent-token'), 'missing'], [f.artifact('empty-token', ''), 'empty'], [f.artifact('two-tokens', 'a b\n'), 'malformed']]) {
+    assert.deepEqual(f.answered('preflight', undefined, 'accepted', { 'token-file': file }).out, { ok: false, code: 'E_CREDENTIAL', diagnostic: { phase: 'credential', reason } });
+  }
+  assert.deepEqual(f.calls(), []); unchanged(f, before);
 });
 
 test('create refuses E_GH_UNAVAILABLE (gh-absent) on a host without gh, before any push', t => {

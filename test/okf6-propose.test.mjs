@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { backingNotes, SKELETON, propose, publication, provenance as provenanceBlock } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
+import { backingNotes, SKELETON, propose, publication, checkPublish, provenance as provenanceBlock } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
 import { execute as shippedExecute } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 import { isolatedGit } from './fixtures/isolated-git.mjs';
 // oats.okf 6.0 (docs/design/2026-11-10-no-harvesters-propose-by-pr.md): the
@@ -403,7 +403,7 @@ test('a gate that fails while another apply of the same proposal began reports i
 });
 
 test('an installation credential GitHub refuses, or that could not be checked, refuses --apply with its fix line, nothing pushed', async t => {
-  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push .* give the installation access to the repository with contents write, plus pull-requests and issues write/], ['installation-check-failed', /could not be checked .* check the network \(the check uses no proxy\) and `gh auth status`, then run it again/]]) {
+  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push to the repository or does not show it the repository .* give the installation access to the repository with contents write, plus pull-requests and issues write/], ['installation-check-failed', /could not be checked .* check the network \(the check uses no proxy\) and `gh auth status`, then run it again/]]) {
     const f = fixture(t);
     await inProcess(f, async () => {
       const plan = propose(f.home, { plan: true, slug: 'i' }).result; edit(f, plan);
@@ -457,6 +457,40 @@ test('the commit names the proposer in trailers: the messaging identity and its 
   assert.equal(tail(withheld), 'Proposed-by: src (soul source)\nProposer-identity: src\n');
   assert.equal(withheld.warnings.length, 1); assert.match(withheld.warnings[0], /^W_ATTRIBUTION: the Attributed-human trailer is left out/);
   assert.ok(!withheld.warnings[0].includes(SECRET), 'the warning never echoes the value');
+});
+
+test('github-token-file reaches the whole flow: a base not bound over HTTPS and a committed value each refuse with the fix, before anything is cloned or sent', t => {
+  const origins = kind => ({ OATS_SETTINGS_ORIGINS: JSON.stringify({ '/github-token-file': { kind, at: 'x' } }) });
+  const f = fixture(t, { settings: { 'github-token-file': '/nonexistent/okf-token' } });
+  // The fixture's base is a local repository: the token serves https://github.com/ only.
+  refused(f.run(['--plan', '--slug', 'x'], { extra: origins('host') }), 'E_CREDENTIAL', /git base "kb" is not bound by an https:\/\/github\.com\/ URL.*bind it by its HTTPS URL/);
+  refused(f.run(['--plan', '--slug', 'x'], { extra: origins('soul') }), 'E_CONFIG', /github-token-file from soul \(x\) is not valid: it is host-only/);
+  assert.equal(fs.existsSync(join(f.home, 'proposals')), false, 'nothing was planned');
+  assert.equal(f.calls().length, 0, 'no gh call');
+});
+
+test('with github-token-file the one publish predicate judges that file: it is passed to the preflight, every fix names the token and never gh\'s login, and an unusable file refuses E_CREDENTIAL', () => {
+  const saved = { ...process.env }, wrapped = publication.execute, base = { pr: { repository: 'acme/kb' } };
+  const answer = reason => { publication.execute = (command, o) => { asked.push([command, o]); throw Object.assign(new Error('x'), reason.startsWith('E_') ? { code: reason, diagnostic: { phase: 'credential', reason: 'missing' } } : { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); }; };
+  const refusal = () => { try { checkPublish('kb', base); } catch (e) { return e; } assert.fail('expected a refusal'); };
+  let asked = [];
+  try {
+    process.env.OATS_SETTINGS = JSON.stringify({ 'github-token-file': '/run/secrets/okf-token' }); process.env.OATS_SETTINGS_ORIGINS = JSON.stringify({ '/github-token-file': { kind: 'host', at: 'x' } });
+    for (const [reason, fix] of [
+      ['gh-absent', /install it \(github-token-file supplies its credential\)/],
+      ['gh-failed', /GitHub did not show the repository or a permission on it to the token in github-token-file: check that the token is valid and not expired, and that its identity can see the repository/],
+      ['no-write-permission', /the identity of the token in github-token-file has less than write permission .* give that identity the write role there/],
+      ['installation-cannot-push', /the token in github-token-file is a GitHub App installation's, and GitHub refused it a push to the repository or does not show it the repository \(asked with that token; nothing was sent\): give the installation access/],
+      ['installation-check-failed', /the token in github-token-file is a GitHub App installation's, and whether GitHub accepts a push from it could not be checked .* check the network \(the check uses no proxy\), then run it again/],
+    ]) {
+      asked = []; answer(reason); const e = refusal();
+      assert.equal(e.code, 'E_GH_UNAVAILABLE'); assert.match(e.message, fix); assert.doesNotMatch(e.message, /gh auth|sign gh in|gh's account|signed in/);
+      assert.deepEqual(e.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false, credential: 'file' });
+      assert.deepEqual(asked, [['preflight', { github: 'acme/kb', 'token-file': '/run/secrets/okf-token' }]]);
+    }
+    answer('E_CREDENTIAL'); const e = refusal();
+    assert.equal(e.code, 'E_CREDENTIAL'); assert.match(e.message, /^github-token-file \/run\/secrets\/okf-token does not exist: provision .* nothing was sent$/);
+  } finally { publication.execute = wrapped; for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); }
 });
 
 test('the operator form reads a retirement recovery copy and names the form in the provenance', t => {

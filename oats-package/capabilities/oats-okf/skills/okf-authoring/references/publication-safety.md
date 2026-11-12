@@ -163,6 +163,28 @@ case-insensitively in every screened text, file name and ref, reported as rule
 `host-term` with its location only. Terms only add refusals; an unreadable
 or malformed file is `E_CONTENT_INPUT`, never "no terms".
 
+## The credential the gate uses
+
+By default the helper's `git` and `gh` children use the caller's native
+credentials. With `--token-file <absolute path>` (oats.okf 6.2; `oats okf
+propose` passes the host's `github-token-file` setting) they are given the
+GitHub token in that file: ambient credential helpers are cleared,
+inherited token variables and `gh`'s stored login are not consulted, and
+transports other than HTTPS are refused. The helper does not isolate Git
+from the host's own configuration: a netrc entry for github.com, an
+authorization header (`http.extraHeader`) or a URL rewrite (`insteadOf`,
+`pushInsteadOf`) in the system or user Git configuration answers before any
+credential helper is asked, so a host that uses a token file keeps none of
+them for github.com. The `preflight` check runs no Git: with a token file
+it judges that file's token (`gh` is handed it; the installation route
+reads it from the file and does not ask `gh auth token`). The token is read at each use, goes
+to `git` through the helper's own `git-credential` mode for
+`https://github.com` only and to `gh` in that child's environment, and never
+appears in an argument or a result. A missing or malformed file is
+`E_CREDENTIAL` with `diagnostic.reason` (`missing`, `unreadable`,
+`not-a-file`, `empty`, `malformed`, `path`), exit 2, before anything is sent.
+The gate is still not a sandbox: it does not hide the file from the caller.
+
 ## Create
 
 `oats okf propose --apply` runs the exact create sequence. Its local-only `commit`
@@ -191,13 +213,13 @@ environment requests the repository's push advertisement
 (`info/refs?service=git-receive-pack`), where GitHub authorizes a push.
 Nothing is sent and Git takes no part, so no Git configuration, URL rewrite,
 netrc, SSH key or other login answers for the installation. The
-advertisement passes, a 401 or 403 is `installation-cannot-push`, and a
+advertisement passes, a 401, 403 or 404 is `installation-cannot-push`, and a
 timeout, an unreachable github.com, a redirect, no token from gh or any
 other answer is `installation-check-failed`; the request uses no proxy. Not
 yet run with a real installation token. Every call of the check names
 github.com (`--hostname`), so `GH_HOST` cannot split it across two
-credentials. On both routes it is gh's credential that is judged, not the
-one Git uses for the base's remote. For an installation it proves contents
+credentials. On both routes it is gh's credential that is judged (the
+token file's, when one is named), not the one Git uses for the base's remote. For an installation it proves contents
 write only, not the pull-requests and issues write the PR and its label
 need. It cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed
