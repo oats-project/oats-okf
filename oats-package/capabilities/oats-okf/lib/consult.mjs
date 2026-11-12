@@ -331,14 +331,15 @@ export function verdict(ctx, { fetchMissing = true, saveResult = true } = {}) {
     // okf 6.0.2: version 4 adds `unstamped` (claims/ concepts without id, which
     // a reader tolerates): a 6.0.0/6.0.1 verdict cached such a commit invalid.
     // okf 6.0.3 (#140): an invalid verdict also carries its first finding and
-    // their count, for W_BASE_INVALID; optional, so the version stays (a
-    // verdict cached without them warns with the whole message, cut).
+    // their count, for W_BASE_INVALID. The version stays: a valid verdict is
+    // unchanged, and an E_VALIDATION verdict cached without them (6.0.0-6.0.2)
+    // is judged again once, below. Another code has one message, no findings.
     try { const v = run(); return { version: 4, ok: true, digest: v.digest, nodes: v.meta.nodes, subjects: v.subjects, stale: v.stale ?? 0, unstamped: v.unstamped ?? 0 }; }
     catch (e) { if (!VALIDATION_CODES.has(e.code)) throw e; return { version: 4, ok: false, error: { code: e.code, message: e.message }, ...(Array.isArray(e.findings) && e.findings.length ? { first: e.findings[0], count: e.findings.length } : {}) }; }
   };
   if (ctx.kind === 'directory') return judge(() => validateBase(ctx.base.path, ctx.base, { reader: true }));
   const file = validationFile(ctx);
-  if (fs.existsSync(file)) { const cached = readJSON(file); if (cached?.version === 4 && cached.commit === ctx.commit && cached.root === ctx.base.root) return cached; }
+  if (fs.existsSync(file)) { const cached = readJSON(file); if (cached?.version === 4 && cached.commit === ctx.commit && cached.root === ctx.base.root && (cached.ok || cached.error?.code !== 'E_VALIDATION' || cached.first !== undefined)) return cached; }
   const scratch = fs.mkdtempSync(join(saveResult ? dirname(ctx.cache) : fs.realpathSync(tmpdir()), saveResult ? '.validate-' : 'okf-validate-'));
   const root = join(scratch, 'tree');
   // Also used by offline inspection: never lazy-fetch while checking objects.

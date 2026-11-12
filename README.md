@@ -364,8 +364,9 @@ a base from the committed indexes, as `cat`, `ls` and `search` serve it, and
 from 6.0.3 (#140) they say so: ``W_BASE_INVALID: <alias@commit> fails
 validation: <first finding> (and N more); answers come from the committed
 indexes as they are; the maintainer repairs the base (`oats okf bases`)``
-on stderr and in `warnings` in `--json` (the finding is cut at 200
-characters; `(and N more)` only when there are more). Before 6.0.3 they
+on stderr and in `warnings` in `--json` (the finding loses its control
+characters and is cut at 200 characters; `(and N more)` only when there
+are more). `index <kind>/<slug>` warns the same way for any soul. Before 6.0.3 they
 answered with no warning.
 `oats okf bases` agrees with the readers: a base whose only findings are
 these tolerated kinds is `valid`, with the warning lines under it (and

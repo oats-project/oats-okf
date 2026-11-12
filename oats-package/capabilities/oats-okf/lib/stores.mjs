@@ -83,10 +83,11 @@ export const unstampedWarning=(n,at)=>`W_ID_MISSING: ${n} claim${n===1?' lacks':
 /** okf 6.0.3 (#140): the subject verbs' warning for a base that fails
  *  validation for a reason no reader tolerates. They still answer from the
  *  committed indexes; the spawn and `bases` refuse it. `v` is an invalid
- *  verdict ({error: {message}, first?, count?}; one cached before 6.0.3 has
- *  only the message). The finding names committed paths: it is cut. */
+ *  verdict ({error: {message}, first?, count?}; a code other than
+ *  E_VALIDATION has only the message). The finding is committed, untrusted
+ *  text (paths, frontmatter values): control characters go, and it is cut. */
 export const invalidWarning=(v,at)=>{
-  const cut=t=>{ const line=String(t ?? '').replace(/\s+/g,' ').trim(); return line.length>200?`${line.slice(0,200)}…`:line; };
+  const cut=t=>{ const line=String(t ?? '').replace(/[\u0000-\u001f\u007f-\u009f]+/g,' ').replace(/\s+/g,' ').trim(); return line.length>200?`${line.slice(0,200)}…`:line; };
   const more=(v?.count ?? 1)-1;
   return `W_BASE_INVALID: ${at} fails validation: ${cut(v?.first ?? v?.error?.message)}${more>0?` (and ${more} more)`:''}; answers come from the committed indexes as they are; the maintainer repairs the base (\`oats okf bases\`)`;
 };

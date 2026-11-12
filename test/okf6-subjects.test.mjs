@@ -481,19 +481,26 @@ test('both tolerated kinds on one base: every reader warns W_INDEX_STALE then W_
   const text=run(f,['subjects']);
   assert.equal(text.status,0,text.text);assert.equal(text.stderr,`${invalid1}\n`);assert.doesNotMatch(text.stdout,/W_BASE_INVALID/);
   assert.deepEqual(Object.keys(run(f,['bases','--json']).out.result.bases[0].validated.error).sort(),['code','message'],'`bases` JSON is unchanged');
+  // A verdict cached by 6.0.0-6.0.2 (invalid, no first/count) is judged again, so the warning keeps its shape.
+  const vdir=fs.readdirSync(join(f.stateDir,'cache')).map(n=>join(f.stateDir,'cache',n,'okf-validation')).find(d=>fs.existsSync(d));
+  const vfile=fs.readdirSync(vdir).map(n=>join(vdir,n)).find(p=>JSON.parse(fs.readFileSync(p,'utf8')).first!==undefined);
+  assert.ok(vfile,'the invalid verdict is cached with its first finding');
+  const older=JSON.parse(fs.readFileSync(vfile,'utf8'));delete older.first;delete older.count;json(vfile,older);
+  assert.deepEqual(run(f,['subjects','--json']).out.result.warnings,[invalid1]);
+  assert.equal(JSON.parse(fs.readFileSync(vfile,'utf8')).count,2,'and cached again with its findings');
   // A second stray claim: the first finding is still the one named.
   write(join(f.repo,'claims/insights/stray2.md'),'---\ntype: Insight\ntitle: Stray 2\ndescription: x\nabout: [system/nope2]\nid: ins-0000000000fe\n---\n');
   f.git('add','-A');f.git('commit','-q','-m','a second stray claim');
   assert.match(run(f,['subjects','--fresh','--json']).out.result.warnings[0],/^W_BASE_INVALID: project@[0-9a-f]{12} fails validation: claims\/insights\/stray\.md: about names "system\/nope"[^;]*\(and 3 more\); answers come/);
 });
 
-test('W_BASE_INVALID on a directory base, and from a verdict cached without its findings',t=>{
+test('W_BASE_INVALID: validateBase carries its findings; the warning cuts a long message, counts the rest and drops control characters',t=>{
   const dir=bridged(t);
   write(join(dir,'claims/insights/stray.md'),'---\ntype: Insight\ntitle: Stray\ndescription: x\nabout: [system/nope]\nid: ins-0000000000ff\n---\n');
   let error;try{validateBase(dir,{id:'base-1',kind:'directory'},{reader:true});}catch(e){error=e;}
   assert.equal(error.code,'E_VALIDATION');assert.ok(error.findings.length>=1 && error.message===error.findings.join('; '));
   assert.equal(invalidWarning({error:{code:'E_VALIDATION',message:`a: one; b: ${'x'.repeat(300)}`}},'kb@dir:abc'),`W_BASE_INVALID: kb@dir:abc fails validation: a: one; b: ${'x'.repeat(189)}…; answers come from the committed indexes as they are; the maintainer repairs the base (\`oats okf bases\`)`);
-  assert.match(invalidWarning({error:{message:'m'},first:'p.md: bad\nline',count:3},'kb@abc'),/fails validation: p\.md: bad line \(and 2 more\); answers/);
+  assert.match(invalidWarning({error:{message:'m'},first:'p.md: bad\nline \x1b[31m\x07x',count:3},'kb@abc'),/fails validation: p\.md: bad line \[31m x \(and 2 more\); answers/);
 });
 
 test('W_ID_MISSING on a directory base: the reader counts claims/ concepts without id; an old-node concept without id is not counted',t=>{

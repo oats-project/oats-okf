@@ -180,7 +180,7 @@ test('an old-node concept merged without id (#140): check warns W_ID_MISSING for
   const clone1 = edit(plan1, 'expert/pin.md', CLAIM());
   fs.appendFileSync(join(clone1, 'expert/index.md'), '* [Pin owners before the first read](pin.md) - The owner is pinned before any consult read.\n');
   assert.deepEqual(ok(v1.run(['--check', '--slug', 'pin'])).warnings, [warning(2, plan1)]);
-  // Another strict finding on an untouched file still refuses.
+  // Another finding (here on the proposal's own claim) still refuses, without the tolerated ones.
   write(join(clone1, 'expert/pin.md'), CLAIM('\nid: dec-000000000001'));
   const error = refused(v1.run(['--check', '--slug', 'pin']), 'E_VALIDATION', /id dec-000000000001 is also/);
   assert.doesNotMatch(error.message, /missing 'id'/);

@@ -16,7 +16,7 @@
 - **The subject verbs said nothing on a base that fails validation**
   (oats-project/oats-okf#140). When a base has a finding no reader
   tolerates, the spawn refuses and `oats okf bases` reads `INVALID`, but
-  `subjects`, `subject`, `claims`, `index` for a version-2 soul and
+  `subjects`, `subject`, `claims`, `index` of a subject and
   `verdicts --check` in a running home answered from the committed indexes
   with no warning. They still answer, as `cat`, `ls` and `search` do, and now
   warn on stderr and in `warnings` in `--json`: ``W_BASE_INVALID:
