@@ -794,7 +794,13 @@ export function apply(source, slug, expected) {
   // Every gh precondition, for every base, before the attempt marker.
   for (const r of p.results.filter(x => x.changed.length)) {
     try { checkPublish(r.alias, r.owned.base); }
-    catch (e) { if (e?.code === 'E_GH_UNAVAILABLE') e.message += '. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again'; throw e; }
+    catch (e) {
+      // Another --apply of this proposal may have begun while gh was asked:
+      // then it is attempted, and never reported as untouched.
+      if (present(publish)) attempted();
+      if (e?.code === 'E_GH_UNAVAILABLE') e.message += '. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again';
+      throw e;
+    }
   }
   try { fs.mkdirSync(publish, { mode: 0o700 }); }
   catch (e) { if (e.code === 'EEXIST') attempted(); throw e; }

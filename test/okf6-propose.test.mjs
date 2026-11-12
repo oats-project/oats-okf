@@ -389,6 +389,19 @@ test('a receipt that cannot be written after the PR is confirmed is a warning: t
   });
 });
 
+test('a gate that fails while another apply of the same proposal began reports it as attempted, not as untouched', async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'c' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'c' }).result;
+    const publish = join(plan.proposal, 'publish'), wrapped = publication.execute;
+    // The other apply creates the marker while this one's gh call is out; then this call fails.
+    publication.execute = (command, o) => { if (command !== 'preflight') return wrapped(command, o); fs.mkdirSync(publish); throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'gh-failed' } }); };
+    let error; try { propose(f.home, { apply: true, slug: 'c', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
+    assert.equal(error?.code, 'E_PROPOSAL_EXISTS'); assert.match(error.message, /already applied or attempted/);
+  });
+});
+
 test('a snapshot that cannot be written after the attempt began fails inside the publication envelope, with the published rows', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
   const f = fixture(t);
   await inProcess(f, async () => {
