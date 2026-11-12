@@ -330,6 +330,8 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   for (const p of ['work/kb', 'outgoing/kb-commit.txt', 'outgoing/kb-pr.md', 'publish/kb-result.json']) assert.ok(fs.existsSync(join(plan.proposal, p)), p);
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
   refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
+  // An attempted proposal is never called untouched, even when gh is now unusable (it is not re-appliable).
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'repo view' } }), 'E_PROPOSAL_EXISTS');
 });
 
 // #148: every gh precondition is decided before the push and before the
@@ -382,6 +384,22 @@ test('a receipt that cannot be written after the PR is confirmed is a warning: t
     assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${result.prs[0].branch}`), result.prs[0].head);
     assert.equal(result.warnings.filter(w => /^W_RECEIPT: the PR for base kb is open/.test(w)).length, 1);
     assert.ok(!fs.existsSync(join(publish, 'kb-result.json')));
+  });
+});
+
+test('a snapshot that cannot be written after the attempt began fails inside the publication envelope, with the published rows', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 's' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 's' }).result;
+    // The lib's fs is node's default export: the one object this patches.
+    const { default: nodeFs } = await import('node:fs'); const { syncBuiltinESMExports: sync } = await import('node:module');
+    const publish = join(plan.proposal, 'publish'), mkdir = nodeFs.mkdirSync;
+    nodeFs.mkdirSync = (path, ...rest) => { const out = mkdir(path, ...rest); if (path === publish) fs.chmodSync(publish, 0o500); return out; }; sync();
+    let error; try { propose(f.home, { apply: true, slug: 's', digest }); } catch (e) { error = e; } finally { nodeFs.mkdirSync = mkdir; sync(); if (fs.existsSync(publish)) fs.chmodSync(publish, 0o700); }
+    assert.equal(error?.code, 'E_PUBLICATION'); assert.match(error.message, /publication of base kb stopped \(E_PUBLICATION\).*Do not retry/);
+    assert.deepEqual(error.result.published, []); assert.equal(error.result.failed.alias, 'kb');
+    assert.equal(remoteBranches(f), 'refs/heads/main', 'nothing was pushed');
   });
 });
 

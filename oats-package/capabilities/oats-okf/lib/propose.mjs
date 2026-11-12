@@ -786,15 +786,18 @@ export function apply(source, slug, expected) {
   const dir = proposalDir(source, slug);
   const p = prepare(source, dir, readPlan(dir));
   if (p.digest !== expected) fail('E_DIGEST', 'the clone, proposal.md, a named note or the generated commit text or PR body changed since --check (or the digest is not the one it printed): run --check again and read its diff before --apply');
+  // The publish directory is the attempt marker: one attempt per proposal.
+  const publish = join(dir, 'publish');
+  const attempted = () => fail('E_PROPOSAL_EXISTS', `this proposal was already applied or attempted (see ${publish}); never retry it: plan a new proposal if knowledge is still missing`);
+  // An attempted proposal refuses as such, before the gate below could call it untouched.
+  if (present(publish)) attempted();
   // Every gh precondition, for every base, before the attempt marker.
   for (const r of p.results.filter(x => x.changed.length)) {
     try { checkPublish(r.alias, r.owned.base); }
     catch (e) { if (e?.code === 'E_GH_UNAVAILABLE') e.message += '. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again'; throw e; }
   }
-  // The publish directory is the attempt marker: one attempt per proposal.
-  const publish = join(dir, 'publish');
   try { fs.mkdirSync(publish, { mode: 0o700 }); }
-  catch (e) { if (e.code === 'EEXIST') fail('E_PROPOSAL_EXISTS', `this proposal was already applied or attempted (see ${publish}); never retry it: plan a new proposal if knowledge is still missing`); throw e; }
+  catch (e) { if (e.code === 'EEXIST') attempted(); throw e; }
   const published = [];
   const stamp = new Date().toISOString().slice(0, 10).replaceAll('-', '');
   for (const r of p.results.filter(x => x.changed.length)) {
@@ -803,8 +806,10 @@ export function apply(source, slug, expected) {
     // The digest bound these exact texts in memory: snapshot them into this
     // attempt's own directory (a concurrent --check rewrites outgoing/).
     const commitFile = join(publish, `${r.alias}-commit.txt`), bodyFile = join(publish, `${r.alias}-pr.md`);
-    atomic(commitFile, p.message); atomic(bodyFile, p.body);
     try {
+      // Inside the envelope: a failed snapshot after an earlier base's PR
+      // still reports that PR.
+      atomic(commitFile, p.message); atomic(bodyFile, p.body);
       git(r.clone, ['update-ref', `refs/heads/${branch}`, r.accepted, '']);
       git(r.clone, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
       // The checked tree is staged as is (the helper commits the index); the
