@@ -4,12 +4,14 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handleBindingRequest, runBindingWire, sourceRuntimeFromKnowledgeBinding, CHECK_REASONS } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
+import { spawnSync } from 'node:child_process';
+import { handleBindingRequest, runBindingWire, CHECK_REASONS } from '../oats-package/capabilities/oats-okf/lib/binding-wire.mjs';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 // oats.okf 5.0.0 provider binding wire: payloadVersion 2 (no `execution`),
-// a payloadVersion 1 binding is E_REMOVED, and a forwarded 4.x harvest
-// setting answers needs-configuration with the rendered E_REMOVED sentence.
+// and a forwarded 4.x harvest setting answers needs-configuration with the
+// rendered E_REMOVED sentence. oats.okf 6.1.0: check refuses a captured
+// binding as its settings with the one fixed reason.
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const CAP=join(ROOT,'oats-package/capabilities/oats-okf');
 const manifest=JSON.parse(fs.readFileSync(join(CAP,'oats.json'),'utf8'));
@@ -70,18 +72,6 @@ test('normalize then bind a soul declaration yields payloadVersion 2 without exe
   assert.deepEqual(binding.credentialRefs,{});
 });
 
-test('sourceRuntimeFromKnowledgeBinding projects a bound payload',async()=>{
-  const runtime=sourceRuntimeFromKnowledgeBinding(await bound());
-  assert.equal(runtime.owner,'owner-1');
-  assert.deepEqual(runtime.bindings,{file:BF,version:1,stateDir:SD,bases:{'base-1':{id:'base-1',kind:'directory',path:'/srv/oats/test/base'}}});
-  assert.deepEqual([runtime.decl.owns,runtime.decl.reads],[['base-1/expert'],['base-1/peer']]);
-});
-
-test('a payloadVersion 1 binding is E_REMOVED',async()=>{
-  const v1={...await bound(),payloadVersion:1};
-  assert.throws(()=>sourceRuntimeFromKnowledgeBinding(v1),{code:'E_REMOVED'});
-});
-
 test('check with valid settings for a directory base is ready',async t=>{
   const d=deployment(t);
   withEnv(t,{OATS_SOUL:d.soul});
@@ -89,14 +79,28 @@ test('check with valid settings for a directory base is ready',async t=>{
   assert.deepEqual(result,{status:'ready',problems:[]});
 });
 
-test('check with a v1 binding as settings needs configuration (binding:v1-removed)',async()=>{
-  const v1={...await bound(),payloadVersion:1};
-  const result=await handleBindingRequest('check',req('check',v1,checkInput));
-  assert.equal(result.status,'needs-configuration');
-  assert.equal(result.problems.length,1);
-  assert.equal(result.problems[0].code,'needs-configuration');
-  assert.match(result.problems[0].message,/^E_REMOVED: OKF binding payloadVersion 1 \(harvest runtime\/model\) was removed in oats\.okf 5\.0/);
-  assert.ok(manifest.binding.reasons.includes(result.problems[0].message));
+// awebai/oats-aweb#242 part 2 (oats.okf 6.1.0): a captured binding passed as
+// the settings (a ProviderBinding1, any payloadVersion) is not checked.
+const CAPTURED_REASON='captured bindings are not supported since oats.okf 6.1.0; readiness takes a workspace context (oats readiness)';
+test('check with a captured binding as settings needs configuration with the fixed reason',async()=>{
+  const binding=await bound();
+  for(const settings of [binding,{...binding,payloadVersion:1},{schemaVersion:1}]) {
+    const result=await handleBindingRequest('check',req('check',settings,checkInput));
+    assert.deepEqual(result,{status:'needs-configuration',problems:[{code:'needs-configuration',message:CAPTURED_REASON}]},JSON.stringify(settings));
+  }
+  assert.ok(manifest.binding.reasons.includes(CAPTURED_REASON));
+});
+
+test('the binding command with a captured variable set answers as without it and warns, naming it and never its value',t=>{
+  const d=deployment(t),marker='captured-marker-91b0';
+  const env={PATH:process.env.PATH,OATS_SOUL:d.soul};
+  const check=extra=>spawnSync(process.execPath,[join(CAP,'bin/oats-okf-binding.mjs'),'check'],{env:{...env,...extra},input:JSON.stringify(req('check',{'bindings-file':d.bindingsFile},checkInput)),encoding:'utf8',timeout:60000});
+  const plain=check({}),r=check({OATS_INVOCATION_CONTEXT_FILE:`/srv/${marker}.json`});
+  assert.equal(plain.stderr,'');
+  assert.equal(JSON.parse(plain.stdout).result.status,'ready');
+  assert.deepEqual([r.status,r.stdout],[plain.status,plain.stdout]);
+  assert.equal(r.stderr,`OATS_INVOCATION_CONTEXT_FILE is ignored: ${CAPTURED_REASON}\n`);
+  assert.doesNotMatch(r.stdout+r.stderr,new RegExp(marker));
 });
 
 test('normalize with a host harvest setting needs configuration with the E_REMOVED sentence',async t=>{
@@ -131,8 +135,8 @@ test('normalize and check ignore a 4.x home\'s manifest-default harvest off / ha
 
 test('oats.json binding.reasons pins the setting literals and CHECK_REASONS byte-exact',()=>{
   assert.deepEqual(manifest.binding.reasons,[...SETTING_REASONS,...CHECK_REASONS]);
-  assert.equal(manifest.binding.reasons.length,24);
-  assert.equal(new Set(manifest.binding.reasons).size,24);
+  assert.equal(manifest.binding.reasons.length,23);
+  assert.equal(new Set(manifest.binding.reasons).size,23);
 });
 
 test('the portable payload schema requires the five keys and has no execution',()=>{

@@ -355,14 +355,71 @@ for(const [name,args] of REMOVED) test(`removed surface refuses with E_REMOVED: 
   assert.deepEqual(snapshot(f.home,f.stateDir),before);
 });
 
-test('removed surface refuses with E_REMOVED: OATS_INVOCATION_CONTEXT_FILE set',t=>{
-  const f=fixture(t),before=snapshot(f.home,f.stateDir);
-  const r=run(f,['inspect','--json'],{extra:{OATS_INVOCATION_CONTEXT_FILE:join(f.dir,'context.json')}});
-  assert.equal(r.status,1);
-  assert.equal(r.out.error.code,'E_REMOVED');
-  assert.match(r.out.error.message,/OATS_INVOCATION_CONTEXT_FILE/);
-  assert.match(r.out.error.message,/compulsory okf-propose skill/);
-  assert.deepEqual(snapshot(f.home,f.stateDir),before);
+// awebai/oats-aweb#242 part 2 (oats.okf 6.1.0): the captured-binding variables
+// are ignored. Each one present gets one fixed warning naming it, never its
+// value or the file's contents; the command runs as it does without it.
+const CAPTURED_VARS=['OATS_BINDING_FILE','OATS_SOURCE_RECEIPT_FILE','OATS_INVOCATION_CONTEXT_FILE'];
+const ignored=name=>`${name} is ignored: captured bindings are not supported since oats.okf 6.1.0; readiness takes a workspace context (oats readiness)`;
+const MARKER='captured-marker-5d1e';
+/** A private file whose name and content carry MARKER, for a captured variable's value. */
+function capturedFile(f) {const file=join(f.dir,`${MARKER}.json`);fs.writeFileSync(file,JSON.stringify({marker:MARKER}),{mode:0o600});return file;}
+/** An answer with its read times (fetchedAt, observedAt) blanked: two runs differ only there. */
+const timeless=value=>JSON.parse(JSON.stringify(value).replace(/"\d{4}-\d\d-\d\dT[\d:.]+Z"/g,'"<time>"'));
+const ignoredLines=stderr=>stderr.split('\n').filter(line=>line.includes(' is ignored: '));
+
+test('no captured variable set: a command answers with no warning on stderr',t=>{
+  const f=fixture(t);
+  const r=run(f,['inspect','--json']);
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.out.ok,true);
+  assert.equal(r.stderr,'');
+});
+
+for(const name of CAPTURED_VARS) test(`${name} set: a command runs as without it and warns once, naming it and never its value`,t=>{
+  const f=fixture(t),file=capturedFile(f);
+  const plain=run(f,['index','--json']),r=run(f,['index','--json'],{extra:{[name]:file}});
+  assert.equal(plain.out.ok,true,plain.stdout+plain.stderr);
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.deepEqual(timeless(r.out),timeless(plain.out));
+  assert.equal(r.stderr,`${ignored(name)}\n`);
+  assert.doesNotMatch(r.stdout+r.stderr,new RegExp(MARKER));
+});
+
+test('all three captured variables set: a command runs as without them, one warning each',t=>{
+  const f=fixture(t),file=capturedFile(f),extra=Object.fromEntries(CAPTURED_VARS.map(name=>[name,file]));
+  const plain=run(f,['index']),r=run(f,['index'],{extra});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.stdout,plain.stdout);
+  assert.deepEqual(ignoredLines(r.stderr),CAPTURED_VARS.map(ignored));
+  assert.doesNotMatch(r.stdout+r.stderr,new RegExp(MARKER));
+});
+
+test('OATS_BINDING_FILE set: an administration command answers as without it (no captured refusal)',t=>{
+  const f=fixture(t);
+  const plain=run(f,['setup','--json']),r=run(f,['setup','--json'],{extra:{OATS_BINDING_FILE:capturedFile(f)}});
+  assert.equal(plain.out.error.code,'E_USAGE');
+  assert.deepEqual([r.status,r.out],[plain.status,plain.out]);
+  assert.equal(r.stderr,`${ignored('OATS_BINDING_FILE')}\n`);
+});
+
+test('a captured variable set at spawn: the hook runs as without it, and its warning names the variable',t=>{
+  const plain=hook(fixture(t),'spawn'),f=fixture(t);
+  const r=hook(f,'spawn',{extra:{OATS_BINDING_FILE:capturedFile(f)}});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(plain.out.warning,undefined);
+  assert.deepEqual(r.out,{...plain.out,warning:`oats-okf: ${ignored('OATS_BINDING_FILE')}`});
+  assert.equal(r.stderr,`${ignored('OATS_BINDING_FILE')}\n`);
+  assert.doesNotMatch(r.stdout+r.stderr,new RegExp(MARKER));
+});
+
+test('a captured variable set at upgrade apply: the home adopts as without it, and the answer\'s warning names the variable',t=>{
+  const f=fixture(t);
+  const upgrade=extra=>run(f,['upgrade'],{extra:{OATS_EVENT:'upgrade',OATS_UPGRADE_PHASE:'apply',OATS_META:'{}',...extra}});
+  const plain=upgrade({}),r=upgrade({OATS_SOURCE_RECEIPT_FILE:capturedFile(f)});
+  assert.deepEqual(plain.out,{meta:{}});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.deepEqual(r.out,{meta:{},warning:`oats-okf: ${ignored('OATS_SOURCE_RECEIPT_FILE')}`});
+  assert.equal(r.stderr,`${ignored('OATS_SOURCE_RECEIPT_FILE')}\n`);
 });
 
 test('the harvest operation still points at the harvest command, which refuses',t=>{
