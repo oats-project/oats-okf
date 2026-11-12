@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 6.0.3 — 2026-11-12
+
+Requires OATS >=0.69.2, unchanged. A lock a recreated container left can be
+released by hand with `oats okf unlock … --host-gone HOST` (#142, #143); a
+concept merged without its id under an old node no longer refuses every
+proposal, and the subject verbs warn `W_BASE_INVALID` on a base that fails
+validation (#140, #144). Nothing a deployment must change.
 
 ### Fixed
 
