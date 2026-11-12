@@ -1,6 +1,6 @@
 # Design: knowledge writes in a container deployment (#149, #150, #151)
 
-Status: spec and plan for decision, nothing built. Lane `lane:setup`;
+Status: contract agreed by both sides on 2026-11-12 (section 6); build in progress. Lane `lane:setup`;
 maintainer setup-maintainer-pepe; author container-knowledge-writes-lead (the
 package expert). Gate: this changes what a deployment provisions and what a
 knowledge change records, so the build starts only when both sides agree the
@@ -80,6 +80,14 @@ that holds one GitHub token, the deployment's proposer credential. The
 deployment keeps the file current (a mounted secret, a refreshed App
 installation token, a machine user's token: the package does not care which).
 
+**It is host-only.** The value is a path on one machine, so it is read from
+the deployment's `oats-local.yaml` only. A value a soul, a workspace or a
+spawn flag set would point every host at a file one of them holds; it
+refuses with `E_CONFIG`, naming the setting, the layer that set it and the
+move (set it in this deployment's `oats-local.yaml` under
+`settings.oats.okf`, and remove it there). When the kernel does not say where
+a value came from, it refuses the same way and lists where to look.
+
 When it is set:
 
 - Every `git` call of the package that talks to a remote (clone, fetch,
@@ -114,6 +122,14 @@ call. `github-token-file` selects the file source. A brokered source arrives
 later as its own setting, exclusive with this one (both set refuses, naming
 both), and `setup --check` reports it as a third mode beside `file` and
 `ambient`. Nothing a deployment wrote for the file source changes meaning.
+
+**One predicate with #148.** #148 gives `propose --apply` a preflight that
+refuses before the push when `gh` cannot publish. There is one predicate,
+"this deployment's credential can publish to this base", with one
+implementation: in file mode it tests the file's token and its write access
+to the repository, in ambient mode `gh`'s own login. The #148 preflight and
+`setup --check` item 5 both call it. Whichever of the two changes lands
+second uses the other's predicate and adds no second one.
 
 The publication helper gains an optional `--token-file` with the same
 meaning, so a maintainer in its own trust group can be provisioned the same
@@ -173,7 +189,10 @@ which lists every item an operator provisions, in order, with who does it
 and where: the knowledge repository and its first bundle (`oats okf init`),
 the ruleset, the proposer credential and its file, the bindings file and the
 state directory on durable storage, each soul's `okf.json`, the egress the
-package needs (`github.com` and `api.github.com`, port 443), the
+package needs (`github.com` and `api.github.com`, port 443; where a
+platform cannot allow egress by hostname, GitHub's published address ranges
+for Git and the API, kept current, or port 443 opened more widely as the
+deployment's own stated decision), the
 `proposal-review` trigger on the host that holds the merging credential, and
 `setup --check` as the last step. It also states the two limits: the base
 must be on github.com, and with `github-token-file` it must be bound over
@@ -301,5 +320,12 @@ were rehearsed and which were not.
    repository) is added to the deployment bundle's journey by its owner once
    `setup --check` exists (Juan's side, 2026-11-12).
 
-Pending: Pepe's side's answer on the contract and on opt-in (section 4,
-"Refusing ambient credentials outright").
+5. **The separated credential is opt-in** (Pepe's side, 2026-11-12, settled
+   from recorded decisions and reported to Pepe, who may overrule): refusing
+   knowledge writes on a person's login would break every existing
+   deployment at upgrade with no migration.
+6. **`github-token-file` is host-only, and its check is one predicate with
+   #148's preflight** (Pepe's side, 2026-11-12): both are in C1.
+
+Both sides agreed C1 to C4 on 2026-11-12 with the changes recorded here. The
+build may start.
