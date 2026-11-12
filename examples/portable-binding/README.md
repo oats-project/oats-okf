@@ -23,7 +23,9 @@ kernel-owned.
   `payloadVersion: 2`: `owner`, `stores`, `reads`, `owns` and `runtime` (the
   rendered version 1 bindings and declaration, with the host `stateDir` and
   descriptor location). There is no `execution` (the 4.x harvest
-  runtime/model), and a payloadVersion 1 binding is refused. Stable store ids
+  runtime/model). It is the bind phase's answer, never a check's input:
+  check refuses a ProviderBinding1 passed as its settings (captured bindings
+  are not supported). Stable store ids
   are the runtime aliases. Credential values are absent.
 
 Running the bind request through `binding-bind` produces exactly

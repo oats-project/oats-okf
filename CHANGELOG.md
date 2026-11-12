@@ -63,6 +63,30 @@
 - The publication helper (both copies) has a read-only `preflight --github
   OWNER/REPO` command, and its `create` makes the same check before its push.
 
+### Removed
+
+- **The optional captured-binding snapshot is removed** (awebai/oats-aweb#242).
+  oats.okf no longer reads `OATS_BINDING_FILE`, the private ProviderBinding1
+  snapshot a command could be given; no OATS kernel sets it. A deployment
+  that sets it now gets the command run as without it, from the soul's
+  `okf.json` and the bindings file, and one warning on stderr:
+  `OATS_BINDING_FILE is ignored: captured bindings are not supported since
+  oats.okf 6.1.0; readiness takes a workspace context (oats readiness)`.
+  Captured `setup`, `init`, `migrate` and `unlock` no longer refuse
+  (`E_MIGRATION`), and a defective snapshot no longer fails (`E_BINDING`).
+  `OATS_SOURCE_RECEIPT_FILE` and `OATS_INVOCATION_CONTEXT_FILE`, which
+  answered `E_REMOVED` since 5.0, are ignored the same way, with the same
+  warning naming them. The warning names the variable, never its value; a
+  hook also carries it in its answer's `warning`. To silence it, unset the
+  variable.
+- `binding.check` no longer checks a ProviderBinding1 passed as its settings:
+  it answers `needs-configuration` with `captured bindings are not supported
+  since oats.okf 6.1.0; readiness takes a workspace context (oats
+  readiness)`. That reason replaces two in `binding.reasons` (now 23): `OKF
+  binding missing or invalid: …` and the payloadVersion 1 `E_REMOVED`
+  sentence. The kernel passes only the capability's settings, so `oats
+  readiness` answers as before.
+
 ## 6.0.3 — 2026-11-12
 
 Requires OATS >=0.69.2, unchanged. A lock a recreated container left can be

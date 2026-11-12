@@ -1024,22 +1024,27 @@ stdin/stdout entrypoints for the kernel, not operator commands.
 - **check** is read-only readiness: settings, the soul declaration, each
   base (Git bases through the host cache and a bounded `ls-remote`) and the
   declared nodes. It answers `ready`, `needs-configuration` or
-  `unavailable` with problems and warnings drawn only from the 24 fixed
+  `unavailable` with problems and warnings drawn only from the 23 fixed
   strings and templates in the manifest's `binding.reasons`, which must
   match the provider's byte for byte. A failed node check is
   `declaration:unresolved`.
 
-A **payloadVersion 1** binding (4.x) is refused: check answers
-`needs-configuration` with `E_REMOVED: OKF binding payloadVersion 1 (harvest
-runtime/model) was removed in oats.okf 5.0; respawn to bind with oats.okf 5
-…`, and a captured `OATS_BINDING_FILE` holding one makes the command fail
-with `E_REMOVED`.
+The kernel runs only the check phase (readiness), with a workspace context
+and the capability's settings. Consultation always uses the soul's
+`okf.json` and the bindings file. **Captured bindings are not supported:**
+check answers a ProviderBinding1 passed as its settings (any
+payloadVersion) with `needs-configuration` and `captured bindings are not
+supported since oats.okf 6.1.0; readiness takes a workspace context (oats
+readiness)`. `OATS_BINDING_FILE`, `OATS_SOURCE_RECEIPT_FILE` and
+`OATS_INVOCATION_CONTEXT_FILE` are ignored by every command and hook; each one
+present gets one line on stderr (and, for a hook, in its `warning`), naming
+the variable and never its value:
 
-The released 0.44 kernel runs the check phase (readiness) and names no
-`OATS_BINDING_FILE`; consultation then uses the soul's `okf.json` and the
-bindings file. A present `OATS_BINDING_FILE` must be a private,
-single-link, owner-only regular file and fails closed on any defect. Captured
-`setup`, `init`, `migrate` and `unlock` refuse. Data examples are in
+```text
+OATS_BINDING_FILE is ignored: captured bindings are not supported since oats.okf 6.1.0; readiness takes a workspace context (oats readiness)
+```
+
+Data examples are in
 [`examples/portable-binding/`](examples/portable-binding/), and the domain is
 described in [PORTABLE-BINDING-DOMAIN.md](PORTABLE-BINDING-DOMAIN.md).
 
@@ -1056,7 +1061,6 @@ runs, completes or drains anything.
 | `oats okf setup --harvest`, `--enable`, `--disable`, `--install-host`, `--remove-schedules` | `oats okf setup --remove-legacy-settings` removes the old keys |
 | `oats okf migrate --source-home` | nothing: there is no source registration |
 | `--source FILE` on any command | run from the instance home, or from the deployment with `--soul` |
-| `OATS_SOURCE_RECEIPT_FILE` or `OATS_INVOCATION_CONTEXT_FILE` in the environment | nothing: captured receipts and invocation contexts are gone |
 | `oats okf-harvest complete`, `harvest-status` | `E_REMOVED` from the 6.x stub capability where a home composes it; any other home gets the kernel's `E_UNKNOWN_COMMAND` (see [Upgrading to 6.0](#upgrading-to-60)); `oats okf propose` opens the PR |
 | settings `harvest`, `harvest-runtime`, `harvest-model` | remove them (see [Settings](#settings)) |
 | the `harvester-max-age` setting of `oats.okf-harvest` | none (6.0 reduces the capability to a refusing stub until 7.0; it has no settings) |
