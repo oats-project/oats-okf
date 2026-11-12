@@ -7,7 +7,7 @@ import { hostname, tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fs, join, dirname, resolve, safePath, readJSON, save, digest, tree, withLock, fail, syncDir, identifier, relPath, within, displayRepo, hash, exec } from './io.mjs';
 import { noGit, gitTimeoutMs, consultMaxAgeMs, splitRef, resolveNodes, resolveSubjects } from './config.mjs';
-import { git, gitEnv, validateBase, readerWarnings, invalidWarning, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
+import { git, gitEnv, ghChildEnv, validateBase, readerWarnings, invalidWarning, baseLock, journalPath, preflightLocalRepository, requireNotShallow, verifyRemote, unavailable } from './stores.mjs';
 import { layoutOf, parseFrontmatter, parseView, plainText, parseSubjectsIndex, counts as viewCounts, subjectFile, viewFile, subjectOfPath, SUBJECT_REF, KINDS } from './okf-reindex.mjs';
 import { verdictLanes } from './verdicts.mjs';
 
@@ -447,7 +447,7 @@ function onePath(positionals, label) {
 /** What `protection` answers, printed with every Git base by `oats okf bases`. */
 export const PROTECTION_MEANING = 'protection answers "can anyone but a reviewer land a change on the accepted branch?": enforced = a readable ruleset or classic rule requires a pull request or restricts who may push; none = both reads succeeded and neither does (classic protection with status checks only included: it gates nothing); unknown = neither read shows such a rule and at least one read failed, or the base is not on GitHub. It does not check approval counts, bypass lists or who the maintainer is';
 const GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
-export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout }) } = {}) {
+export function protection(base, { run = (args, timeout) => exec('gh', args, { timeout, env: ghChildEnv() }) } = {}) {
   if (base.kind !== 'git' || !GITHUB_REMOTE.test(base.repository)) return 'unknown';
   const repo = `repos/${base.pr.repository}`, branch = base.acceptedBranch;
   let rules = null;

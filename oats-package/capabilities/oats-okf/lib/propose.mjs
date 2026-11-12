@@ -13,8 +13,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail } from './io.mjs';
-import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
-import { git as rawGit, gitEnv, preflightLocalRepository, unavailable, validateBase, ID_WARNING, unstampedWarning } from './stores.mjs';
+import { settings, resolveNodes, gitTimeoutMs, tokenFile, credentialRefusal } from './config.mjs';
+import { git as rawGit, gitEnv, ghChildEnv, preflightLocalRepository, unavailable, validateBase, ID_WARNING, unstampedWarning } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
 import { isBridgedMeta } from './okf-reindex.mjs';
@@ -597,6 +597,7 @@ function runHelper(command, options) {
   try { return publication.execute(command, { ...options }); }
   catch (e) {
     const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
+    if (code === 'E_CREDENTIAL' && options['token-file']) credentialRefusal(options['token-file'], e.diagnostic?.reason);
     const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) };
     failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : `the publication helper refused (${code})`, result);
   }
@@ -708,7 +709,7 @@ function duplicates(base) {
   const out = [];
   for (const label of ['okf-proposal', 'okf-harvest']) {
     try {
-      const rows = JSON.parse(exec('gh', ['pr', 'list', '--repo', base.pr.repository, '--label', label, '--state', 'open', '--limit', '100', '--json', 'number,title,url'], { timeout: 30000 }));
+      const rows = JSON.parse(exec('gh', ['pr', 'list', '--repo', base.pr.repository, '--label', label, '--state', 'open', '--limit', '100', '--json', 'number,title,url'], { timeout: 30000, env: ghChildEnv() }));
       for (const r of Array.isArray(rows) ? rows : []) out.push({ label, number: r.number, title: String(r.title ?? '').slice(0, 200), url: String(r.url ?? '') });
     } catch { return { unavailable: 'gh pr list failed or gh is absent: open proposals could not be listed; check them by hand' }; }
   }
@@ -786,7 +787,7 @@ export function apply(source, slug, expected) {
       // changed since the comparison above: the commit object is immutable, so
       // its tree must be the digest-bound one before anything leaves the host.
       if (!/^[0-9a-f]{40,64}$/.test(committed?.head ?? '') || git(r.clone, ['rev-parse', '--verify', `${committed.head}^{tree}`]) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the committed tree is not the one --check showed (the clone's index changed during --apply); nothing was pushed`);
-      const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
+      const created = runHelper('create', { ...(tokenFile() === undefined ? {} : { 'token-file': tokenFile() }), repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
         'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
       atomic(report, JSON.stringify({ ok: true, ...row }, null, 2) + '\n');

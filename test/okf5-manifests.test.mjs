@@ -41,8 +41,9 @@ test('every manifest is version 6.0.3 with the >=0.69.2 kernel floor',()=>{
   }
 });
 
-test('oats.okf declares exactly bindings-file, state-dir, git-timeout, consult-max-age and screen-terms-file',()=>{
-  assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','screen-terms-file','state-dir']);
+test('oats.okf declares exactly bindings-file, state-dir, git-timeout, consult-max-age, screen-terms-file and the host-only github-token-file',()=>{
+  assert.deepEqual(Object.keys(cap('oats-okf').settings).sort(),['bindings-file','consult-max-age','git-timeout','github-token-file','screen-terms-file','state-dir']);
+  assert.deepEqual(Object.entries(cap('oats-okf').settings).filter(([,v])=>v.hostOnly).map(([k])=>k),['github-token-file'],'a path on one machine: only oats-local.yaml may set it');
   assert.equal(cap('oats-okf').commands.propose,'bin/oats-okf.mjs propose');
 });
 

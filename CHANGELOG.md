@@ -4,6 +4,25 @@
 
 ### Added
 
+- **A proposer credential separate from the maintainer's**
+  (oats-project/oats-okf#149). In a container every agent reads every
+  credential, and knowledge writes used whatever `git` and `gh` found, which
+  could be the maintainer's own login. New host-only setting
+  `github-token-file` (`settings.oats.okf` in `oats-local.yaml` only; the
+  manifest declares it `hostOnly`, and a value from a soul, a workspace or a
+  spawn flag refuses with `E_CONFIG`, naming the layer and the move): the
+  absolute path of a file holding one GitHub token. When set, every remote
+  `git` call and every `gh` call of the package uses that token and nothing
+  ambient (credential helpers cleared, `gh`'s login and inherited token
+  variables not consulted, transports other than HTTPS refused), read at
+  each use; every Git base must be bound by its `https://github.com/` URL;
+  a missing, unreadable, empty or malformed file, or another locator, refuses
+  with the new `E_CREDENTIAL`, naming the whole fix. The publication helper
+  takes the same file as `--token-file`. The README's new "The proposer
+  credential" states what the package guarantees inside one trust group and
+  what a deployment provisions on GitHub for a real gate. **Not set, nothing
+  changes:** the user's own `git` and `gh` login, as before.
+
 - **A knowledge change names the agent that proposed it**
   (oats-project/oats-okf#151). Every proposal commit had the same fixed
   author, the pull request was opened by the deployment's shared account, and
