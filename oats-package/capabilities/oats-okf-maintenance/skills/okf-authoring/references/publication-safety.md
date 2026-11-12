@@ -67,7 +67,8 @@ close or delete.
 The field set is the same in both helper copies:
 
 - `phase`: `push` means the Git push child failed, including a delete push;
-  `readback-absent` means a pushed ref was not found afterwards;
+  `readback-failed` means the push or delete ran and the remote could not be
+  read afterwards; `readback-absent` means a pushed ref was not found afterwards;
   `readback-other` means a pushed ref names an unexpected OID, or a deleted ref
   still exists. That OID is never included in the diagnostic.
 - `exitCode`: the push child's integer exit status, or `null` if unavailable.

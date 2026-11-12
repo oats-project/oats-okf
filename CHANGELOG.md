@@ -48,6 +48,10 @@
   ls-remote` that shows whether the branch exists. The commands' arguments
   are shell-quoted. The agent's rule is unchanged: report it, never retry,
   never clean up.
+- A push that ran and whose readback could not be made (the remote became
+  unreachable in between) answered a bare `E_GIT` that named no branch. It is
+  now `E_PUSH_UNCERTAIN` with diagnostic phase `readback-failed`, and
+  `close-unsafe`'s delete answers `E_DELETE_UNCERTAIN` the same way.
 - `E_GH_UNAVAILABLE` is only ever the refusal before the attempt. If `gh`
   passes that check and then fails the helper's own check before its push,
   the proposal is already marked as attempted: that is `E_GH`, and its

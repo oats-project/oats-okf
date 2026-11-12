@@ -1268,6 +1268,24 @@ test('preflight passes only when GitHub says the credential may push, read-only'
   unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
 });
 
+test('a readback that fails after a push that ran is E_PUSH_UNCERTAIN, never a bare E_GIT', t => {
+  const f = fixture(t), head = f.change();
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { cwd: f.root, env: f.env, encoding: 'utf8' }).stdout.trim();
+  const ran = join(f.root, 'push-ran');
+  // Real Git pushes; only the remote reads after it fail (the link dropped).
+  fs.writeFileSync(join(f.bin, 'git'), `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = push ]; then '${realGit}' "$@"; status=$?; : > '${ran}'; exit $status; fi
+  if [ "$arg" = ls-remote ] && [ -e '${ran}' ]; then echo 'fatal: ${SECRET}' >&2; exit 128; fi
+done
+exec '${realGit}' "$@"
+`, { mode: 0o755 });
+  const r = f.run('create', head); refusal(r, 'E_PUSH_UNCERTAIN');
+  assert.equal(r.out.diagnostic.phase, 'readback-failed'); assert.equal(r.out.published, undefined, 'unconfirmed is not reported as confirmed');
+  assert.equal(f.git(f.remote, 'rev-parse', REF), head, 'the branch is on the remote');
+  assert.deepEqual(f.calls().filter(c => c.write), [], 'no gh write after an uncertain push');
+});
+
 for (const kind of ['label', 'create']) test(`create names the pushed branch when gh ${kind} fails after the push`, t => {
   const f = fixture(t), head = f.change();
   f.patchGh({ fail: kind, failureText: DIAGNOSTIC_STDERR.join('\n') });

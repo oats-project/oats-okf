@@ -246,7 +246,11 @@ export function screenedPush(o, head, expected, branch) {
   } catch (error) { uncertain('E_PUSH_UNCERTAIN', error?.diagnostic); }
   const status = text(output.stdout).split('\n').find(row => row.split('\t')[1] === `${head}:${reference}`)?.split('\t')[0];
   if (expected === '' && status !== '*') fail('E_CREATE_NOT_CONFIRMED');
-  const actual = tip(o, reference);
+  // The push ran: a readback that cannot be made leaves the remote unknown,
+  // never a bare Git error that names no publication.
+  let actual;
+  try { actual = tip(o, reference); }
+  catch { uncertain('E_PUSH_UNCERTAIN', { ...output.diagnostic, phase: 'readback-failed' }); }
   if (actual !== head) uncertain('E_PUSH_UNCERTAIN', { ...output.diagnostic, phase: actual === null ? 'readback-absent' : 'readback-other' });
   return head;
 }
@@ -616,7 +620,10 @@ export function execute(command, o) {
       try { output = git(o.repo, ['push', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no',
         `--force-with-lease=${reference}:${o.head}`, 'origin', `:${reference}`], { publication: true }); }
       catch (error) { uncertain('E_DELETE_UNCERTAIN', error?.diagnostic); }
-      if (tip(o, reference) !== null) uncertain('E_DELETE_UNCERTAIN', { ...output.diagnostic, phase: 'readback-other' });
+      let left;
+      try { left = tip(o, reference); }
+      catch { uncertain('E_DELETE_UNCERTAIN', { ...output.diagnostic, phase: 'readback-failed' }); }
+      if (left !== null) uncertain('E_DELETE_UNCERTAIN', { ...output.diagnostic, phase: 'readback-other' });
     }
     return { head: o.head, status: command === 'close-unsafe' ? 'closed-branch-deleted-pull-ref-remains' : 'closed' };
   }
