@@ -376,3 +376,42 @@ test('the harvest operation still points at the harvest command, which refuses',
   assert.equal(r.out.error.code,'E_REMOVED');
   assert.match(r.out.error.message,/compulsory okf-propose skill/);
 });
+
+// #142: a lock left by a recreated container carries the old hostname. Its
+// process cannot be probed from here, so nothing releases it automatically;
+// the refusal names the explicit release, and only that release removes it.
+test('unlock: a lock owned by another host is refused naming --host-gone; only the matching token and host release it; a lock of this host refuses --host-gone and keeps its pid check',async t=>{
+  const {withLock}=await import('../oats-package/capabilities/oats-okf/lib/io.mjs');
+  const {hostname}=await import('node:os');
+  const f=fixture(t),lock=`${f.base}.okf-lock`,token='11111111-2222-4333-8444-555555555555';
+  const dead=spawnSync(process.execPath,['-e','']).pid;
+  const hold=(host,pid=dead)=>json(join(lock,'owner.json'),{token,pid,host});
+  const unlock=(...args)=>run(f,['unlock','--lock',lock,...args,'--json']);
+  const refused=(r,pattern)=>{assert.equal(r.status,1,r.stdout);assert.equal(r.out.error.code,'E_LOCKED');assert.match(r.out.error.message,pattern);assert.ok(fs.existsSync(join(lock,'owner.json')),'the lock is kept');};
+  const fix=`oats okf unlock --lock '${lock}' --token '${token}' --host-gone 'old-container' --soul <soul>`;
+
+  hold('old-container');
+  // A taker is refused with the whole fix, whatever the lock's age, and never reclaims it.
+  fs.utimesSync(lock,new Date(0),new Date(0));
+  assert.throws(()=>withLock(lock,()=>{},{reclaimDead:true}),e=>e.code==='E_LOCKED' && e.message.includes(fix) && /on host "old-container", not this host/.test(e.message));
+  refused(unlock('--token',token),/held by process \d+ on host "old-container", not this host .*never released automatically or by age/);
+  assert.ok(unlock('--token',token).out.error.message.includes(fix),'the plain unlock names the explicit release');
+  refused(unlock('--token',token,'--host-gone','another-host'),/--host-gone "another-host" is not the lock's owner host \("old-container"\)/);
+  refused(unlock('--token','wrong','--host-gone','old-container'),/matching lock token required/);
+  const released=unlock('--token',token,'--host-gone','old-container');
+  assert.equal(released.status,0,released.stdout);assert.deepEqual(released.out.result,{unlocked:lock});
+  assert.equal(fs.existsSync(lock),false);
+
+  // This host's lock: --host-gone cannot bypass the pid check.
+  hold(hostname(),process.pid);
+  refused(unlock('--token',token,'--host-gone',hostname()),/--host-gone is for a lock held on another host/);
+  refused(unlock('--token',token),/lock owner is still alive/);
+  hold(hostname());
+  refused(unlock('--token',token,'--host-gone',hostname()),/drop --host-gone/);
+  assert.equal(unlock('--token',token).status,0);assert.equal(fs.existsSync(lock),false);
+
+  // No readable owner: a clean refusal, nothing removed.
+  fs.mkdirSync(lock);
+  const ownerless=unlock('--token',token,'--host-gone','old-container');
+  assert.equal(ownerless.out.error.code,'E_LOCKED');assert.match(ownerless.out.error.message,/no readable owner\.json/);assert.ok(fs.existsSync(lock));
+});
