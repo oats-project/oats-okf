@@ -1,6 +1,6 @@
 # Kernel surfaces oats.okf 6.0 relies on
 
-oats.okf 6.0.2 declares **OATS >=0.69.2** (the
+oats.okf 6.0.3 declares **OATS >=0.69.2** (the
 soul key `background:`) and is tested in CI against released **OATS 0.69.2**. It needs no private
 kernel API and no knowledge-specific kernel behaviour. The capability, not
 the kernel, owns OKF validation, consultation, the host cache, provisioning
