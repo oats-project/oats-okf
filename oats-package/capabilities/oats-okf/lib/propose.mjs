@@ -49,6 +49,8 @@ const oneLine = v => typeof v === 'string' && v.trim().length > 0 && [...v].leng
  *  `attributedHuman` (feature spawn-attribution): by slot, never by name. Only
  *  the identity a capability whose layer is "messaging" recorded counts; only
  *  mode "human" names one; a malformed or absent attribution reads as absent.
+ *  One difference from the kernel, for a trailer's sake: the address, alias
+ *  and label are trimmed, and a blank one is absent.
  *  A self-declared record, never proof: any caller can name a home. */
 export function attribution(record) {
   const none = { identity: null, human: null };
@@ -616,7 +618,8 @@ function prepare(source, dir, plan) {
     try {
       const file = join(scratch, 'trailer.txt');
       fs.writeFileSync(file, `${line}\n`, { mode: 0o600 });
-      try { publication.execute('screen-text', { 'text-file': [file], ...(terms ? { 'terms-file': terms } : {}) }); return true; }
+      // Through runHelper: any other failure (an unreadable terms file) keeps its message and findings.
+      try { runHelper('screen-text', { 'text-file': [file], ...(terms ? { 'terms-file': terms } : {}) }); return true; }
       catch (e) { if (e?.code === 'E_CONTENT_REFUSED') return false; throw e; }
     } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
   });

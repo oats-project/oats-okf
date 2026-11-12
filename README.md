@@ -690,8 +690,9 @@ Attributed-human: <label>
   a human, read as OATS reads `attributedHuman` for a status row: only the
   identity the messaging-layer capability recorded counts, only attribution
   mode `human` names one, and the label is one line of at most 200 characters
-  with no control or bidi character. A missing or malformed attribution is
-  simply absent: it never refuses or warns.
+  with no control or bidi character. One difference from the status row: the
+  identity and the label are trimmed, and a blank one is absent. A missing or
+  malformed attribution is simply absent: it never refuses or warns.
 - In the operator form, `Proposed-by` names the retired source and
   `Published-by` names the caller's instance, or `operator` from the
   deployment.
