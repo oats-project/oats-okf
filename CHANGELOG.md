@@ -44,8 +44,17 @@
   in the helper's JSON), and the message names the branch, the command that
   shows whether a PR exists, the one that opens it from the retained PR body
   and the one that removes the branch. `E_PUSH_UNCERTAIN` names the `git
-  ls-remote` that shows whether the branch exists. The agent's rule is
-  unchanged: report it, never retry, never clean up.
+  ls-remote` that shows whether the branch exists. The commands' arguments
+  are shell-quoted. The agent's rule is unchanged: report it, never retry,
+  never clean up.
+- `E_GH_UNAVAILABLE` is only ever the refusal before the attempt. If `gh`
+  passes that check and then fails the helper's own check before its push,
+  the proposal is already marked as attempted: that is `E_GH`, and its
+  message says nothing was pushed for that base.
+- A receipt that cannot be written after a PR is confirmed
+  (`publish/<alias>-result.json`, `published.json`) no longer turns a
+  successful publication into an error that names no PR: the PR is reported,
+  with a `W_RECEIPT` warning.
 - The publication helper (both copies) has a read-only `preflight --github
   OWNER/REPO` command, and its `create` makes the same check before its push.
 

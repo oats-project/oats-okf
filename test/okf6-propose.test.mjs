@@ -33,6 +33,8 @@ fs.appendFileSync(process.env.FIXTURE_GH_LOG, JSON.stringify({ argv: a, input })
 const save = () => fs.writeFileSync(state, JSON.stringify(s));
 if (process.env.FIXTURE_GH_FAIL === a.slice(0, 2).join(' ')) { console.error('fixture gh failure'); process.exit(9); }
 if (a[0] === 'pr' && a[1] === 'list') { console.log(JSON.stringify(s.open || [])); process.exit(0); }
+if (a[0] === 'repo' && a[1] === 'view' && process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT
+  && fs.readFileSync(process.env.FIXTURE_GH_LOG, 'utf8').trim().split('\n').filter(l => JSON.parse(l).argv[0] === 'repo').length === Number(process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT)) { console.error('fixture gh failure'); process.exit(9); }
 if (a[0] === 'repo' && a[1] === 'view') { console.log(JSON.stringify({ viewerPermission: process.env.FIXTURE_GH_PERMISSION || 'WRITE' })); process.exit(0); }
 if (a[0] === 'label' && a[1] === 'create') process.exit(0);
 if (a[0] === 'pr' && a[1] === 'create') {
@@ -321,8 +323,9 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   const pushed = e.result.failed.published;
   assert.match(pushed.branch, /^okf-proposal\/\d{8}-[0-9a-f-]{36}$/);
   assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pushed.branch}`), pushed.head, 'the named branch is the one on the remote');
-  assert.ok(e.message.includes(`gh pr create --repo acme/kb --base main --head ${pushed.branch} --label okf-proposal --title "OKF knowledge proposal" --body-file ${join(plan.proposal, 'publish', 'kb-pr.md')}`), 'how to finish');
-  assert.ok(e.message.includes(`git -C ${join(plan.proposal, 'work', 'kb')} push origin --delete ${pushed.branch}`), 'how to remove');
+  // Every argument is shell-quoted: a home path with a space stays one argument.
+  assert.ok(e.message.includes(`gh pr create --repo 'acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal --title 'OKF knowledge proposal' --body-file '${join(plan.proposal, 'publish', 'kb-pr.md')}'`), 'how to finish');
+  assert.ok(e.message.includes(`git -C '${join(plan.proposal, 'work', 'kb')}' push origin --delete '${pushed.branch}'`), 'how to remove');
   assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed);
   for (const p of ['work/kb', 'outgoing/kb-commit.txt', 'outgoing/kb-pr.md', 'publish/kb-result.json']) assert.ok(fs.existsSync(join(plan.proposal, p)), p);
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
@@ -355,6 +358,31 @@ for (const [reason, breakGh, fix] of [
   fs.writeFileSync(join(f.dir, 'ghbin', 'gh'), gh, { mode: 0o755 });
   const [pr] = ok(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { PATH } })).prs;
   assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pr.branch}`), pr.head);
+});
+
+test('a gh that fails only at the helper\'s own check, after the attempt marker, is a publication error and not the re-appliable refusal', t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  // The gate before the marker passes (call 1); create's own check fails (call 2).
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_PREFLIGHT_FAIL_AT: '2' } }), 'E_GH', /Do not retry.*gh stopped answering after the proposal was marked as attempted \(gh-failed\): nothing was pushed for base kb$/);
+  assert.equal(e.result.failed.code, 'E_GH'); assert.equal(e.result.failed.published, undefined);
+  assert.equal(remoteBranches(f), 'refs/heads/main', 'nothing was pushed');
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
+});
+
+test('a receipt that cannot be written after the PR is confirmed is a warning: the PR is still reported', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'r' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'r' }).result;
+    const publish = join(plan.proposal, 'publish'), wrapped = publication.execute;
+    publication.execute = (command, o) => { const out = wrapped(command, o); if (command === 'create') fs.chmodSync(publish, 0o500); return out; };
+    let result; try { result = propose(f.home, { apply: true, slug: 'r', digest }).result; } finally { publication.execute = wrapped; if (fs.existsSync(publish)) fs.chmodSync(publish, 0o700); }
+    assert.equal(result.prs.length, 1); assert.equal(result.prs[0].url, 'https://github.com/acme/kb/pull/1');
+    assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${result.prs[0].branch}`), result.prs[0].head);
+    assert.equal(result.warnings.filter(w => /^W_RECEIPT: the PR for base kb is open/.test(w)).length, 1);
+    assert.ok(!fs.existsSync(join(publish, 'kb-result.json')));
+  });
 });
 
 test('the commit names the proposer in trailers: the messaging identity and its attributed human, read by slot as the kernel reads attributedHuman', t => {
