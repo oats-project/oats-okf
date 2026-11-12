@@ -80,18 +80,20 @@ The manifest declares `binding-normalize`, `binding-bind` and
   payload of `owner`, `stores`, `reads`, `owns` and `runtime`
   (`descriptorFile`, `bindings`, `declaration`). The 4.x payload's
   `execution` (harvest runtime and model) is gone.
-- **check** answers readiness from the settings (or a retained binding):
+- **check** answers readiness from the settings:
   the soul declaration, each base (directory bases in place; Git bases
   through the host cache and a bounded `git ls-remote`), and the declared
   nodes. Problems and warnings use only the fixed strings and templates in
-  the manifest's `binding.reasons` (24 entries, which must match the
+  the manifest's `binding.reasons` (23 entries, which must match the
   provider's byte for byte); no caught message, value, path or unknown key crosses the wire. The
   declared-node check always runs; its failure is `declaration:unresolved`.
 
 Refusals:
 
-- A **payloadVersion 1** binding (4.x, with `execution`) is `E_REMOVED`:
-  check reports `needs-configuration` with reason `binding:v1-removed`.
+- A captured binding (a ProviderBinding1 passed as the settings, any
+  payloadVersion) is not checked: check reports `needs-configuration` with
+  reason `binding:captured`, `captured bindings are not supported since
+  oats.okf 6.1.0; readiness takes a workspace context (oats readiness)`.
 - A 4.x setting (`harvest`, `harvest-runtime`, `harvest-model`) is
   `needs-configuration` with the `setting:removed` template, rendered with
   the origin the kernel reports in `OATS_SETTINGS_ORIGINS`
@@ -99,17 +101,13 @@ Refusals:
 - Check refuses the actions `setup`, `init`, `migrate`, `unlock`,
   `run-source` and `harvest` (`action:not-admitted`).
 
-## Captured binding file
+## Captured bindings
 
-A command may be given `OATS_BINDING_FILE`, a private snapshot holding
-exactly one ProviderBinding1. The file must be a normalized absolute,
-non-symlinked, single-link, owner-only regular file within the wire limits;
-any defect refuses (`E_BINDING`), and it never falls back to the settings or
-the live soul. A payloadVersion 1 snapshot is `E_REMOVED`. Under a captured
-binding, consult commands and `inspect` read the snapshot's runtime;
-`setup`, `init`, `migrate` and `unlock` refuse (`E_MIGRATION`). Without
-the variable, oats.okf reads the soul's `okf.json` and the bindings file.
-
-The released OATS 0.44 kernel runs the check phase and names no
-`OATS_BINDING_FILE`. Examples are in
+There is no captured binding: the kernel runs only the check phase, with a
+workspace context, and every command reads the soul's `okf.json` and the
+bindings file. `OATS_BINDING_FILE`, `OATS_SOURCE_RECEIPT_FILE` and
+`OATS_INVOCATION_CONTEXT_FILE` are ignored; each one present gets one
+warning on stderr (and in a hook's `warning`) naming it, never its value:
+`<NAME> is ignored: captured bindings are not supported since oats.okf 6.1.0;
+readiness takes a workspace context (oats readiness)`. Examples are in
 [`examples/portable-binding/`](examples/portable-binding/).

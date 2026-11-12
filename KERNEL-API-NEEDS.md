@@ -18,11 +18,11 @@ and migration.
 | `OATS_KIND` | a service (capability) instance gets no knowledge upkeep |
 | `OATS_EVENT` | the hook being run (`spawn`, `soul-scaffold`) |
 | `OATS_WORKSPACE`, `OATS_TEAM_SCOPE` | the deployment `setup --remove-legacy-settings` edits; absent, relative, missing or disagreeing is `E_DEPLOYMENT_SCOPE` |
-| `OATS_BINDING_FILE` | an optional captured ProviderBinding1 snapshot |
 | `OATS_TRIGGER_EVENT_FILE` | the maintainer's trigger event (`review-context --event`) |
 
-`OATS_SOURCE_RECEIPT_FILE` and `OATS_INVOCATION_CONTEXT_FILE` are no longer
-used; their presence answers `E_REMOVED`.
+`OATS_BINDING_FILE`, `OATS_SOURCE_RECEIPT_FILE` and
+`OATS_INVOCATION_CONTEXT_FILE` are not used: a present one is ignored, with a
+warning naming it (captured bindings are not supported).
 
 ## Hooks, commands and operations
 
