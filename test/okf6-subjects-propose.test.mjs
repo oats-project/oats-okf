@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isolatedGit } from './fixtures/isolated-git.mjs';
-import { writePlainBase, bridge, reindex, REJECTED } from './fixtures/bridged-base.mjs';
+import { writePlainBase, bridge, reindex, REJECTED, VALIDATE } from './fixtures/bridged-base.mjs';
 // oats.okf 6.0, the subject layout in `oats okf propose` (spec
 // docs/design/2026-11-10-subject-layer-in-oats-okf.md §3): on a bridged base a
 // version-1 soul's claim gets about: from legacy-nodes, the generated indexes
@@ -40,12 +40,13 @@ if (a[0] === 'pr' && a[1] === 'view') {
 console.error('unsupported fixture gh call'); process.exit(97);
 `;
 const UNSTAMPED = 'claims/insights/merged-unstamped.md';
+const OLD_UNSTAMPED = 'peer/merged-unstamped.md';
 const V1 = { version: 1, owner: 'source', owns: ['kb/expert'], reads: ['kb/peer'] };
 const V2 = { version: 2, subjects: ['system/okf', 'workstream/knowledge'] };
 
 /** One Git base `kb` (the bridged fixture, or the plain one), the soul `source`
  *  with the given okf.json, and its live home `src`. */
-function fixture(t, { decl = V1, plain = false, ident = false, identTitle = false, large = false, unstamped = false } = {}) {
+function fixture(t, { decl = V1, plain = false, ident = false, identTitle = false, large = false, unstamped = false, oldNodeUnstamped = false } = {}) {
   const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf6-subjects-propose-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const d = join(dir, 'deployment'), home = join(d, 'agents', 'source', 'instances', 'src'), soul = join(d, 'agents', 'source', 'souls', 'abc');
@@ -56,6 +57,13 @@ function fixture(t, { decl = V1, plain = false, ident = false, identTitle = fals
   if (large) fs.appendFileSync(join(seed, 'peer/lesson.md'), `\n${'Long accepted body. '.repeat(900000)}\n`);
   // okf 6.0.2 (#138): an accepted claim merged without the maintainer's id stamp.
   if (unstamped) { write(join(seed, UNSTAMPED), '---\ntype: Insight\ntitle: Merged without its id\ndescription: x\nabout: [system/okf]\n---\n\n# Merged without its id\n'); reindex(seed); }
+  // #140: an accepted old-node concept merged without the maintainer's id stamp
+  // (a version-1 proposal merged without the amend-and-merge).
+  if (oldNodeUnstamped) {
+    write(join(seed, OLD_UNSTAMPED), '---\ntype: Lesson\ntitle: Merged into an old node without its id\ndescription: x\nabout: [workstream/knowledge]\n---\n\n# Merged into an old node without its id\n');
+    fs.appendFileSync(join(seed, 'peer/index.md'), '* [Merged into an old node without its id](merged-unstamped.md) - x\n');
+    reindex(seed);
+  }
   if (identTitle) {
     const f = join(seed, 'claims/insights/consult-reads-one-blob.md');
     fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('title: Consult reads one committed index', 'title: Consult reads one committed index $Id$'));
@@ -154,6 +162,28 @@ test('version 1 on a base holding a claim merged without id (#138): check warns 
   write(join(clone, 'expert/pin.md'), CLAIM('\nid: dec-000000000001'));
   const error = refused(f.run(['--check', '--slug', 'pin']), 'E_VALIDATION', /id dec-000000000001 is also/);
   assert.doesNotMatch(error.message, /missing 'id'/, 'the tolerated finding is not among the refusals');
+});
+
+test('an old-node concept merged without id (#140): check warns W_ID_MISSING for version 2 and version 1, counts it with an unstamped claims/ concept, and leaves it untouched; okf-validate --strict still reports it', t => {
+  const warning = (n, plan) => `W_ID_MISSING: ${n === 1 ? '1 claim lacks' : `${n} claims lack`} an id at kb@${plan.bases[0].accepted.slice(0, 12)}; the maintainer stamps ${n === 1 ? 'it' : 'them'} (knowledge-review)`;
+  const v2 = fixture(t, { decl: V2, oldNodeUnstamped: true }), plan2 = ok(v2.run(['--plan', '--slug', 'pin']));
+  const clone = edit(plan2, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]'));
+  const checked = ok(v2.run(['--check', '--slug', 'pin']));
+  assert.deepEqual(checked.warnings, [warning(1, plan2)]);
+  assert.deepEqual(checked.bases[0].changed, ['A claims/decisions/pin.md', 'M subjects/system/okf/index.md'], 'the accepted unstamped concept is not touched');
+  const strict = spawnSync(process.execPath, [VALIDATE, clone, '--strict', '--json'], { encoding: 'utf8' });
+  assert.ok(JSON.parse(strict.stdout).warnings.includes(`${OLD_UNSTAMPED}: missing 'id' (stamped by the maintainer at acceptance)`), strict.stdout);
+  const applied = ok(v2.run(['--apply', '--slug', 'pin', '--digest', checked.digest]));
+  assert.deepEqual([applied.warnings, applied.prs.length], [[warning(1, plan2)], 1]);
+
+  const v1 = fixture(t, { oldNodeUnstamped: true, unstamped: true }), plan1 = ok(v1.run(['--plan', '--slug', 'pin']));
+  const clone1 = edit(plan1, 'expert/pin.md', CLAIM());
+  fs.appendFileSync(join(clone1, 'expert/index.md'), '* [Pin owners before the first read](pin.md) - The owner is pinned before any consult read.\n');
+  assert.deepEqual(ok(v1.run(['--check', '--slug', 'pin'])).warnings, [warning(2, plan1)]);
+  // Another finding (here on the proposal's own claim) still refuses, without the tolerated ones.
+  write(join(clone1, 'expert/pin.md'), CLAIM('\nid: dec-000000000001'));
+  const error = refused(v1.run(['--check', '--slug', 'pin']), 'E_VALIDATION', /id dec-000000000001 is also/);
+  assert.doesNotMatch(error.message, /missing 'id'/);
 });
 
 test('version 2: E_SCOPE for verdicts/, a workstream subject, an old-node file and a supersession no claim makes', t => {

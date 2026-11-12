@@ -354,10 +354,20 @@ unprotected accepted branch lets a proposal be merged directly). The spawn
 <alias@commit>; the maintainer stamps them (knowledge-review)`, after any
 `W_INDEX_STALE` line. `propose --check` reports such an accepted claim in
 its `warnings` the same way and goes on; the claims it proposes still carry
-no `id`. `okf-validate.mjs --strict` (an error), migration and publication
+no `id`. From 6.0.3 (#140) it counts in the same warning an old-node concept
+merged without `id` that the proposal leaves untouched (a version-1 soul's
+proposal merged without the stamp), which refused every proposal on the base
+before; readers still tolerate that one without counting it. `okf-validate.mjs --strict` (an error), migration and publication
 still refuse it. Every other finding still refuses the spawn and reads
-`INVALID` in `bases`; the subject verbs, as before, answer from the
-committed indexes and warn only for the tolerated kinds.
+`INVALID` in `bases`. In a running home the subject verbs still answer such
+a base from the committed indexes, as `cat`, `ls` and `search` serve it, and
+from 6.0.3 (#140) they say so: ``W_BASE_INVALID: <alias@commit> fails
+validation: <first finding> (and N more); answers come from the committed
+indexes as they are; the maintainer repairs the base (`oats okf bases`)``
+on stderr and in `warnings` in `--json` (the finding loses its control
+characters and is cut at 200 characters; `(and N more)` only when there
+are more). `index <kind>/<slug>` warns the same way for any soul. Before 6.0.3 they
+answered with no warning.
 `oats okf bases` agrees with the readers: a base whose only findings are
 these tolerated kinds is `valid`, with the warning lines under it (and
 `warnings` on the row and the answer in `--json`); any other finding reads
@@ -408,7 +418,7 @@ oats okf verdicts --check <claim file>
 - Each verb answers from committed generated indexes (one blob each, plus
   the subject file for `subject`), never from a scan of the base; only the
   first read of a commit no spawn or `bases` has validated validates the
-  whole base once, for `W_INDEX_STALE` (above). It keeps the receipt
+  whole base once, for the warnings above. It keeps the receipt
   (`alias@oid`): cite as before, `alias/path@oid`. A committed index is
   untrusted input: it is parsed in linear time (a filter is compared once per
   distinct type and kind; text over 16,000 characters is keyed by its sha256),
