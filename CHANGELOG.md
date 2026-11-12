@@ -4,6 +4,23 @@
 
 ### Added
 
+- **A checked bring-up path for a deployment's knowledge store**
+  (oats-project/oats-okf#150). Nothing said what a deployment must provision
+  for knowledge to work, and nothing checked it. New: `oats okf setup --check
+  --soul <soul> [--json]`, read-only towards GitHub and unattended: it checks
+  the settings, the bindings and the state directory, `git` and `gh`, that
+  each base is reachable and valid, that the soul's declaration resolves, and
+  per Git base the credential (reads and writes the repository; its
+  identity's role), the accepted branch's protection and the `okf-proposal`
+  label. Every problem names its whole fix; exit 1 when anything is missing.
+  With `github-token-file` set, an identity with the maintain or admin role
+  and a protection that does not read `enforced` are problems; without it
+  they are warnings, with one more that says what a shared login means, so
+  no existing deployment starts failing. The README's new "Bringing up a
+  deployment's knowledge store" lists what to provision, in order, and who
+  does it where; `examples/knowledge-store/` has the accepted branch's
+  ruleset.
+
 - **A proposer credential separate from the maintainer's**
   (oats-project/oats-okf#149). In a container every agent reads every
   credential, and knowledge writes used whatever `git` and `gh` found, which

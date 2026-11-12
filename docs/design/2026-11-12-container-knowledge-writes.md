@@ -180,7 +180,8 @@ told, not broken:
 | protection reads `none` or `unknown` | problem | warning |
 | ambient mode itself | n/a | warning that states section 2's guarantee |
 
-The command changes nothing, locally or remotely. It does not create the
+The command changes nothing on GitHub; locally it fills the host's consult
+cache, as any read does (found while building it). It does not create the
 repository, the ruleset or the credential: those need an administrator's
 login, which belongs outside the trust group.
 

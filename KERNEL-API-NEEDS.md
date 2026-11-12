@@ -17,7 +17,7 @@ and migration.
 | `OATS_INSTANCE` | the caller's instance, named as `proposer.instance` in the operator's recovery form (`null` from the deployment) |
 | `OATS_KIND` | a service (capability) instance gets no knowledge upkeep |
 | `OATS_EVENT` | the hook being run (`spawn`, `soul-scaffold`) |
-| `OATS_WORKSPACE`, `OATS_TEAM_SCOPE` | the deployment `setup --remove-legacy-settings` edits; absent, relative, missing or disagreeing is `E_DEPLOYMENT_SCOPE` |
+| `OATS_WORKSPACE`, `OATS_TEAM_SCOPE` | the deployment `setup --remove-legacy-settings` edits (`setup --check` reads only); absent, relative, missing or disagreeing is `E_DEPLOYMENT_SCOPE` |
 | `OATS_BINDING_FILE` | an optional captured ProviderBinding1 snapshot |
 | `OATS_TRIGGER_EVENT_FILE` | the maintainer's trigger event (`review-context --event`) |
 
