@@ -70,8 +70,8 @@ try {
     const labels = { 'okf-harvest': 'OKF harvest PR (oats.okf)', 'okf-proposal': 'OKF knowledge proposal PR (oats.okf)' };
     assert.ok(Object.hasOwn(labels, a[2]));
     assert.deepEqual(a, ['label', 'create', a[2], '--repo', repo, '--force', '--color', '0E8A16', '--description', labels[a[2]]]); kind = 'label';
-  } else if (a[0] === 'repo' && a[1] === 'view') {
-    assert.deepEqual(a, ['repo', 'view', repo, '--json', 'viewerPermission']); kind = 'preflight';
+  } else if (a[0] === 'api') {
+    assert.deepEqual(a, ['api', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
   } else if (a[0] === 'pr' && a[1] === 'view') {
     assert.deepEqual(a, ['pr', 'view', pr, '--repo', repo, '--json', 'state,headRefOid,headRefName,baseRefName,isCrossRepository,title,body']); kind = 'view';
   } else if (a[0] === 'pr' && a[1] === 'create') {
@@ -108,7 +108,7 @@ if (s.fail === kind) {
 // legitimately change their target; only a subsequent read can detect it.
 hook('before-' + kind);
 if (kind === 'preflight') {
-  response = s.preflightText ?? JSON.stringify({ viewerPermission: s.permission ?? 'WRITE' });
+  response = s.preflightText ?? String(s.push ?? true);
 } else if (kind === 'view') {
   response = JSON.stringify({ state: s.state, headRefOid: s.overrideHead || head(), headRefName: s.headRefName,
     baseRefName: s.baseRefName, isCrossRepository: s.isCrossRepository, title: s.title, body: s.body });
@@ -1234,10 +1234,13 @@ test('create reports E_PR_UNCERTAIN and stops after the branch moves at the gh l
 // nothing; a failure after the push says what it published.
 for (const [reason, patch] of [
   ['gh-failed', { fail: 'preflight', failureText: DIAGNOSTIC_STDERR.join('\n') }],
-  ['gh-failed', { preflightText: 'not json' }],
-  ['no-write-permission', { permission: 'READ' }],
-  ['no-write-permission', { permission: 'TRIAGE' }],
-]) test(`create refuses E_GH_UNAVAILABLE (${reason}: ${Object.keys(patch)[0]} ${patch.permission ?? ''}) before any push or gh write`, t => {
+  // Only an explicit true passes: an unknown answer establishes no permission.
+  ['gh-failed', { preflightText: 'null' }],
+  ['gh-failed', { preflightText: '' }],
+  ['gh-failed', { preflightText: '{"push":true}' }],
+  ['gh-failed', { preflightText: 'TRUE' }],
+  ['no-write-permission', { push: false }],
+]) test(`create refuses E_GH_UNAVAILABLE (${reason}: ${JSON.stringify(patch).slice(0, 40)}) before any push or gh write`, t => {
   const f = fixture(t), head = f.change(), before = f.snapshot();
   f.patchGh(patch);
   const r = f.run('create', head); refusal(r, 'E_GH_UNAVAILABLE');
@@ -1259,8 +1262,8 @@ test('create refuses E_GH_UNAVAILABLE (gh-absent) on a host without gh, before a
   unchanged(f, before); assert.deepEqual(f.calls(), []);
 });
 
-for (const permission of ['WRITE', 'MAINTAIN', 'ADMIN']) test(`preflight passes for an account with ${permission}, read-only`, t => {
-  const f = fixture(t), before = f.snapshot(); f.patchGh({ permission });
+test('preflight passes only when GitHub says the credential may push, read-only', t => {
+  const f = fixture(t), before = f.snapshot();
   assert.deepEqual(success(f.run('preflight')), { ok: true, github: GITHUB, status: 'gh-available' });
   unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
 });

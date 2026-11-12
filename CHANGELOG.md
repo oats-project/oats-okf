@@ -29,11 +29,12 @@
 - **`oats okf propose --apply` pushed before its first `gh` call, so a host
   without `gh` half-published** (oats-project/oats-okf#148): a pushed branch
   with no PR, and a proposal that could not be applied again. Now `--apply`
-  makes one read-only `gh` call per changed base (`gh repo view <repo> --json
-  viewerPermission`) before it pushes anything and before it marks the
+  makes one read-only `gh` call per changed base (`gh api repos/<repo> --jq
+  .permissions.push`) before it pushes anything and before it marks the
   proposal as attempted. New refusal `E_GH_UNAVAILABLE`, with `result.reason`
-  `gh-absent`, `gh-failed` (not signed in, or the repository is not visible)
-  or `no-write-permission` (the account is below write), and the fix in the
+  `gh-absent`, `gh-failed` (not signed in, the repository is not visible, or
+  GitHub does not state the credential's permission) or `no-write-permission`
+  (GitHub says it may not push), and the fix in the
   message. Nothing is pushed and the proposal is unchanged: once the host is
   fixed, the same `--apply --digest` publishes. With several bases, every
   base is checked before the first push. The check is bounded: it cannot

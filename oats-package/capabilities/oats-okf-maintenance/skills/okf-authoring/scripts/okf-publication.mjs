@@ -256,19 +256,22 @@ function github(o) {
 }
 function gh(o, args, input) { github(o); return run('gh', args, { input }); }
 // The one gh precondition a publication can decide before its push: gh is on
-// this host, can read the repository, and its account is not below write (the
-// label and the PR need it). Read-only. A bounded check: it cannot tell
-// whether a narrowly scoped token may open a PR. The reason is a fixed
-// constant; gh's own output is never forwarded.
+// this host, can read the repository, and GitHub states that its credential
+// may push there (the label and the PR need write). Read-only. Only an
+// explicit `true` passes: an absent or unknown answer establishes nothing.
+// The REST field, not GraphQL's viewerPermission, which is null for a GitHub
+// App. A bounded check: it cannot tell whether a narrowly scoped token may
+// open a PR. The reason is a fixed constant; gh's output is never forwarded.
 export function publishPreflight(o) {
   github(o);
   const unavailable = reason => { throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
-  const r = spawnSync('gh', ['repo', 'view', o.github, '--json', 'viewerPermission'], { env: env(), timeout: 60000, maxBuffer: MAX });
+  const r = spawnSync('gh', ['api', `repos/${o.github}`, '--jq', '.permissions.push'], { env: env(), timeout: 60000, maxBuffer: MAX });
   if (r.error?.code === 'ENOENT') unavailable('gh-absent');
   if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
-  let permission;
-  try { permission = JSON.parse(text(r.stdout)).viewerPermission; } catch { unavailable('gh-failed'); }
-  if (['READ', 'TRIAGE'].includes(permission)) unavailable('no-write-permission');
+  let push;
+  try { push = text(r.stdout).trim(); } catch { unavailable('gh-failed'); }
+  if (push === 'false') unavailable('no-write-permission');
+  if (push !== 'true') unavailable('gh-failed');
 }
 function view(o, { states = ['OPEN'], publishing = true } = {}) {
   let p;

@@ -604,12 +604,12 @@ function runHelper(command, options) {
 
 const GH_FIX = {
   'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
-  'gh-failed': 'gh could not read the repository: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
+  'gh-failed': 'gh could not read the repository or its permission on it: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
   'no-write-permission': "gh's account has less than write permission on the repository (the label and the PR need it): use an account with write",
 };
 /** The one publish predicate: this deployment's credential can publish to
- *  this base (today: gh is present, reads the repository and its account is
- *  not below write). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
+ *  this base (today: gh is present, reads the repository and GitHub says its
+ *  credential may push). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
 export function checkPublish(alias, base) {
   const repository = base.pr.repository;
   try { publication.execute('preflight', { github: repository }); }

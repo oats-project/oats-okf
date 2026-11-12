@@ -33,9 +33,9 @@ fs.appendFileSync(process.env.FIXTURE_GH_LOG, JSON.stringify({ argv: a, input })
 const save = () => fs.writeFileSync(state, JSON.stringify(s));
 if (process.env.FIXTURE_GH_FAIL === a.slice(0, 2).join(' ')) { console.error('fixture gh failure'); process.exit(9); }
 if (a[0] === 'pr' && a[1] === 'list') { console.log(JSON.stringify(s.open || [])); process.exit(0); }
-if (a[0] === 'repo' && a[1] === 'view' && process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT
-  && fs.readFileSync(process.env.FIXTURE_GH_LOG, 'utf8').trim().split('\n').filter(l => JSON.parse(l).argv[0] === 'repo').length === Number(process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT)) { console.error('fixture gh failure'); process.exit(9); }
-if (a[0] === 'repo' && a[1] === 'view') { console.log(JSON.stringify({ viewerPermission: process.env.FIXTURE_GH_PERMISSION || 'WRITE' })); process.exit(0); }
+if (a[0] === 'api' && process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT
+  && fs.readFileSync(process.env.FIXTURE_GH_LOG, 'utf8').trim().split('\n').filter(l => JSON.parse(l).argv[0] === 'api').length === Number(process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT)) { console.error('fixture gh failure'); process.exit(9); }
+if (a[0] === 'api') { console.log(process.env.FIXTURE_GH_PUSH ?? 'true'); process.exit(0); }
 if (a[0] === 'label' && a[1] === 'create') process.exit(0);
 if (a[0] === 'pr' && a[1] === 'create') {
   const head = a[a.indexOf('--head') + 1], label = a[a.indexOf('--label') + 1];
@@ -331,7 +331,7 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
   refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
   // An attempted proposal is never called untouched, even when gh is now unusable (it is not re-appliable).
-  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'repo view' } }), 'E_PROPOSAL_EXISTS');
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'api repos/acme/kb' } }), 'E_PROPOSAL_EXISTS');
 });
 
 // #148: every gh precondition is decided before the push and before the
@@ -339,9 +339,11 @@ test('a publication failure retains the clone and artefacts, reports safely and 
 const remoteBranches = f => f.git(f.dir, '--git-dir', f.origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/');
 for (const [reason, breakGh, fix] of [
   ['gh-absent', f => fs.rmSync(join(f.dir, 'ghbin', 'gh')), /gh is not installed on this host/],
-  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'repo view' }), /gh could not read the repository: sign gh in/],
-  ['no-write-permission', () => ({ FIXTURE_GH_PERMISSION: 'READ' }), /less than write permission/],
-  ['no-write-permission', () => ({ FIXTURE_GH_PERMISSION: 'TRIAGE' }), /less than write permission/],
+  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'api repos/acme/kb' }), /gh could not read the repository or its permission on it: sign gh in/],
+  ['no-write-permission', () => ({ FIXTURE_GH_PUSH: 'false' }), /less than write permission/],
+  // GitHub did not say: nothing establishes write, so the attempt never begins.
+  ['gh-failed', () => ({ FIXTURE_GH_PUSH: 'null' }), /or its permission on it/],
+  ['gh-failed', () => ({ FIXTURE_GH_PUSH: '' }), /or its permission on it/],
 ]) test(`apply refuses E_GH_UNAVAILABLE (${reason}) before anything is pushed, and the same apply works once fixed`, t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
   const { digest } = ok(f.run(['--check', '--slug', 'x']));
@@ -355,7 +357,7 @@ for (const [reason, breakGh, fix] of [
   assert.deepEqual(e.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false });
   assert.equal(remoteBranches(f), 'refs/heads/main', 'nothing was pushed');
   assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'no attempt marker');
-  assert.deepEqual(f.calls().filter(c => c.argv[0] !== 'repo' && !(c.argv[0] === 'pr' && c.argv[1] === 'list')), [], 'no gh write');
+  assert.deepEqual(f.calls().filter(c => c.argv[0] !== 'api' && !(c.argv[0] === 'pr' && c.argv[1] === 'list')), [], 'no gh write');
   // The host is fixed: the same command publishes.
   fs.writeFileSync(join(f.dir, 'ghbin', 'gh'), gh, { mode: 0o755 });
   const [pr] = ok(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { PATH } })).prs;
