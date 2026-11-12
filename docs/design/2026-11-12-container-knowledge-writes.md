@@ -101,6 +101,20 @@ When it is set:
 When it is not set, nothing changes: the package uses the user's own `git`
 and `gh` login as today. **No existing deployment has to change.**
 
+**A file is a stated, interim exception.** Juan's side's deployments hold
+provider credentials behind a secrets broker and never as agent files. This
+one credential is a file because `git` and `gh` consume it inside the
+container and no brokered Git credential helper exists yet. The exception is
+bounded: the credential is team-scoped, has the write role only on the
+knowledge repository, and is read inside one trust group. The README says so.
+
+**The shape leaves room for the broker.** The package resolves the credential
+through one internal seam, a credential source that yields a token for one
+call. `github-token-file` selects the file source. A brokered source arrives
+later as its own setting, exclusive with this one (both set refuses, naming
+both), and `setup --check` reports it as a third mode beside `file` and
+`ambient`. Nothing a deployment wrote for the file source changes meaning.
+
 The publication helper gains an optional `--token-file` with the same
 meaning, so a maintainer in its own trust group can be provisioned the same
 way. The maintainer's default stays its user's own login.
@@ -270,13 +284,22 @@ direct push and a merge by that credential both refused by GitHub, and
 write role only; if none can be provided, the PR says exactly which claims
 were rehearsed and which were not.
 
-## 6. Open points
+## 6. Points settled with both sides
 
-1. The setting's name, `github-token-file`.
-2. Whether `Attributed-human` is written by default when OATS knows the
-   human, as specified, or only when a deployment turns it on.
-3. Whether a credential whose identity has maintain or admin should be a
-   `problem` in file mode, as specified, given that a fine-grained token's
-   own scopes can be narrower than its owner's role. The rehearsal settles
-   what GitHub reports; the rule stands on the identity, because a ruleset
-   grants bypass to roles.
+1. **The setting's name is `github-token-file`.** Juan's side offered
+   `githubTokenFile`; every setting of this package is kebab-case
+   (`bindings-file`, `state-dir`, `screen-terms-file`), and one package keeps
+   one spelling.
+2. **`Attributed-human` is written by default** where OATS records the
+   human, stated as self-declared (Juan's side, 2026-11-12).
+3. **An identity with maintain or admin is a `problem` in file mode,** never
+   a warning: that role can bypass or change the ruleset, so the agents could
+   merge their own proposals. The fix named is a write-role-only credential
+   (Juan's side, 2026-11-12). The rehearsal establishes what GitHub reports
+   for each kind of token.
+4. **The journey step** (one claim proposed, reviewed and merged on a fixture
+   repository) is added to the deployment bundle's journey by its owner once
+   `setup --check` exists (Juan's side, 2026-11-12).
+
+Pending: Pepe's side's answer on the contract and on opt-in (section 4,
+"Refusing ambient credentials outright").
