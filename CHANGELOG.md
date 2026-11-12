@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`oats okf propose --apply` pushed before its first `gh` call, so a host
+  without `gh` half-published** (oats-project/oats-okf#148): a pushed branch
+  with no PR, and a proposal that could not be applied again. Now `--apply`
+  makes one read-only `gh` call per changed base (`gh repo view <repo> --json
+  viewerPermission`) before it pushes anything and before it marks the
+  proposal as attempted. New refusal `E_GH_UNAVAILABLE`, with `result.reason`
+  `gh-absent`, `gh-failed` (not signed in, or the repository is not visible)
+  or `no-write-permission` (the account is below write), and the fix in the
+  message. Nothing is pushed and the proposal is unchanged: once the host is
+  fixed, the same `--apply --digest` publishes. With several bases, every
+  base is checked before the first push. The check is bounded: it cannot
+  tell whether a narrowly scoped token may open a PR.
+- **A publication that stops after its push says what it published.** An
+  `E_GH` or `E_PR_UNCERTAIN` after a confirmed push now carries `published:
+  { branch, head }` (in `result.failed`, in `publish/<alias>-result.json` and
+  in the helper's JSON), and the message names the branch, the command that
+  shows whether a PR exists, the one that opens it from the retained PR body
+  and the one that removes the branch. `E_PUSH_UNCERTAIN` names the `git
+  ls-remote` that shows whether the branch exists. The agent's rule is
+  unchanged: report it, never retry, never clean up.
+- The publication helper (both copies) has a read-only `preflight --github
+  OWNER/REPO` command, and its `create` makes the same check before its push.
+
 ## 6.0.3 — 2026-11-12
 
 Requires OATS >=0.69.2, unchanged. A lock a recreated container left can be

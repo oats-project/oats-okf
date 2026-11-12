@@ -551,9 +551,35 @@ function runHelper(command, options) {
   try { return publication.execute(command, { ...options }); }
   catch (e) {
     const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-    const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) };
+    const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) };
     failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : `the publication helper refused (${code})`, result);
   }
+}
+
+const GH_FIX = {
+  'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
+  'gh-failed': 'gh could not read the repository: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
+  'no-write-permission': "gh's account has less than write permission on the repository (the label and the PR need it): use an account with write",
+};
+/** The one publish predicate: this deployment's credential can publish to
+ *  this base (today: gh is present, reads the repository and its account is
+ *  not below write). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
+export function checkPublish(alias, base) {
+  const repository = base.pr.repository;
+  try { publication.execute('preflight', { github: repository }); }
+  catch (e) {
+    if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
+    const reason = e.diagnostic?.reason;
+    failWith('E_GH_UNAVAILABLE', `base ${alias} (${repository}): ${GH_FIX[reason] ?? 'gh is not usable'}`, { reason, alias, repository, pushed: false });
+  }
+}
+/** How a publication that stopped after a step it cannot undo is finished or
+ *  removed, for whoever the instance reports to (the instance never does it). */
+function aftermath(code, r, branch, bodyFile, pushed) {
+  const repository = r.owned.base.pr.repository;
+  if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: \`gh pr list --repo ${repository} --head ${pushed.branch} --state all\` shows whether a PR exists; to finish, \`gh pr create --repo ${repository} --base ${r.owned.base.acceptedBranch} --head ${pushed.branch} --label okf-proposal --title "OKF knowledge proposal" --body-file ${bodyFile}\`; to remove it, \`git -C ${r.clone} push origin --delete ${pushed.branch}\``;
+  if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not: \`git -C ${r.clone} ls-remote origin refs/heads/${branch}\` shows whether it does`;
+  return ['E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : '';
 }
 
 /** Everything --check verifies and --apply re-verifies. Writes only the
@@ -700,6 +726,11 @@ export function apply(source, slug, expected) {
   const dir = proposalDir(source, slug);
   const p = prepare(source, dir, readPlan(dir));
   if (p.digest !== expected) fail('E_DIGEST', 'the clone, proposal.md, a named note or the generated commit text or PR body changed since --check (or the digest is not the one it printed): run --check again and read its diff before --apply');
+  // Every gh precondition, for every base, before the attempt marker.
+  for (const r of p.results.filter(x => x.changed.length)) {
+    try { checkPublish(r.alias, r.owned.base); }
+    catch (e) { if (e?.code === 'E_GH_UNAVAILABLE') e.message += '. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again'; throw e; }
+  }
   // The publish directory is the attempt marker: one attempt per proposal.
   const publish = join(dir, 'publish');
   try { fs.mkdirSync(publish, { mode: 0o700 }); }
@@ -734,9 +765,10 @@ export function apply(source, slug, expected) {
       published.push(row);
     } catch (e) {
       const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-      const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}) };
+      const pushed = e.result?.published;
+      const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}), ...(pushed ? { published: pushed } : {}) };
       try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
-      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_PUSH_UNCERTAIN', 'E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : ''}`,
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${aftermath(code, r, branch, bodyFile, pushed)}`,
         { published, failed: safe, proposal: dir });
     }
   }

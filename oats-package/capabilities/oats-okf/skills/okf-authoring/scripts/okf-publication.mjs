@@ -255,6 +255,21 @@ function github(o) {
   if (o.pr !== undefined && !/^[1-9][0-9]*$/.test(o.pr)) fail('E_PR');
 }
 function gh(o, args, input) { github(o); return run('gh', args, { input }); }
+// The one gh precondition a publication can decide before its push: gh is on
+// this host, can read the repository, and its account is not below write (the
+// label and the PR need it). Read-only. A bounded check: it cannot tell
+// whether a narrowly scoped token may open a PR. The reason is a fixed
+// constant; gh's own output is never forwarded.
+export function publishPreflight(o) {
+  github(o);
+  const unavailable = reason => { throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
+  const r = spawnSync('gh', ['repo', 'view', o.github, '--json', 'viewerPermission'], { env: env(), timeout: 60000, maxBuffer: MAX });
+  if (r.error?.code === 'ENOENT') unavailable('gh-absent');
+  if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
+  let permission;
+  try { permission = JSON.parse(text(r.stdout)).viewerPermission; } catch { unavailable('gh-failed'); }
+  if (['READ', 'TRIAGE'].includes(permission)) unavailable('no-write-permission');
+}
 function view(o, { states = ['OPEN'], publishing = true } = {}) {
   let p;
   try { p = JSON.parse(text(gh(o, ['pr', 'view', o.pr, '--repo', o.github, '--json', 'state,headRefOid,headRefName,baseRefName,isCrossRepository,title,body']))); }
@@ -467,6 +482,7 @@ export function execute(command, o) {
     git(o.repo, ['update-ref', reference, head, o.head]);
     return { head, status: 'committed' };
   }
+  if (command === 'preflight') { publishPreflight(o); return { github: o.github, status: 'gh-available' }; }
   if (command === 'create') {
     github(o);
     // A canonical repository-relative path, as a base root is bound (any
@@ -480,6 +496,8 @@ export function execute(command, o) {
     const label = prefix, kind = LABELS[prefix];
     const body = readText(o['body-file'], 'PR body', { terms: o.terms });
     const p = provenance(text(body)); if (p.version !== kind.version) fail('E_PROVENANCE');
+    // Before the push: a host that cannot open the PR publishes nothing.
+    publishPreflight(o);
     let head, recovered = 0;
     for (;;) {
       // Every E_BASE_MOVED from screenedPush is decided before its push.
@@ -488,16 +506,19 @@ export function execute(command, o) {
       if (recovered === RECOVERIES) unrecovered(recovered, 'retries-exhausted');
       recoverBase(o, ++recovered);
     }
-    gh(o, ['label', 'create', label, '--repo', o.github, '--force', '--color', '0E8A16', '--description', kind.description]);
+    // The push is confirmed: every failure from here names what it published.
     try {
-      verifyBase(o);
-      if (tip(o, ref(o.branch)) !== head) fail('E_HEAD_MOVED');
-    } catch { fail('E_PR_UNCERTAIN'); }
-    const url = text(gh(o, ['pr', 'create', '--repo', o.github, '--base', o['base-branch'], '--head', o.branch,
-      '--label', label, '--title', 'OKF knowledge proposal', '--body-file', '-'], body)).trim();
-    if (!url.startsWith(`https://github.com/${o.github}/pull/`) || !/\/pull\/[1-9][0-9]*$/.test(url)) fail('E_PR_UNCERTAIN');
-    confirmPr({ ...o, pr: url.split('/').at(-1) }, 'OPEN', o.branch);
-    return { head, base: o.base, recovered, branch: o.branch, url, status: 'created' };
+      gh(o, ['label', 'create', label, '--repo', o.github, '--force', '--color', '0E8A16', '--description', kind.description]);
+      try {
+        verifyBase(o);
+        if (tip(o, ref(o.branch)) !== head) fail('E_HEAD_MOVED');
+      } catch { fail('E_PR_UNCERTAIN'); }
+      const url = text(gh(o, ['pr', 'create', '--repo', o.github, '--base', o['base-branch'], '--head', o.branch,
+        '--label', label, '--title', 'OKF knowledge proposal', '--body-file', '-'], body)).trim();
+      if (!url.startsWith(`https://github.com/${o.github}/pull/`) || !/\/pull\/[1-9][0-9]*$/.test(url)) fail('E_PR_UNCERTAIN');
+      confirmPr({ ...o, pr: url.split('/').at(-1) }, 'OPEN', o.branch);
+      return { head, base: o.base, recovered, branch: o.branch, url, status: 'created' };
+    } catch (error) { throw Object.assign(error, { published: { branch: o.branch, head } }); }
   }
   remoteGuard(o);
   const closing = command === 'close' || command === 'close-unsafe';
@@ -584,6 +605,7 @@ const FLAGS = {
   'screen-tree': ['repo', 'head', 'root', 'terms-file'],
   screen: ['repo', 'base', 'head', 'text-file', 'terms-file'],
   commit: ['repo', 'base', 'head', 'branch', 'commit-file', 'terms-file'],
+  preflight: ['github'],
   create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file', 'guard-file'],
   rewrite: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
   'amend-legacy': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
@@ -612,7 +634,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log(JSON.stringify({ ok: true, ...execute(command, o) }));
     } catch (e) {
       const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-      console.log(JSON.stringify({ ok: false, code, ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) }));
+      console.log(JSON.stringify({ ok: false, code, ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) }));
       process.exitCode = code === 'E_CONTENT_REFUSED' ? 1 : 2;
     }
   }

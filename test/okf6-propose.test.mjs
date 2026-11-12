@@ -33,6 +33,7 @@ fs.appendFileSync(process.env.FIXTURE_GH_LOG, JSON.stringify({ argv: a, input })
 const save = () => fs.writeFileSync(state, JSON.stringify(s));
 if (process.env.FIXTURE_GH_FAIL === a.slice(0, 2).join(' ')) { console.error('fixture gh failure'); process.exit(9); }
 if (a[0] === 'pr' && a[1] === 'list') { console.log(JSON.stringify(s.open || [])); process.exit(0); }
+if (a[0] === 'repo' && a[1] === 'view') { console.log(JSON.stringify({ viewerPermission: process.env.FIXTURE_GH_PERMISSION || 'WRITE' })); process.exit(0); }
 if (a[0] === 'label' && a[1] === 'create') process.exit(0);
 if (a[0] === 'pr' && a[1] === 'create') {
   const head = a[a.indexOf('--head') + 1], label = a[a.indexOf('--label') + 1];
@@ -314,11 +315,46 @@ test('apply recovers an accepted branch that moved before the push (#130) and re
 test('a publication failure retains the clone and artefacts, reports safely and refuses a retry', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
   const { digest } = ok(f.run(['--check', '--slug', 'x']));
-  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH', /retained.*Do not retry.*never assume it does not/);
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH', /retained.*Do not retry.*was pushed to acme\/kb and no PR is confirmed, never assume there is none/);
   assert.equal(e.result.failed.code, 'E_GH'); assert.deepEqual(e.result.published, []);
+  // It says what it published and how to finish or remove it (#148).
+  const pushed = e.result.failed.published;
+  assert.match(pushed.branch, /^okf-proposal\/\d{8}-[0-9a-f-]{36}$/);
+  assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pushed.branch}`), pushed.head, 'the named branch is the one on the remote');
+  assert.ok(e.message.includes(`gh pr create --repo acme/kb --base main --head ${pushed.branch} --label okf-proposal --title "OKF knowledge proposal" --body-file ${join(plan.proposal, 'publish', 'kb-pr.md')}`), 'how to finish');
+  assert.ok(e.message.includes(`git -C ${join(plan.proposal, 'work', 'kb')} push origin --delete ${pushed.branch}`), 'how to remove');
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed);
   for (const p of ['work/kb', 'outgoing/kb-commit.txt', 'outgoing/kb-pr.md', 'publish/kb-result.json']) assert.ok(fs.existsSync(join(plan.proposal, p)), p);
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
   refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
+});
+
+// #148: every gh precondition is decided before the push and before the
+// attempt marker, so the refusal changes nothing and the same --apply works.
+const remoteBranches = f => f.git(f.dir, '--git-dir', f.origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/');
+for (const [reason, breakGh, fix] of [
+  ['gh-absent', f => fs.rmSync(join(f.dir, 'ghbin', 'gh')), /gh is not installed on this host/],
+  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'repo view' }), /gh could not read the repository: sign gh in/],
+  ['no-write-permission', () => ({ FIXTURE_GH_PERMISSION: 'READ' }), /less than write permission/],
+  ['no-write-permission', () => ({ FIXTURE_GH_PERMISSION: 'TRIAGE' }), /less than write permission/],
+]) test(`apply refuses E_GH_UNAVAILABLE (${reason}) before anything is pushed, and the same apply works once fixed`, t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const gh = fs.readFileSync(join(f.dir, 'ghbin', 'gh'));
+  // No other gh on this PATH: the wrapped git, this node, nothing else.
+  const nodeBin = join(f.dir, 'nodebin'); fs.mkdirSync(nodeBin); fs.symlinkSync(process.execPath, join(nodeBin, 'node'));
+  const PATH = `${join(f.dir, 'bin')}:${join(f.dir, 'ghbin')}:${nodeBin}`;
+  const extra = { PATH, ...(breakGh(f) || {}) };
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra }), 'E_GH_UNAVAILABLE', fix);
+  assert.match(e.message, /^base kb \(acme\/kb\): .*Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again$/);
+  assert.deepEqual(e.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false });
+  assert.equal(remoteBranches(f), 'refs/heads/main', 'nothing was pushed');
+  assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'no attempt marker');
+  assert.deepEqual(f.calls().filter(c => c.argv[0] !== 'repo' && !(c.argv[0] === 'pr' && c.argv[1] === 'list')), [], 'no gh write');
+  // The host is fixed: the same command publishes.
+  fs.writeFileSync(join(f.dir, 'ghbin', 'gh'), gh, { mode: 0o755 });
+  const [pr] = ok(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { PATH } })).prs;
+  assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pr.branch}`), pr.head);
 });
 
 test('the operator form reads a retirement recovery copy and names the form in the provenance', t => {
@@ -446,8 +482,10 @@ test('condition 1: --check and --apply feed the shipped helper exactly the harve
       const [pr] = propose(f.home, { apply: true, slug: 'same', digest: checked.digest }).result.prs;
       // --apply: the same screen again (it re-verifies before any write), then exactly the
       // harvester's commit and create, with its flags bound to the same values.
-      assert.deepEqual(calls.map(([c]) => c), ['screen', 'commit', 'create']);
-      const [[, rescreen, rescreened], [, commit, committedText], [, create, createdText]] = calls;
+      // The gh preflight sits between them: before the attempt marker and the commit.
+      assert.deepEqual(calls.map(([c]) => c), ['screen', 'preflight', 'commit', 'create']);
+      assert.deepEqual(calls[1][1], { github: 'acme/kb' });
+      const [[, rescreen, rescreened], , [, commit, committedText], [, create, createdText]] = calls;
       assert.deepEqual({ ...rescreen, head: undefined, 'text-file': undefined }, { ...screen, head: undefined, 'text-file': undefined });
       assert.deepEqual(rescreened, screened);
       assert.equal(f.git(clone, 'rev-parse', `${rescreen.head}^{tree}`), f.git(clone, 'rev-parse', `${screen.head}^{tree}`));

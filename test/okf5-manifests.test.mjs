@@ -310,5 +310,5 @@ test('the README says what is an instruction and what is enforced, with the opt-
     'The operator form.','gates every merge','Protect the accepted branch.','protection: enforced | none | unknown',
     'Harvesters already running keep their 5.x modules and finish, or a person retires them; a retained one is retired and its claims re-proposed by the source with `oats okf propose`, or by the operator form on its retirement recovery.',
     '`oats.okf:harvest-review` is its old name and now watches only the 5.x label','screen-terms-file']) assert.ok(readme.includes(s),s);
-  for(const code of ['E_USAGE','E_SOURCE','E_OPTED_OUT','E_PROPOSAL_EXISTS','E_SCOPE','E_OWNER','E_DIGEST','E_CONTENT_REFUSED','E_CONTENT_INPUT','E_PROPOSAL_FORMAT','E_NOTE','E_BASE_MOVED','E_PUSH_UNCERTAIN','E_GH','E_PR_UNCERTAIN']) assert.ok(readme.includes(`\`${code}\``),code);
+  for(const code of ['E_USAGE','E_SOURCE','E_OPTED_OUT','E_PROPOSAL_EXISTS','E_SCOPE','E_OWNER','E_DIGEST','E_CONTENT_REFUSED','E_CONTENT_INPUT','E_PROPOSAL_FORMAT','E_NOTE','E_GH_UNAVAILABLE','E_BASE_MOVED','E_PUSH_UNCERTAIN','E_GH','E_PR_UNCERTAIN']) assert.ok(readme.includes(`\`${code}\``),code);
 });

@@ -173,6 +173,14 @@ fresh `okf-proposal/<date>-<UUID>` key (a 5.x `okf-harvest/` key with a
 version 2 block is still accepted through 6.x), empty expected-old lease and new-ref
 confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
+Before its push, `create` makes one read-only `gh` call (`gh repo view
+<repo> --json viewerPermission`; the `preflight --github OWNER/REPO` command
+runs it alone). A missing `gh`, a failed call or an account below write
+refuses `E_GH_UNAVAILABLE` with a fixed `preflight` diagnostic (`gh-absent`,
+`gh-failed`, `no-write-permission`): nothing was pushed. It cannot tell
+whether a narrowly scoped token may open a PR. A failure after the confirmed
+push carries `published: { branch, head }`.
+
 A base that moved before the push is recovered inside `create`, at most three
 times: it fetches the accepted branch (writing no local ref but the CAS
 below), requires a fast-forward, reconciles the PR's delta onto the new tip

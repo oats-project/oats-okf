@@ -26,6 +26,7 @@ const s = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { 
 const input = a.includes('--body-file') && a[a.indexOf('--body-file') + 1] === '-' ? fs.readFileSync(0, 'utf8') : null;
 const save = () => fs.writeFileSync(state, JSON.stringify(s));
 if (a[0] === 'pr' && a[1] === 'list') { console.log('[]'); process.exit(0); }
+if (a[0] === 'repo' && a[1] === 'view') { console.log(JSON.stringify({ viewerPermission: process.env.FIXTURE_GH_PERMISSION || 'WRITE' })); process.exit(0); }
 if (a[0] === 'label' && a[1] === 'create') process.exit(0);
 if (a[0] === 'pr' && a[1] === 'create') {
   s.prs.push({ head: a[a.indexOf('--head') + 1], label: a[a.indexOf('--label') + 1], title: a[a.indexOf('--title') + 1], body: input }); save();
