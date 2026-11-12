@@ -21,6 +21,10 @@
     "consult-max-age": {
       "description": "Seconds a Git base's host-cached accepted commit may age before an `oats okf` consult read refetches the accepted branch; default 300, 0 fetches on every read. `--fresh` always refetches."
     },
+    "github-token-file": {
+      "hostOnly": true,
+      "description": "Optional (6.1), host-only. Absolute host path of a file holding one GitHub token, the deployment's proposer credential (write role only on the knowledge repository). When set, every remote git call and every gh call of oats.okf uses that token and no other credential, read at each call; a Git base must be bound by its https://github.com/ URL; a missing or malformed file refuses with E_CREDENTIAL. Absent: the user's own git and gh login, as before."
+    },
     "screen-terms-file": {
       "description": "Optional absolute host path of a text file, one term per line: `oats okf propose` refuses any outgoing content (diff, file name, commit text, PR body, branch) containing a term, case-insensitively (rule host-term, location only). Absent: the fixed content-screen rules only."
     }

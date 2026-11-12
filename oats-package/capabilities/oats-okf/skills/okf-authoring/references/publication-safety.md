@@ -162,6 +162,21 @@ case-insensitively in every screened text, file name and ref, reported as rule
 `host-term` with its location only. Terms only add refusals; an unreadable
 or malformed file is `E_CONTENT_INPUT`, never "no terms".
 
+## The credential the gate uses
+
+By default the helper's `git` and `gh` children use the caller's native
+credentials. With `--token-file <absolute path>` (oats.okf 6.1; `oats okf
+propose` passes the host's `github-token-file` setting) they use the GitHub
+token in that file and nothing else: ambient credential helpers are cleared,
+inherited token variables and `gh`'s stored login are not consulted, and
+transports other than HTTPS are refused. The token is read at each use, goes
+to `git` through the helper's own `git-credential` mode for
+`https://github.com` only and to `gh` in that child's environment, and never
+appears in an argument or a result. A missing or malformed file is
+`E_CREDENTIAL` with `diagnostic.reason` (`missing`, `unreadable`,
+`not-a-file`, `empty`, `malformed`, `path`), exit 2, before anything is sent.
+The gate is still not a sandbox: it does not hide the file from the caller.
+
 ## Create
 
 `oats okf propose --apply` runs the exact create sequence. Its local-only `commit`

@@ -10,8 +10,8 @@ and migration.
 
 | Variable | Used for |
 |---|---|
-| `OATS_SETTINGS` | the effective `oats.okf` settings (`bindings-file`, `state-dir`, `git-timeout`, `consult-max-age`, `screen-terms-file`); a 4.x harvest key refuses |
-| `OATS_SETTINGS_ORIGINS` | which layer (host, soul, spawn) set a 4.x harvest key, named in the `E_REMOVED` sentence |
+| `OATS_SETTINGS` | the effective `oats.okf` settings (`bindings-file`, `state-dir`, `git-timeout`, `consult-max-age`, `screen-terms-file`, and the host-only `github-token-file`); a 4.x harvest key refuses |
+| `OATS_SETTINGS_ORIGINS` | which layer (host, soul, spawn) set a 4.x harvest key, named in the `E_REMOVED` sentence; and that `github-token-file` came from the host (the manifest also declares it `hostOnly`, which the kernel enforces at resolution) |
 | `OATS_SOUL` | the soul directory whose `okf.json` an instance (or a deployment command run with `--soul`) consults; `oats okf propose` also checks it against the home's recorded soul |
 | `OATS_INSTANCE_HOME`, `OATS_HOME` | the instance home (instance knowledge, `inspect`, the proposal directory) |
 | `OATS_INSTANCE` | the caller's instance, named as `proposer.instance` in the operator's recovery form (`null` from the deployment) |
@@ -60,7 +60,9 @@ used; their presence answers `E_REMOVED`.
   or with `oats trigger add`.
 
 The proposing instance and the maintainer use `git` and `gh` with the host's
-ordinary credentials; the kernel is not involved in publication.
+ordinary credentials, or, from 6.1, with the token in the file
+`github-token-file` names; the kernel is not involved in publication, and the
+token never passes through a hook's or a launch's environment.
 
 ## What the package reads from the record without a kernel API
 

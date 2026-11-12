@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fs, join, safePath, readJSON, atomic, fail } from './io.mjs';
-import { loadBindings, declaration, settings, validateBindings, resolveNodes, resolveSubjects } from './config.mjs';
+import { loadBindings, declaration, settings, validateBindings, requireTokenBases, resolveNodes, resolveSubjects } from './config.mjs';
 import { short } from './consult.mjs';
 import { loadInvocationKnowledgeBinding } from './binding-wire.mjs';
 import { validateBase, readerWarnings } from './stores.mjs';
@@ -78,7 +78,7 @@ export function consultSource(home) {
   const invocation=loadInvocationKnowledgeBinding();
   if(invocation.kind==='captured') {
     const {file,...doc}=invocation.runtime.bindings;
-    return {home,work,decl:invocation.runtime.decl,bindings:{file,...validateBindings(doc,file,seat)}};
+    return {home,work,decl:invocation.runtime.decl,bindings:requireTokenBases({file,...validateBindings(doc,file,seat)})};
   }
   if(!process.env.OATS_SOUL) fail('E_OATS_SOUL_MISSING','OATS_SOUL is not set; oats.okf commands run only under the OATS kernel');
   return {home,work,decl:declaration(fs.realpathSync(process.env.OATS_SOUL)),bindings:loadBindings(undefined,seat)};

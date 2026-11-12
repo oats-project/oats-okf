@@ -346,6 +346,16 @@ test('the commit names the proposer in trailers: the messaging identity and its 
   assert.ok(!withheld.warnings[0].includes(SECRET), 'the warning never echoes the value');
 });
 
+test('github-token-file reaches the whole flow: a base not bound over HTTPS and a committed value each refuse with the fix, before anything is cloned or sent', t => {
+  const origins = kind => ({ OATS_SETTINGS_ORIGINS: JSON.stringify({ '/github-token-file': { kind, at: 'x' } }) });
+  const f = fixture(t, { settings: { 'github-token-file': '/nonexistent/okf-token' } });
+  // The fixture's base is a local repository: the token serves https://github.com/ only.
+  refused(f.run(['--plan', '--slug', 'x'], { extra: origins('host') }), 'E_CREDENTIAL', /git base "kb" is not bound by an https:\/\/github\.com\/ URL.*bind it by its HTTPS URL/);
+  refused(f.run(['--plan', '--slug', 'x'], { extra: origins('soul') }), 'E_CONFIG', /github-token-file from soul \(x\) is not valid: it is host-only/);
+  assert.equal(fs.existsSync(join(f.home, 'proposals')), false, 'nothing was planned');
+  assert.equal(f.calls().length, 0, 'no gh call');
+});
+
 test('the operator form reads a retirement recovery copy and names the form in the provenance', t => {
   const f = fixture(t);
   const recovery = join(f.d, 'agents', 'source', 'instances', '.oats-retirement', 'recovery', 'src-AbC123');

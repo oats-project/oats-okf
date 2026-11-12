@@ -23,8 +23,63 @@ const oid = value => { if (!OID.test(value || '')) fail('E_OID'); return value; 
 // Native credentials stay available; inherited Git selectors, external diff,
 // replacement objects, hooks and interactive prompts cannot change the gate.
 function env() {
-  return { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k))),
-    GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' };
+  return tokenEnv({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k))),
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' }, tokenFile);
+}
+// oats.okf 6.1: the deployment's proposer credential, a GitHub token in a file
+// (setting github-token-file, or --token-file here). When one is named, every
+// remote git call and every gh call of this process tree uses that token and
+// no other credential: ambient credential helpers are cleared, gh's stored
+// login and inherited token variables are not consulted, and transports other
+// than HTTPS are refused, so no SSH key stands in. The file is read at each
+// use, so a rotated token needs no restart. The token never reaches an
+// argument, an error or a log: git asks this script (`git-credential`, for
+// https://github.com only), and gh gets it in its own child environment.
+// Without one, nothing here changes: the caller's native credentials apply.
+let tokenFile;
+const SELF = fileURLToPath(import.meta.url);
+const credentialError = (reason) => Object.assign(new Error('E_CREDENTIAL'), { code: 'E_CREDENTIAL', diagnostic: { phase: 'credential', reason } });
+/** The token in `file`: one printable-ASCII word, at most 4 KiB with its
+ *  line end. A mounted secret is a symlink, so links are followed. */
+export function readToken(file) {
+  if (typeof file !== 'string' || !file.startsWith('/') || /[\0\r\n']/.test(file)) throw credentialError('path');
+  let bytes;
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) throw credentialError('not-a-file');
+    if (st.size > 4096) throw credentialError('malformed');
+    bytes = fs.readFileSync(file);
+  } catch (e) { throw e?.code === 'E_CREDENTIAL' ? e : credentialError(e?.code === 'ENOENT' ? 'missing' : 'unreadable'); }
+  const token = bytes.toString('latin1').replace(/\r?\n$/, '');
+  if (!token) throw credentialError('empty');
+  if (!/^[\x21-\x7e]{1,2048}$/.test(token)) throw credentialError('malformed');
+  return token;
+}
+const INHERITED = /^(?:GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_HOST|GIT_ASKPASS|SSH_ASKPASS|GIT_SSH|GIT_SSH_COMMAND|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+|OKF_GITHUB_TOKEN_FILE)$/;
+/** `base` as a child's environment when `file` names the token: for git, the
+ *  configuration that makes this script the only credential source; with
+ *  `gh: true`, the token itself, for that one gh child (read here, so a bad
+ *  file refuses before gh starts; git reads it through the helper, and a bad
+ *  file there is an authentication failure). `file` absent: `base`. */
+export function tokenEnv(base, file, { gh = false } = {}) {
+  if (file === undefined || file === null) return base;
+  if (/'/.test(process.execPath) || /'/.test(SELF)) throw credentialError('path');
+  const config = [['credential.helper', ''], ['credential.https://github.com.helper', `!'${process.execPath}' '${SELF}' git-credential`],
+    ['credential.https://github.com.useHttpPath', 'false'], ['protocol.ssh.allow', 'never'], ['protocol.git.allow', 'never'], ['protocol.http.allow', 'never']];
+  const out = Object.fromEntries(Object.entries(base).filter(([k]) => !INHERITED.test(k)));
+  out.GIT_CONFIG_COUNT = String(config.length);
+  config.forEach(([key, value], i) => { out[`GIT_CONFIG_KEY_${i}`] = key; out[`GIT_CONFIG_VALUE_${i}`] = value; });
+  out.OKF_GITHUB_TOKEN_FILE = file; out.GIT_TERMINAL_PROMPT = '0';
+  if (gh) out.GH_TOKEN = readToken(file);
+  return out;
+}
+/** git's credential helper protocol, `get` only, https://github.com only. */
+function gitCredential(action) {
+  if (action !== 'get') return;
+  const asked = Object.fromEntries(fs.readFileSync(0, 'utf8').split('\n').filter(Boolean).map(row => { const i = row.indexOf('='); return [row.slice(0, i), row.slice(i + 1)]; }));
+  if (asked.protocol !== 'https' || asked.host !== 'github.com') return;
+  let token; try { token = readToken(process.env.OKF_GITHUB_TOKEN_FILE); } catch { return; }
+  process.stdout.write(`username=x-access-token\npassword=${token}\n`);
 }
 // Nullable fields mean the OS supplied no usable exit/signal, not invented
 // process outcomes. Never serialize an Error, raw tool bytes, or a free string.
@@ -63,7 +118,7 @@ function uncertain(code, diagnostic) {
   throw Object.assign(new Error(code), { code, diagnostic: diagnostic ?? uncertaintyDiagnostic() });
 }
 function run(command, args, { cwd, input, optional = false, indexFile, publication = false } = {}) {
-  const childEnv = env();
+  const childEnv = command === 'gh' ? tokenEnv(env(), tokenFile, { gh: true }) : env();
   // Only an internally-created private reconciliation index supplies this.
   // Inherited GIT_INDEX_FILE was already removed by env().
   if (indexFile) childEnv.GIT_INDEX_FILE = indexFile;
@@ -243,7 +298,7 @@ export function screenedPush(o, head, expected, branch) {
   try {
     output = git(o.repo, ['push', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no',
       `--force-with-lease=${reference}:${expected}`, 'origin', `${head}:${reference}`], { publication: true });
-  } catch (error) { uncertain('E_PUSH_UNCERTAIN', error?.diagnostic); }
+  } catch (error) { if (error?.code === 'E_CREDENTIAL') throw error; uncertain('E_PUSH_UNCERTAIN', error?.diagnostic); }
   const status = text(output.stdout).split('\n').find(row => row.split('\t')[1] === `${head}:${reference}`)?.split('\t')[0];
   if (expected === '' && status !== '*') fail('E_CREATE_NOT_CONFIRMED');
   const actual = tip(o, reference);
@@ -459,6 +514,8 @@ function comment(o, bytes) {
   gh(o, ['pr', 'comment', o.pr, '--repo', o.github, '--body-file', '-'], bytes);
 }
 export function execute(command, o) {
+  tokenFile = o['token-file'];
+  if (tokenFile !== undefined) readToken(tokenFile);
   o.terms = loadTerms(o['terms-file']);
   if (command === 'screen-text') {
     if (!o['text-file']?.length) fail('E_USAGE');
@@ -591,7 +648,7 @@ export function execute(command, o) {
       let output;
       try { output = git(o.repo, ['push', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no',
         `--force-with-lease=${reference}:${o.head}`, 'origin', `:${reference}`], { publication: true }); }
-      catch (error) { uncertain('E_DELETE_UNCERTAIN', error?.diagnostic); }
+      catch (error) { if (error?.code === 'E_CREDENTIAL') throw error; uncertain('E_DELETE_UNCERTAIN', error?.diagnostic); }
       if (tip(o, reference) !== null) uncertain('E_DELETE_UNCERTAIN', { ...output.diagnostic, phase: 'readback-other' });
     }
     return { head: o.head, status: command === 'close-unsafe' ? 'closed-branch-deleted-pull-ref-remains' : 'closed' };
@@ -603,12 +660,12 @@ const FLAGS = {
   'screen-tree': ['repo', 'head', 'root', 'terms-file'],
   screen: ['repo', 'base', 'head', 'text-file', 'terms-file'],
   commit: ['repo', 'base', 'head', 'branch', 'commit-file', 'terms-file'],
-  create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file', 'guard-file'],
-  rewrite: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
-  'amend-legacy': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
-  merge: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file'],
-  close: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file'],
-  'close-unsafe': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file'],
+  create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file', 'guard-file', 'token-file'],
+  rewrite: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file', 'token-file'],
+  'amend-legacy': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file', 'token-file'],
+  merge: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file', 'token-file'],
+  close: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file', 'token-file'],
+  'close-unsafe': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'verdict-file', 'token-file'],
 };
 function parse(args) {
   const [command, ...argv] = args, allowed = FLAGS[command]; if (!allowed) fail('E_USAGE');
@@ -619,11 +676,12 @@ function parse(args) {
     if (key === 'text-file') (o[key] ??= []).push(value);
     else { if (Object.hasOwn(o, key)) fail('E_USAGE'); o[key] = value; }
   }
-  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file'].includes(key) && !o[key]) fail('E_USAGE');
+  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file', 'token-file'].includes(key) && !o[key]) fail('E_USAGE');
   if (o.repo) o.repo = resolve(o.repo); return { command, o };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (process.argv.length === 2 || process.argv.includes('--help')) {
+  if (process.argv[2] === 'git-credential') gitCredential(process.argv[3]);
+  else if (process.argv.length === 2 || process.argv.includes('--help')) {
     for (const [command, flags] of Object.entries(FLAGS)) console.log(`okf-publication.mjs ${command} ${flags.map(f => `--${f} VALUE`).join(' ')}`);
   } else {
     try {

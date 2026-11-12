@@ -70,7 +70,87 @@ settings:
 | `consult-max-age` | Seconds a Git base's cached accepted commit may age before a consult read refetches; default 300, 0 refetches on every read. |
 | `screen-terms-file` | Optional (6.0). Absolute path of a host text file, one term per line: `oats okf propose` refuses any outgoing content (concepts, file names, commit text, PR body, branch) containing a term, case-insensitively, as rule `host-term`, by location only. It only adds refusals. Absent: the fixed content-screen rules only. |
 
+| `github-token-file` | Optional (6.1), **host-only**. Absolute path of a file holding one GitHub token, the deployment's proposer credential: see [The proposer credential](#the-proposer-credential). Absent: the user's own `git` and `gh` login, as before 6.1. |
+
 Any other key is refused (`E_CONFIG`).
+
+### The proposer credential
+
+**What oats.okf promises, and what it cannot.** Inside one trust group (one
+operating-system user; for a hosted team, one container), whatever the
+group's knowledge credential may do, any agent may do. oats.okf does not hide
+that credential from an agent and cannot: every check the package makes
+(owned nodes, the write surface, the content screen, the maintainer's
+verdict) is made by a tool an agent may not use. A deployment gets a real
+gate by provisioning two things on GitHub:
+
+- a **proposer credential** that can create branches and pull requests on
+  the knowledge repository and cannot update its accepted branch: an identity
+  with the write role there and no more (no maintain, no admin), its token
+  limited to that repository with contents write and pull-requests write;
+- an accepted branch that changes only through a pull request merged by an
+  identity held **outside** the agents' trust group: a person, or a knowledge
+  maintainer in its own trust group with its own credential
+  ([Protect the accepted branch](#the-knowledge-maintainer)).
+
+A knowledge maintainer that shares the proposers' container shares their
+credential, so there it is a reviewer and not a gate.
+
+**The setting.** `github-token-file` names the file that holds the proposer
+credential's token. The deployment keeps it current: a mounted secret, a
+refreshed GitHub App installation token and a machine user's token all work,
+and the package does not care which.
+
+```yaml
+# oats-local.yaml, on the one machine that holds the file
+settings:
+  oats.okf:
+    github-token-file: /absolute/path/to/token
+```
+
+When it is set:
+
+- Every `git` call of the package that talks to a remote (clone, fetch,
+  ls-remote, push) and every `gh` call uses that token and no other
+  credential. Ambient Git credential helpers are cleared, `gh`'s stored login
+  and an inherited `GH_TOKEN` or `GITHUB_TOKEN` are not consulted, and Git
+  transports other than HTTPS are refused, so no SSH key stands in.
+- The file is read at each use: a rotated token is picked up without a
+  restart. It holds the token alone, on one line.
+- The token is given to `git` by a credential helper the package supplies,
+  for `https://github.com` only, and to `gh` in that one child process's
+  environment. It never appears in an argument, an error, a receipt or a
+  log, and the agent's own environment never holds it.
+- Every Git base must be bound by its `https://github.com/` URL. Any other
+  locator refuses with `E_CREDENTIAL`, naming the base and the fix.
+- A missing, unreadable, empty or malformed file refuses with
+  `E_CREDENTIAL`, naming the path and both fixes (provision the file, or
+  remove the setting). There is no fall-back to another credential.
+
+**It is host-only.** The value is a path on one machine. The kernel accepts
+it only from the deployment's own `oats-local.yaml` (a soul, a workspace file
+or a `--provider` flag carrying it is refused), and oats.okf refuses a value
+whose recorded origin is anything else (`E_CONFIG`, naming the layer and the
+move).
+
+**When it is not set, nothing changes:** the package uses the user's own
+`git` and `gh` login. That is a deployment's choice, and it means every agent
+of that user can do whatever that login can do on the knowledge repository.
+
+**A file is a stated, interim exception** for deployments whose rule is that
+provider credentials stay behind a secrets broker and are never agent files.
+`git` and `gh` consume this credential inside the container, and no brokered
+Git credential helper exists yet. The exception is bounded: the credential
+is team-scoped, has the write role only on the knowledge repository, and is
+read inside one trust group. A brokered source will arrive as its own
+setting, exclusive with this one; nothing written for the file changes
+meaning.
+
+**The maintainer's side.** The publication helper takes the same file as
+`--token-file <absolute path>` on `create`, `rewrite`, `amend-legacy`,
+`merge`, `close` and `close-unsafe`, for a maintainer provisioned that way in
+its own trust group. Without the flag it uses its user's own login, as
+before.
 
 **The soul's opt-out stays.** A soul author can write
 `knowledge: { harvest: off }` (from 6.0 also spelled `publish: off`) in
@@ -142,7 +222,9 @@ The absolute bindings document is capability-owned JSON:
 
 - Paths inside it resolve from its own directory, not the working directory.
 - **Git bases** support HTTPS, SSH and durable local repositories;
-  `root: "."` is a dedicated knowledge repository. PRs are same-repository
+  `root: "."` is a dedicated knowledge repository. With `github-token-file`
+  set, only `https://github.com/` URLs
+  ([The proposer credential](#the-proposer-credential)). PRs are same-repository
   branches (`pr.repository` is the GitHub `owner/repo`). A repository URL
   carrying a credential (`user:token@`) is refused: use a credential helper
   or an SSH key. A local repository must be a canonical repository, not a
@@ -659,6 +741,7 @@ the spawn or the workspace set is ignored and named in `--plan`'s
 | `E_DIGEST` | the clone, `proposal.md`, a named note or the generated commit text or PR body changed since `--check` (a changed record changes the PR body) |
 | `E_CONTENT_REFUSED` / `E_CONTENT_INPUT` | the content screen's codes (findings name locations and rules only; `host-term` is the host's own list) |
 | `E_PROPOSAL_FORMAT` | `proposal.md` malformed (title, a missing or empty section, a provenance block of its own) or a backing-note line unreadable under the 5.8 note-locator rules; or the clone is not the one plan made (a symlink in its path or anywhere under its `.git`, a `.git` that is a file, or a shared or alternate object store) |
+| `E_CREDENTIAL` | with `github-token-file` set: the file is missing, unreadable, empty or not one token, or a Git base is not bound by an `https://github.com/` URL; the message names the path or the base and the whole fix, never the file's content |
 | `E_GIT` | a Git command on a proposal clone failed (a required filter, a corrupt clone): the message names the subcommand and exit status only; Git's own output is withheld, as it may carry private content |
 | `E_NOTE` | a warning in `--check`, not a refusal: a named note missing or unreadable is listed without a hash, never hashed silently |
 | `E_UNSUPPORTED` | every owned base is a directory base ("convert it to a Git base or edit it in a reviewed change"); a directory base among Git bases is skipped with that reason |
