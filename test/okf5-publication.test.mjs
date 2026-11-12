@@ -868,7 +868,7 @@ test('merge explicitly controls squash subject/body instead of allowing gh-gener
   assert.deepEqual(f.calls().map(c => c.kind), ['view', 'view', 'comment', 'view', 'merge']);
   const merge = f.calls().at(-1);
   assert.equal(merge.argv[merge.argv.indexOf('--subject') + 1], 'OKF knowledge proposal');
-  assert.equal(merge.input, `Reviewed OKF head: ${head}\n`);
+  assert.equal(merge.input, `Reviewed OKF head: ${head}\n\nProposal: https://github.com/${GITHUB}/pull/${PR}\n`);
   assert.equal(merge.argv[merge.argv.indexOf('--body-file') + 1], '-');
   assert.equal(merge.argv.includes('--delete-branch'), false);
   assert.equal(merge.argv.includes('--auto'), false);
@@ -1311,6 +1311,18 @@ function sourceSnapshot(f) {
   };
 }
 
+test('merge carries the proposer trailers of the reviewed head into the squash body, one row per key, and nothing else of its message', t => {
+  const f = fixture(t); f.change();
+  const head = f.commit('okf-proposal: synthetic claim\n\nSource: instance src, soul source\n\nProposed-by: src (soul source)\nProposer-identity: acme/src\nAttributed-human: Ada Example\nSigned-off-by: someone else\nPublished-by: operator\n');
+  f.open(head); success(f.run('merge', head));
+  assert.equal(f.calls().at(-1).input, `Reviewed OKF head: ${head}\n\nProposal: https://github.com/${GITHUB}/pull/${PR}\nProposed-by: src (soul source)\nProposer-identity: acme/src\nAttributed-human: Ada Example\nPublished-by: operator\n`);
+  // A key given twice, or outside the final block, names nobody.
+  const g = fixture(t); g.change();
+  const twice = g.commit('okf-proposal: synthetic claim\n\nProposed-by: early (soul x)\n\nProposed-by: a (soul x)\nProposed-by: b (soul x)\nProposer-identity: acme/src\n');
+  g.open(twice); success(g.run('merge', twice));
+  assert.equal(g.calls().at(-1).input, `Reviewed OKF head: ${twice}\n\nProposal: https://github.com/${GITHUB}/pull/${PR}\nProposer-identity: acme/src\n`);
+});
+
 function exactMergeCall(f, head, since = 0) {
   const writes = f.calls().slice(since).filter(c => c.write);
   assert.deepEqual(writes.map(c => c.kind), ['comment', 'merge']);
@@ -1318,7 +1330,7 @@ function exactMergeCall(f, head, since = 0) {
   assert.equal(writes[0].input, verdict(head));
   assert.deepEqual(writes[1].argv, ['pr', 'merge', PR, '--repo', GITHUB, '--squash', '--match-head-commit', head,
     '--subject', 'OKF knowledge proposal', '--body-file', '-']);
-  assert.equal(writes[1].input, `Reviewed OKF head: ${head}\n`);
+  assert.equal(writes[1].input, `Reviewed OKF head: ${head}\n\nProposal: https://github.com/${GITHUB}/pull/${PR}\n`);
 }
 
 for (const openedBy of ['create', 'open']) {

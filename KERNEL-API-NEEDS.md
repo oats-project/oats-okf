@@ -61,3 +61,23 @@ used; their presence answers `E_REMOVED`.
 
 The proposing instance and the maintainer use `git` and `gh` with the host's
 ordinary credentials; the kernel is not involved in publication.
+
+## What the package reads from the record without a kernel API
+
+From 6.1, `oats okf propose` names the proposer in the commit's trailers. It
+reads the home's `instance.json` itself, as the kernel's `attributedHuman`
+does (feature `spawn-attribution`, OATS 0.69.8): the `identity` that the
+capability whose `capabilityRuntime` layer is `messaging` recorded in
+`capabilityMeta`, its `address` or `alias`, and its optional
+`attribution: {mode, human: {id, label}|null, parent: {id}|null}`. On an
+older kernel, or a home with no such record, the trailers are simply absent.
+
+## Not available: a signature by the served identity
+
+The trailers are the proposer's own statement. Proof needs the proposer to
+sign the `--check` digest with the key of the identity it serves, and the
+maintainer to verify it. That needs a provider-neutral contract ("sign these
+bytes as the served identity", "verify this signature for that identity")
+from the kernel and the messaging capability; oats.okf must not call one
+messaging provider's CLI. It is not asked for until a deployment needs proof
+rather than a record (design: `docs/design/2026-11-12-container-knowledge-writes.md`, section 4).
