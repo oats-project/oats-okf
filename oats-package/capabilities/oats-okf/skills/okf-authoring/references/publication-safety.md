@@ -176,9 +176,9 @@ fresh `okf-proposal/<date>-<UUID>` key (a 5.x `okf-harvest/` key with a
 version 2 block is still accepted through 6.x), empty expected-old lease and new-ref
 confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
-Before its push, `create` makes one read-only `gh` call (`gh api --hostname github.com
+Before its push, `create` makes read-only `gh` calls (first `gh api --hostname github.com
 repos/<repo> --jq .permissions.push`; the `preflight --github OWNER/REPO`
-command runs it alone). Only an explicit `true` passes. A missing `gh`, a
+command runs the check alone). An explicit `true` passes at once. A missing `gh`, a
 failed call or unstated permission, or a credential that may not push
 refuses `E_GH_UNAVAILABLE` with a fixed `preflight` diagnostic (`gh-absent`,
 `gh-failed`, `no-write-permission`): nothing was pushed. One other route
