@@ -187,11 +187,14 @@ permissions all false or not at all. When the answer is not `true` and `gh
 api installation/repositories` succeeds (only an installation token may call
 it), the helper puts the write question to GitHub with a dry-run push that
 sends nothing, to the repository's HTTPS URL and with gh's credential alone
-(Git's own helpers are cleared and `gh auth git-credential` is the only one,
-so the token judged is the one the installation answer was about, never an
-SSH key or another login): accepted passes, a refusal is
-`installation-cannot-push`, a timeout or an unreachable github.com is
-`installation-check-failed`. Not yet run with a real installation token. On
+(it reads none of the host's Git configuration, no askpass, and `gh auth
+git-credential` is the only helper, so no URL rewrite, SSH key or other
+login answers for the installation): accepted passes, a refusal is
+`installation-cannot-push`, and a timeout, an unreachable github.com, a
+host whose HTTPS needs a proxy or CA only its Git configuration names, or
+`gh` giving Git no credential is `installation-check-failed`. Not yet run
+with a real installation token, and that `gh auth git-credential` serves
+one is unverified. On
 both routes it is gh's credential that is judged, not the one Git uses for
 the base's remote. It cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed

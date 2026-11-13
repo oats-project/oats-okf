@@ -295,21 +295,28 @@ export function publishPreflight(o) {
 // Whether GitHub accepts a push to the repository from GH'S credential, the
 // one the installation answer was about: a dry run, over HTTPS, that deletes
 // a branch name nothing uses. Git opens the push (GitHub authorizes it there,
-// as it does a real one) and sends nothing. Git's own credential helpers are
-// cleared and gh's is the only one, so no SSH key or other login can answer
-// for the installation; the token passes from gh to Git over the helper's
-// pipe, never as an argument, and nothing either prints is forwarded.
-// → 'accepted' | 'refused' (GitHub said no) | 'unknown' (a timeout, a network
-// error, anything else: could not check). Only 'accepted' passes.
-const PUSH_REFUSED = /The requested URL returned error: 40[13]|Authentication failed|could not read Username|terminal prompts disabled/i;
+// as it does a real one) and sends nothing. It runs with none of the host's
+// Git configuration (no system or global file, an empty scratch repository)
+// and no askpass, and gh's credential helper is the only one: no
+// url.insteadOf rewrite, extra header, SSH key or other login can answer for
+// the installation. A host whose HTTPS needs a configured proxy or CA
+// therefore reads as "could not check". The token passes from gh to Git over
+// the helper's pipe, never as an argument, and nothing either prints is
+// forwarded.
+// → 'accepted' | 'refused' (GitHub said no to the credential gh gave) |
+// 'unknown' (a timeout, a network error, gh gave Git no credential, anything
+// else: could not check). Only 'accepted' passes.
+const PUSH_REFUSED = /The requested URL returned error: 40[13]|Authentication failed/i;
 function acceptsPush(o) {
   let scratch;
   try {
     scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-preflight-'));
     git(scratch, ['init', '--quiet']);
+    const bare = { ...env(), LC_ALL: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+    delete bare.SSH_ASKPASS;
     const r = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'push.pushOption=', '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
       'push', '--dry-run', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no', `https://github.com/${o.github}.git`, ':refs/heads/okf/preflight-dry-run'],
-    { cwd: scratch, env: { ...env(), LC_ALL: 'C' }, timeout: 60000, maxBuffer: MAX });
+    { cwd: scratch, env: bare, timeout: 60000, maxBuffer: MAX });
     if (r.error || r.signal) return 'unknown';
     if (r.status === 0) return 'accepted';
     const stderr = Buffer.isBuffer(r.stderr) ? r.stderr.toString('utf8') : '';

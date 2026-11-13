@@ -47,12 +47,15 @@
   (`gh api installation/repositories`, which only an installation token may
   call); if it is, it asks GitHub the write question itself, with a dry-run
   push that sends nothing, to the repository's HTTPS URL and with gh's
-  credential alone: Git's own credential helpers are cleared for it, so the
-  token judged is the one that answered as an installation, never an SSH
-  key or another login on the host. Accepted passes. Refused is
+  credential alone: it reads none of the host's Git configuration and no
+  other credential helper or askpass, so the token judged is the one that
+  answered as an installation, never a URL rewrite, an SSH key or another
+  login on the host. Accepted passes. Refused is
   `E_GH_UNAVAILABLE` with reason `installation-cannot-push`; a dry run that
-  timed out or could not reach github.com is `installation-check-failed`,
-  never a pass. Every other credential is judged exactly as above. On both
+  timed out, could not reach github.com, or in which `gh` gave Git no
+  credential is `installation-check-failed`, never a pass; so is a host
+  whose HTTPS to github.com needs a proxy or CA that only its Git
+  configuration names. Every other credential is judged exactly as above. On both
   routes the check judges gh's credential, not the one Git uses for the
   base's remote. **Limit: the installation route has not yet been run
   against a real GitHub App installation.** It rests on reports of how
