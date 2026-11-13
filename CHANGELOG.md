@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 6.1.0 — 2026-11-13
+
+Requires OATS >=0.69.2, unchanged. A knowledge change names the agent that
+proposed it, in Git trailers on its commit (#151). `oats okf propose --apply`
+checks `gh` before it pushes anything, and refuses `E_GH_UNAVAILABLE` with
+the fix when gh is absent, signed out or can't write (#148). A GitHub App
+installation token is checked by asking GitHub for the repository's push
+advertisement (#157). A publication that stops after its push says what it
+published. The captured-binding variables are ignored, with one warning each
+(awebai/oats-aweb#242). **What a deployment must change:** a host that
+publishes knowledge needs `gh` installed and signed in, with write on the
+knowledge repository. It already needed that to open the PR; now it is
+checked first. A host that reaches github.com only through a proxy can't
+check an installation token.
 
 ### Added
 
