@@ -185,11 +185,15 @@ refuses `E_GH_UNAVAILABLE` with a fixed `preflight` diagnostic (`gh-absent`,
 passes: a GitHub App installation token, for which GitHub reports those
 permissions all false or not at all. When the answer is not `true` and `gh
 api installation/repositories` succeeds (only an installation token may call
-it), the helper puts the write question to the remote with a dry-run push
-that sends nothing (`--remote` on `preflight`, the clone's remote in
-`create`, else the repository's HTTPS URL): accepted passes, a refusal is
-`installation-cannot-push`, a timeout or an unreachable remote is
-`installation-check-failed`. Not yet run with a real installation token. It cannot tell
+it), the helper puts the write question to GitHub with a dry-run push that
+sends nothing, to the repository's HTTPS URL and with gh's credential alone
+(Git's own helpers are cleared and `gh auth git-credential` is the only one,
+so the token judged is the one the installation answer was about, never an
+SSH key or another login): accepted passes, a refusal is
+`installation-cannot-push`, a timeout or an unreachable github.com is
+`installation-check-failed`. Not yet run with a real installation token. On
+both routes it is gh's credential that is judged, not the one Git uses for
+the base's remote. It cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed
 push carries `published: { branch, head }`.
 

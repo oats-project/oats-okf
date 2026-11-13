@@ -35,6 +35,15 @@ const CAUSES = [
   [/Could not resolve host/i, 'host-unresolved'],
   [/connection (?:refused|timed out)/i, 'connection-failed'],
 ];
+/** The lines of Git's stderr the client itself wrote, over HTTPS. */
+function clientLines(stderr) {
+  const lines = stderr.split('\n').map(line => line.trimStart());
+  // Protocol ERR/report-status diagnostics can quote remote payloads with
+  // unprefixed continuation lines. Exclude the whole tail, including unpack
+  // failures, malformed remote status and other protocol-error renderers.
+  const remoteError = lines.findIndex(line => /^(?:fatal|error|warning):\s+(?:remote\b|unable to parse remote unpack status:|protocol error:)/i.test(line));
+  return (remoteError < 0 ? lines : lines.slice(0, remoteError)).filter(line => !/^remote:/i.test(line));
+}
 export function uncertaintyDiagnostic(result = {}, elapsedMs = 0) {
   const diagnostic = {
     phase: 'push',
@@ -47,14 +56,7 @@ export function uncertaintyDiagnostic(result = {}, elapsedMs = 0) {
     const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString('utf8') : typeof result.stderr === 'string' ? result.stderr : '';
     // Remote-controlled lines never supply a cause, even if they copy a client
     // phrase. Stdout is deliberately not an input to this classification.
-    const lines = stderr.split('\n').map(line => line.trimStart());
-    // Protocol ERR/report-status diagnostics can quote remote payloads with
-    // unprefixed continuation lines. Exclude the whole tail, including unpack
-    // failures, malformed remote status and other protocol-error renderers.
-    const remoteError = lines.findIndex(line => /^(?:fatal|error|warning):\s+(?:remote\b|unable to parse remote unpack status:|protocol error:)/i.test(line));
-    const clientLines = (remoteError < 0 ? lines : lines.slice(0, remoteError))
-      .filter(line => !/^remote:/i.test(line));
-    const cause = CAUSES.find(([pattern]) => clientLines.some(line => pattern.test(line)))?.[1];
+    const cause = CAUSES.find(([pattern]) => clientLines(stderr).some(line => pattern.test(line)))?.[1];
     if (cause) diagnostic.cause = cause;
   }
   return diagnostic;
@@ -261,8 +263,10 @@ function github(o) {
 function gh(o, args, input) { github(o); return run('gh', args, { input }); }
 // The one gh precondition a publication can decide before its push: gh is on
 // this host, can read the repository, and GitHub states that its credential
-// may push there (the label and the PR need write). Read-only. Only an
-// explicit `true` passes: an absent or unknown answer establishes nothing.
+// may push there (the label and the PR need write). Read-only. An explicit
+// `true` passes; an absent or unknown answer establishes nothing, with one
+// further route for a GitHub App installation token (below), which GitHub
+// never answers `true`. It is gh's credential that is judged, on both routes.
 // The REST field, not GraphQL's viewerPermission, which is null for a GitHub
 // App. A bounded check: it cannot tell whether a narrowly scoped token may
 // open a PR. The reason is a fixed constant; gh's output is never forwarded.
@@ -288,29 +292,28 @@ export function publishPreflight(o) {
   const answer = acceptsPush(o);
   if (answer !== 'accepted') unavailable(answer === 'refused' ? 'installation-cannot-push' : 'installation-check-failed');
 }
-// Whether GitHub accepts a push to the repository from this host's Git
-// credential: a dry run that deletes a branch name nothing uses. Git opens the
-// push (the remote authorizes it there, as it will the real one) and sends
-// nothing. The credential reaches Git as it does for the real push, never as
-// an argument; nothing Git prints is forwarded. The remote is the base's own
-// when the caller gives it, else the repository's HTTPS URL.
-// → 'accepted' | 'refused' (the remote said no) | 'unknown' (a timeout, a
-// network error, anything else: could not check). Only 'accepted' passes.
-const PUSH_REFUSED = /The requested URL returned error: 40[13]|Authentication failed|Permission denied|could not read Username|terminal prompts disabled/i;
+// Whether GitHub accepts a push to the repository from GH'S credential, the
+// one the installation answer was about: a dry run, over HTTPS, that deletes
+// a branch name nothing uses. Git opens the push (GitHub authorizes it there,
+// as it does a real one) and sends nothing. Git's own credential helpers are
+// cleared and gh's is the only one, so no SSH key or other login can answer
+// for the installation; the token passes from gh to Git over the helper's
+// pipe, never as an argument, and nothing either prints is forwarded.
+// → 'accepted' | 'refused' (GitHub said no) | 'unknown' (a timeout, a network
+// error, anything else: could not check). Only 'accepted' passes.
+const PUSH_REFUSED = /The requested URL returned error: 40[13]|Authentication failed|could not read Username|terminal prompts disabled/i;
 function acceptsPush(o) {
-  const remote = o.remote && !/[\r\n\0]/.test(o.remote) && !o.remote.startsWith('-') ? o.remote : `https://github.com/${o.github}.git`;
   let scratch;
   try {
     scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-preflight-'));
     git(scratch, ['init', '--quiet']);
-    const r = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'push.pushOption=', 'push', '--dry-run', '--porcelain', '--no-signed',
-      '--no-follow-tags', '--recurse-submodules=no', remote, ':refs/heads/okf/preflight-dry-run'], { cwd: scratch, env: { ...env(), LC_ALL: 'C' }, timeout: 60000, maxBuffer: MAX });
+    const r = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'push.pushOption=', '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
+      'push', '--dry-run', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no', `https://github.com/${o.github}.git`, ':refs/heads/okf/preflight-dry-run'],
+    { cwd: scratch, env: { ...env(), LC_ALL: 'C' }, timeout: 60000, maxBuffer: MAX });
     if (r.error || r.signal) return 'unknown';
     if (r.status === 0) return 'accepted';
-    // Client lines only, as the push diagnostic reads them: a remote cannot
-    // forge a refusal into, or out of, this classification.
-    const client = (Buffer.isBuffer(r.stderr) ? r.stderr.toString('utf8') : '').split('\n').map(line => line.trimStart()).filter(line => !/^remote:/i.test(line));
-    return client.some(line => PUSH_REFUSED.test(line)) ? 'refused' : 'unknown';
+    const stderr = Buffer.isBuffer(r.stderr) ? r.stderr.toString('utf8') : '';
+    return clientLines(stderr).some(line => PUSH_REFUSED.test(line)) ? 'refused' : 'unknown';
   } catch { return 'unknown'; }
   finally { if (scratch) fs.rmSync(scratch, { recursive: true, force: true }); }
 }
@@ -671,7 +674,7 @@ const FLAGS = {
   'screen-tree': ['repo', 'head', 'root', 'terms-file'],
   screen: ['repo', 'base', 'head', 'text-file', 'terms-file'],
   commit: ['repo', 'base', 'head', 'branch', 'commit-file', 'terms-file'],
-  preflight: ['github', 'remote'],
+  preflight: ['github'],
   create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file', 'guard-file'],
   rewrite: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
   'amend-legacy': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
@@ -688,7 +691,7 @@ function parse(args) {
     if (key === 'text-file') (o[key] ??= []).push(value);
     else { if (Object.hasOwn(o, key)) fail('E_USAGE'); o[key] = value; }
   }
-  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file'].includes(key) && !(command === 'preflight' && key === 'remote') && !o[key]) fail('E_USAGE');
+  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file'].includes(key) && !o[key]) fail('E_USAGE');
   if (o.repo) o.repo = resolve(o.repo); return { command, o };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

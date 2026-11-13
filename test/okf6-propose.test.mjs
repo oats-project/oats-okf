@@ -402,8 +402,8 @@ test('a gate that fails while another apply of the same proposal began reports i
   });
 });
 
-test('an installation credential the remote refuses, or that could not be checked, refuses --apply with its fix line, the remote given to the predicate, nothing pushed', async t => {
-  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused this host's Git credential a push .* give the installation contents write/], ['installation-check-failed', /could not be checked .* check the network and the base's URL, then run it again/]]) {
+test('an installation credential GitHub refuses, or that could not be checked, refuses --apply with its fix line, nothing pushed', async t => {
+  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push .* give the installation access to the repository with contents write/], ['installation-check-failed', /could not be checked .* check the network, then run it again/]]) {
     const f = fixture(t);
     await inProcess(f, async () => {
       const plan = propose(f.home, { plan: true, slug: 'i' }).result; edit(f, plan);
@@ -412,7 +412,7 @@ test('an installation credential the remote refuses, or that could not be checke
       let error; try { propose(f.home, { apply: true, slug: 'i', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
       assert.equal(error?.code, 'E_GH_UNAVAILABLE'); assert.match(error.message, fix); assert.match(error.message, /Nothing was pushed/);
       assert.deepEqual(error.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false });
-      assert.deepEqual(asked, [{ github: 'acme/kb', remote: f.origin }], 'the dry run is asked of the base\'s own remote');
+      assert.deepEqual(asked, [{ github: 'acme/kb' }]);
       assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'the proposal is not marked as attempted');
     });
   }
@@ -587,7 +587,7 @@ test('condition 1: --check and --apply feed the shipped helper exactly the harve
       // harvester's commit and create, with its flags bound to the same values.
       // The gh preflight sits between them: before the attempt marker and the commit.
       assert.deepEqual(calls.map(([c]) => c), ['screen', 'preflight', 'commit', 'create']);
-      assert.deepEqual(calls[1][1], { github: 'acme/kb', remote: f.origin });
+      assert.deepEqual(calls[1][1], { github: 'acme/kb' });
       const [[, rescreen, rescreened], , [, commit, committedText], [, create, createdText]] = calls;
       assert.deepEqual({ ...rescreen, head: undefined, 'text-file': undefined }, { ...screen, head: undefined, 'text-file': undefined });
       assert.deepEqual(rescreened, screened);

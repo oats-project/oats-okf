@@ -1260,29 +1260,59 @@ for (const [reason, patch] of [
 
 // A GitHub App installation token: GitHub reports the repository's permissions
 // all false, or omits them, whatever the installation was granted. For it the
-// write question goes to the remote itself, in a dry run that sends nothing.
+// write question goes to GitHub itself, with gh's own credential, in a dry run
+// that sends nothing. The dry run always names the repository's HTTPS URL;
+// here Git's own url.insteadOf sends that URL to a local repository (or to
+// nowhere), so no test reaches the network.
+const HTTPS = `https://github.com/${GITHUB}.git`;
+const route = (f, target) => fs.writeFileSync(join(f.root, 'home', '.gitconfig'), `[url ${JSON.stringify(target)}]\n\tinsteadOf = ${HTTPS}\n`);
+// A git that records the dry run's arguments, and answers it `answer` when given one.
+const dryRunGit = (f, answer = '') => {
+  const located = spawnSync('sh', ['-c', 'command -v git'], { cwd: f.root, env: f.env, encoding: 'utf8' }).stdout.trim();
+  const bin = join(f.root, 'dry-run-git'), log = join(f.root, 'dry-run.argv'); fs.mkdirSync(bin);
+  fs.writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" push --dry-run "*) printf '%s\\n' "$@" >> ${JSON.stringify(log)}; ${answer};; esac\nexec ${JSON.stringify(located)} "$@"\n`, { mode: 0o755 });
+  f.env.PATH = `${bin}:${f.env.PATH}`;
+  return () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [];
+};
 for (const patch of [{ push: false, installation: 1 }, { preflightText: 'null', installation: 3 }, { preflightText: '', installation: 0 }]) {
-  test(`an installation token (${JSON.stringify(patch)}) passes the preflight when the remote accepts a dry-run push, and create publishes`, t => {
-    const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh(patch);
-    assert.deepEqual(f.run('preflight', undefined, { remote: f.remote }).out, { ok: true, github: GITHUB, status: 'gh-available' });
+  test(`an installation token (${JSON.stringify(patch)}) passes the preflight when GitHub accepts a dry-run push from gh's credential, and create publishes`, t => {
+    const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh(patch); route(f, f.remote);
+    const argv = dryRunGit(f);
+    assert.deepEqual(f.run('preflight').out, { ok: true, github: GITHUB, status: 'gh-available' });
     unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'installation'], 'the dry run wrote nothing');
+    // The credential judged is gh's: Git's own helpers are cleared, gh's is the
+    // only one, and the push names the HTTPS URL, never the base's own remote.
+    const sent = argv(), helpers = sent.filter(a => a.startsWith('credential.helper='));
+    assert.deepEqual(helpers, ['credential.helper=', 'credential.helper=!gh auth git-credential']);
+    assert.deepEqual(sent.slice(-2), [HTTPS, ':refs/heads/okf/preflight-dry-run']);
+    assert.ok(!sent.some(a => a.includes(f.remote)), 'the base\'s own remote and its credential are not what is asked');
     success(f.run('create', head));
     assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'installation', 'preflight', 'installation', 'label', 'create', 'view']);
   });
 }
-test('an installation token is refused when the remote refuses the dry run or it cannot be checked: never a pass, never a push', t => {
+test('an installation token is refused when GitHub refuses the dry run or it cannot be checked: never a pass, never a push', t => {
   const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ push: false, installation: 1 });
-  // A remote that cannot be reached: could not check, which is not "can push".
-  const r = f.run('preflight', undefined, { remote: join(f.root, 'no-such-remote.git') });
-  assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'installation-check-failed' } });
-  // The remote says no (what GitHub answers a credential without contents write).
-  const located = spawnSync('sh', ['-c', 'command -v git'], { cwd: f.root, env: f.env, encoding: 'utf8' }).stdout.trim();
-  const bin = join(f.root, 'refusing-git'); fs.mkdirSync(bin);
-  fs.writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" push --dry-run "*) echo "remote: Permission to fixture denied to fixture[bot]." >&2; echo "fatal: unable to access 'x': The requested URL returned error: 403" >&2; exit 128;; esac\nexec ${JSON.stringify(located)} "$@"\n`, { mode: 0o755 });
-  const refused = spawnSync(process.execPath, [SCRIPT, 'preflight', '--github', GITHUB, '--remote', f.remote], { cwd: f.root, env: { ...f.env, PATH: `${bin}:${f.env.PATH}` }, encoding: 'utf8', timeout: 30000 });
-  assert.equal(refused.stderr, ''); assert.deepEqual(JSON.parse(refused.stdout), { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'installation-cannot-push' } });
+  // A repository that cannot be reached: could not check, which is not "can push".
+  route(f, join(f.root, 'no-such-remote.git'));
+  for (const command of ['preflight', 'create']) {
+    const r = f.run(command, command === 'create' ? head : undefined);
+    assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'installation-check-failed' } });
+  }
+  // GitHub says no (what it answers a credential without contents write). That
+  // Git itself could push to the base's remote changes nothing: the remote is
+  // reachable and writable here, and the installation is still refused.
+  route(f, f.remote); dryRunGit(f, `echo "remote: Permission to fixture denied to fixture[bot]." >&2; echo "fatal: unable to access 'x': The requested URL returned error: 403" >&2; exit 128`);
+  for (const command of ['preflight', 'create']) {
+    const r = f.run(command, command === 'create' ? head : undefined);
+    assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'installation-cannot-push' } });
+  }
   unchanged(f, before); assert.ok(f.calls().every(c => !c.write), 'no gh write');
-  void head;
+});
+test('a refusal only GitHub\'s own text reports, or one after a remote error, is not read as GitHub\'s answer', t => {
+  const f = fixture(t), before = f.snapshot(); f.patchGh({ push: false, installation: 1 }); route(f, f.remote);
+  dryRunGit(f, `echo "remote: The requested URL returned error: 403" >&2; echo "fatal: something else" >&2; exit 128`);
+  assert.deepEqual(f.run('preflight').out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'installation-check-failed' } });
+  unchanged(f, before);
 });
 
 test('create refuses E_GH_UNAVAILABLE (gh-absent) on a host without gh, before any push', t => {

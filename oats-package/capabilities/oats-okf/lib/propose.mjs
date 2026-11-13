@@ -606,15 +606,16 @@ const GH_FIX = {
   'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
   'gh-failed': 'gh could not read the repository or its permission on it: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
   'no-write-permission': "gh's account has less than write permission on the repository (the label and the PR need it): use an account with write",
-  'installation-cannot-push': "gh is signed in as a GitHub App installation, and GitHub refused this host's Git credential a push to the repository (a dry run: nothing was sent): give the installation contents write on the repository, and make git use its token for the base's URL (a credential helper)",
-  'installation-check-failed': "gh is signed in as a GitHub App installation, and whether GitHub accepts a push from this host's Git credential could not be checked (the dry run timed out or could not reach the repository; nothing was sent): check the network and the base's URL, then run it again",
+  'installation-cannot-push': "gh is signed in as a GitHub App installation, and GitHub refused that installation a push to the repository (a dry run with gh's own credential: nothing was sent): give the installation access to the repository with contents write",
+  'installation-check-failed': "gh is signed in as a GitHub App installation, and whether GitHub accepts a push from it could not be checked (the dry run timed out or could not reach github.com over HTTPS; nothing was sent): check the network, then run it again",
 };
 /** The one publish predicate: this deployment's credential can publish to
  *  this base (today: gh is present, reads the repository and GitHub says its
- *  credential may push). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
+ *  credential may push; for a GitHub App installation, GitHub accepts a
+ *  dry-run push from gh's credential). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
 export function checkPublish(alias, base) {
   const repository = base.pr.repository;
-  try { publication.execute('preflight', { github: repository, remote: base.repository }); }
+  try { publication.execute('preflight', { github: repository }); }
   catch (e) {
     if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
     const reason = e.diagnostic?.reason;
