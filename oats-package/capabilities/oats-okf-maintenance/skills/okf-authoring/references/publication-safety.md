@@ -176,7 +176,7 @@ fresh `okf-proposal/<date>-<UUID>` key (a 5.x `okf-harvest/` key with a
 version 2 block is still accepted through 6.x), empty expected-old lease and new-ref
 confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
-Before its push, `create` makes one read-only `gh` call (`gh api
+Before its push, `create` makes one read-only `gh` call (`gh api --hostname github.com
 repos/<repo> --jq .permissions.push`; the `preflight --github OWNER/REPO`
 command runs it alone). Only an explicit `true` passes. A missing `gh`, a
 failed call or unstated permission, or a credential that may not push
@@ -194,9 +194,12 @@ netrc, SSH key or other login answers for the installation. The
 advertisement passes, a 401 or 403 is `installation-cannot-push`, and a
 timeout, an unreachable github.com, a redirect, no token from gh or any
 other answer is `installation-check-failed`; the request uses no proxy. Not
-yet run with a real installation token. On both routes it is gh's
-credential that is judged, not the one Git uses for the base's remote. It
-cannot tell
+yet run with a real installation token. Every call of the check names
+github.com (`--hostname`), so `GH_HOST` cannot split it across two
+credentials. On both routes it is gh's credential that is judged, not the
+one Git uses for the base's remote. For an installation it proves contents
+write only, not the pull-requests and issues write the PR and its label
+need. It cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed
 push carries `published: { branch, head }`.
 

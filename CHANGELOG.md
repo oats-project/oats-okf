@@ -29,8 +29,8 @@
 - **`oats okf propose --apply` pushed before its first `gh` call, so a host
   without `gh` half-published** (oats-project/oats-okf#148): a pushed branch
   with no PR, and a proposal that could not be applied again. Now `--apply`
-  makes one read-only `gh` call per changed base (`gh api repos/<repo> --jq
-  .permissions.push`) before it pushes anything and before it marks the
+  makes one read-only `gh` call per changed base (`gh api --hostname github.com
+  repos/<repo> --jq .permissions.push`) before it pushes anything and before it marks the
   proposal as attempted. New refusal `E_GH_UNAVAILABLE`, with `result.reason`
   `gh-absent`, `gh-failed` (not signed in, the repository is not visible, or
   GitHub does not state the credential's permission) or `no-write-permission`
@@ -58,8 +58,12 @@
   `installation-check-failed`, never a pass. The request uses no proxy, so
   a host that reaches github.com only through one gets
   `installation-check-failed`. Every other credential is judged exactly as
-  above. On both routes the check judges gh's credential, not the one Git
-  uses for the base's remote. **Limit: the installation route has not yet
+  above. Every call of the check names github.com, so `GH_HOST` or a gh
+  whose default host is another one cannot answer for a different
+  credential. On both routes the check judges gh's credential, not the one
+  Git uses for the base's remote. For an installation it proves contents
+  write only: one without pull-requests and issues write passes and fails
+  at the label or the PR, after the push. **Limit: the installation route has not yet
   been run against a real GitHub App installation.** It rests on reports of
   how GitHub answers one and on the push advertisement being where GitHub
   authorizes a push (run here with a user's login: 200 where it may push,

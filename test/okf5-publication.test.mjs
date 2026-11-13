@@ -72,10 +72,11 @@ try {
     assert.deepEqual(a, ['label', 'create', a[2], '--repo', repo, '--force', '--color', '0E8A16', '--description', labels[a[2]]]); kind = 'label';
   } else if (a[0] === 'auth') {
     assert.deepEqual(a, ['auth', 'token', '--hostname', 'github.com']); kind = 'token';
-  } else if (a[0] === 'api' && a[1].startsWith('installation/')) {
-    assert.deepEqual(a, ['api', 'installation/repositories?per_page=1', '--jq', '.total_count']); kind = 'installation';
+  } else if (a[0] === 'api' && String(a[3]).startsWith('installation/')) {
+    // Every call of the preflight names github.com: one host, one credential.
+    assert.deepEqual(a, ['api', '--hostname', 'github.com', 'installation/repositories?per_page=1', '--jq', '.total_count']); kind = 'installation';
   } else if (a[0] === 'api') {
-    assert.deepEqual(a, ['api', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
+    assert.deepEqual(a, ['api', '--hostname', 'github.com', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
   } else if (a[0] === 'pr' && a[1] === 'view') {
     assert.deepEqual(a, ['pr', 'view', pr, '--repo', repo, '--json', 'state,headRefOid,headRefName,baseRefName,isCrossRepository,title,body']); kind = 'view';
   } else if (a[0] === 'pr' && a[1] === 'create') {

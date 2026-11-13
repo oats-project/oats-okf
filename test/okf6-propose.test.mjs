@@ -331,7 +331,7 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
   refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
   // An attempted proposal is never called untouched, even when gh is now unusable (it is not re-appliable).
-  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'api repos/acme/kb' } }), 'E_PROPOSAL_EXISTS');
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'api --hostname' } }), 'E_PROPOSAL_EXISTS');
 });
 
 // #148: every gh precondition is decided before the push and before the
@@ -339,7 +339,7 @@ test('a publication failure retains the clone and artefacts, reports safely and 
 const remoteBranches = f => f.git(f.dir, '--git-dir', f.origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/');
 for (const [reason, breakGh, fix] of [
   ['gh-absent', f => fs.rmSync(join(f.dir, 'ghbin', 'gh')), /gh is not installed on this host/],
-  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'api repos/acme/kb' }), /gh could not read the repository or its permission on it: sign gh in/],
+  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'api --hostname' }), /gh could not read the repository or its permission on it: sign gh in/],
   ['no-write-permission', () => ({ FIXTURE_GH_PUSH: 'false' }), /less than write permission/],
   // GitHub did not say: nothing establishes write, so the attempt never begins.
   ['gh-failed', () => ({ FIXTURE_GH_PUSH: 'null' }), /or its permission on it/],
@@ -403,7 +403,7 @@ test('a gate that fails while another apply of the same proposal began reports i
 });
 
 test('an installation credential GitHub refuses, or that could not be checked, refuses --apply with its fix line, nothing pushed', async t => {
-  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push .* give the installation access to the repository with contents write/], ['installation-check-failed', /could not be checked .* check the network \(the check uses no proxy\) and `gh auth status`, then run it again/]]) {
+  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push .* give the installation access to the repository with contents write, plus pull-requests and issues write/], ['installation-check-failed', /could not be checked .* check the network \(the check uses no proxy\) and `gh auth status`, then run it again/]]) {
     const f = fixture(t);
     await inProcess(f, async () => {
       const plan = propose(f.home, { plan: true, slug: 'i' }).result; edit(f, plan);

@@ -35,15 +35,6 @@ const CAUSES = [
   [/Could not resolve host/i, 'host-unresolved'],
   [/connection (?:refused|timed out)/i, 'connection-failed'],
 ];
-/** The lines of Git's stderr the client itself wrote, over HTTPS. */
-function clientLines(stderr) {
-  const lines = stderr.split('\n').map(line => line.trimStart());
-  // Protocol ERR/report-status diagnostics can quote remote payloads with
-  // unprefixed continuation lines. Exclude the whole tail, including unpack
-  // failures, malformed remote status and other protocol-error renderers.
-  const remoteError = lines.findIndex(line => /^(?:fatal|error|warning):\s+(?:remote\b|unable to parse remote unpack status:|protocol error:)/i.test(line));
-  return (remoteError < 0 ? lines : lines.slice(0, remoteError)).filter(line => !/^remote:/i.test(line));
-}
 export function uncertaintyDiagnostic(result = {}, elapsedMs = 0) {
   const diagnostic = {
     phase: 'push',
@@ -56,7 +47,14 @@ export function uncertaintyDiagnostic(result = {}, elapsedMs = 0) {
     const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString('utf8') : typeof result.stderr === 'string' ? result.stderr : '';
     // Remote-controlled lines never supply a cause, even if they copy a client
     // phrase. Stdout is deliberately not an input to this classification.
-    const cause = CAUSES.find(([pattern]) => clientLines(stderr).some(line => pattern.test(line)))?.[1];
+    const lines = stderr.split('\n').map(line => line.trimStart());
+    // Protocol ERR/report-status diagnostics can quote remote payloads with
+    // unprefixed continuation lines. Exclude the whole tail, including unpack
+    // failures, malformed remote status and other protocol-error renderers.
+    const remoteError = lines.findIndex(line => /^(?:fatal|error|warning):\s+(?:remote\b|unable to parse remote unpack status:|protocol error:)/i.test(line));
+    const clientLines = (remoteError < 0 ? lines : lines.slice(0, remoteError))
+      .filter(line => !/^remote:/i.test(line));
+    const cause = CAUSES.find(([pattern]) => clientLines.some(line => pattern.test(line)))?.[1];
     if (cause) diagnostic.cause = cause;
   }
   return diagnostic;
@@ -266,14 +264,16 @@ function gh(o, args, input) { github(o); return run('gh', args, { input }); }
 // may push there (the label and the PR need write). Read-only. An explicit
 // `true` passes; an absent or unknown answer establishes nothing, with one
 // further route for a GitHub App installation token (below), which GitHub
-// never answers `true`. It is gh's credential that is judged, on both routes.
+// never answers `true`. It is gh's credential for github.com that is judged,
+// on both routes: every call names that host, so a GH_HOST or a gh signed in
+// elsewhere cannot answer one question for another credential.
 // The REST field, not GraphQL's viewerPermission, which is null for a GitHub
 // App. A bounded check: it cannot tell whether a narrowly scoped token may
 // open a PR. The reason is a fixed constant; gh's output is never forwarded.
 export function publishPreflight(o) {
   github(o);
   const unavailable = reason => { throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
-  const r = spawnSync('gh', ['api', `repos/${o.github}`, '--jq', '.permissions.push'], { env: env(), timeout: 60000, maxBuffer: MAX });
+  const r = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${o.github}`, '--jq', '.permissions.push'], { env: env(), timeout: 60000, maxBuffer: MAX });
   if (r.error?.code === 'ENOENT') unavailable('gh-absent');
   if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
   let push;
@@ -285,7 +285,7 @@ export function publishPreflight(o) {
   // Only an installation token may list the installation's repositories, and
   // for one the write question is put to GitHub itself (below). Every other
   // credential is judged as before, and an unknown answer still refuses.
-  const listed = spawnSync('gh', ['api', 'installation/repositories?per_page=1', '--jq', '.total_count'], { env: env(), timeout: 60000, maxBuffer: MAX });
+  const listed = spawnSync('gh', ['api', '--hostname', 'github.com', 'installation/repositories?per_page=1', '--jq', '.total_count'], { env: env(), timeout: 60000, maxBuffer: MAX });
   let installation = false;
   try { installation = !listed.error && !listed.signal && listed.status === 0 && /^\d+$/.test(text(listed.stdout).trim()); } catch { /* not an installation's answer */ }
   if (!installation) unavailable(push === 'false' ? 'no-write-permission' : 'gh-failed');
