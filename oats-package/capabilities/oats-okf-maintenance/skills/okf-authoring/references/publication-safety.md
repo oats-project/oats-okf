@@ -181,7 +181,15 @@ repos/<repo> --jq .permissions.push`; the `preflight --github OWNER/REPO`
 command runs it alone). Only an explicit `true` passes. A missing `gh`, a
 failed call or unstated permission, or a credential that may not push
 refuses `E_GH_UNAVAILABLE` with a fixed `preflight` diagnostic (`gh-absent`,
-`gh-failed`, `no-write-permission`): nothing was pushed. It cannot tell
+`gh-failed`, `no-write-permission`): nothing was pushed. One other route
+passes: a GitHub App installation token, for which GitHub reports those
+permissions all false or not at all. When the answer is not `true` and `gh
+api installation/repositories` succeeds (only an installation token may call
+it), the helper puts the write question to the remote with a dry-run push
+that sends nothing (`--remote` on `preflight`, the clone's remote in
+`create`, else the repository's HTTPS URL): accepted passes, a refusal is
+`installation-cannot-push`, a timeout or an unreachable remote is
+`installation-check-failed`. Not yet run with a real installation token. It cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed
 push carries `published: { branch, head }`.
 

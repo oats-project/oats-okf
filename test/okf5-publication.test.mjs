@@ -70,6 +70,8 @@ try {
     const labels = { 'okf-harvest': 'OKF harvest PR (oats.okf)', 'okf-proposal': 'OKF knowledge proposal PR (oats.okf)' };
     assert.ok(Object.hasOwn(labels, a[2]));
     assert.deepEqual(a, ['label', 'create', a[2], '--repo', repo, '--force', '--color', '0E8A16', '--description', labels[a[2]]]); kind = 'label';
+  } else if (a[0] === 'api' && a[1].startsWith('installation/')) {
+    assert.deepEqual(a, ['api', 'installation/repositories?per_page=1', '--jq', '.total_count']); kind = 'installation';
   } else if (a[0] === 'api') {
     assert.deepEqual(a, ['api', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
   } else if (a[0] === 'pr' && a[1] === 'view') {
@@ -98,7 +100,7 @@ try {
   process.exit(97);
 }
 const input = a.includes('--body-file') ? fs.readFileSync(0, 'utf8') : null;
-const entry = { kind, argv: a, input, write: kind !== 'view' && kind !== 'preflight', effect: false };
+const entry = { kind, argv: a, input, write: kind !== 'view' && kind !== 'preflight' && kind !== 'installation', effect: false };
 let response = '';
 if (s.fail === kind) {
   fs.appendFileSync(log, JSON.stringify(entry) + '\n');
@@ -107,7 +109,13 @@ if (s.fail === kind) {
 // gh create/close have no atomic head predicate. A before-write race may
 // legitimately change their target; only a subsequent read can detect it.
 hook('before-' + kind);
-if (kind === 'preflight') {
+if (kind === 'installation' && s.installation === undefined) {
+  // What GitHub answers a user's token: only an installation may ask.
+  fs.appendFileSync(log, JSON.stringify(entry) + '\n');
+  console.error('gh: You must authenticate with an installation access token in order to list repositories for an installation. (HTTP 403)'); process.exit(1);
+} else if (kind === 'installation') {
+  response = String(s.installation);
+} else if (kind === 'preflight') {
   response = s.preflightText ?? String(s.push ?? true);
 } else if (kind === 'view') {
   response = JSON.stringify({ state: s.state, headRefOid: s.overrideHead || head(), headRefName: s.headRefName,
@@ -1245,8 +1253,36 @@ for (const [reason, patch] of [
   f.patchGh(patch);
   const r = f.run('create', head); refusal(r, 'E_GH_UNAVAILABLE');
   assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } });
-  unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
+  // A credential that is not an installation (the fixture's default) is judged as before.
+  unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), patch.fail ? ['preflight'] : ['preflight', 'installation']);
   assert.deepEqual(f.run('preflight').out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } });
+});
+
+// A GitHub App installation token: GitHub reports the repository's permissions
+// all false, or omits them, whatever the installation was granted. For it the
+// write question goes to the remote itself, in a dry run that sends nothing.
+for (const patch of [{ push: false, installation: 1 }, { preflightText: 'null', installation: 3 }, { preflightText: '', installation: 0 }]) {
+  test(`an installation token (${JSON.stringify(patch)}) passes the preflight when the remote accepts a dry-run push, and create publishes`, t => {
+    const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh(patch);
+    assert.deepEqual(f.run('preflight', undefined, { remote: f.remote }).out, { ok: true, github: GITHUB, status: 'gh-available' });
+    unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'installation'], 'the dry run wrote nothing');
+    success(f.run('create', head));
+    assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'installation', 'preflight', 'installation', 'label', 'create', 'view']);
+  });
+}
+test('an installation token is refused when the remote refuses the dry run or it cannot be checked: never a pass, never a push', t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ push: false, installation: 1 });
+  // A remote that cannot be reached: could not check, which is not "can push".
+  const r = f.run('preflight', undefined, { remote: join(f.root, 'no-such-remote.git') });
+  assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'installation-check-failed' } });
+  // The remote says no (what GitHub answers a credential without contents write).
+  const located = spawnSync('sh', ['-c', 'command -v git'], { cwd: f.root, env: f.env, encoding: 'utf8' }).stdout.trim();
+  const bin = join(f.root, 'refusing-git'); fs.mkdirSync(bin);
+  fs.writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" push --dry-run "*) echo "remote: Permission to fixture denied to fixture[bot]." >&2; echo "fatal: unable to access 'x': The requested URL returned error: 403" >&2; exit 128;; esac\nexec ${JSON.stringify(located)} "$@"\n`, { mode: 0o755 });
+  const refused = spawnSync(process.execPath, [SCRIPT, 'preflight', '--github', GITHUB, '--remote', f.remote], { cwd: f.root, env: { ...f.env, PATH: `${bin}:${f.env.PATH}` }, encoding: 'utf8', timeout: 30000 });
+  assert.equal(refused.stderr, ''); assert.deepEqual(JSON.parse(refused.stdout), { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'installation-cannot-push' } });
+  unchanged(f, before); assert.ok(f.calls().every(c => !c.write), 'no gh write');
+  void head;
 });
 
 test('create refuses E_GH_UNAVAILABLE (gh-absent) on a host without gh, before any push', t => {

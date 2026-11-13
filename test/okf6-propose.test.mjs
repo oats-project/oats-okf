@@ -402,6 +402,22 @@ test('a gate that fails while another apply of the same proposal began reports i
   });
 });
 
+test('an installation credential the remote refuses, or that could not be checked, refuses --apply with its fix line, the remote given to the predicate, nothing pushed', async t => {
+  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused this host's Git credential a push .* give the installation contents write/], ['installation-check-failed', /could not be checked .* check the network and the base's URL, then run it again/]]) {
+    const f = fixture(t);
+    await inProcess(f, async () => {
+      const plan = propose(f.home, { plan: true, slug: 'i' }).result; edit(f, plan);
+      const { digest } = propose(f.home, { check: true, slug: 'i' }).result, wrapped = publication.execute, asked = [];
+      publication.execute = (command, o) => { if (command !== 'preflight') return wrapped(command, o); asked.push(o); throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
+      let error; try { propose(f.home, { apply: true, slug: 'i', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
+      assert.equal(error?.code, 'E_GH_UNAVAILABLE'); assert.match(error.message, fix); assert.match(error.message, /Nothing was pushed/);
+      assert.deepEqual(error.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false });
+      assert.deepEqual(asked, [{ github: 'acme/kb', remote: f.origin }], 'the dry run is asked of the base\'s own remote');
+      assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'the proposal is not marked as attempted');
+    });
+  }
+});
+
 test('a snapshot that cannot be written after the attempt began fails inside the publication envelope, with the published rows', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
   const f = fixture(t);
   await inProcess(f, async () => {

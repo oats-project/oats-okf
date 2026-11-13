@@ -39,6 +39,22 @@
   fixed, the same `--apply --digest` publishes. With several bases, every
   base is checked before the first push. The check is bounded: it cannot
   tell whether a narrowly scoped token may open a PR.
+  **A GitHub App installation token has its own route in the same check.**
+  For one, GitHub reports the repository's `permissions` all false, or
+  leaves them out, whatever the installation was granted, so the answer
+  above would refuse an installation that can push. When that answer is not
+  `true`, the check asks GitHub whether the credential is an installation
+  (`gh api installation/repositories`, which only an installation token may
+  call); if it is, it asks the base's remote the write question itself, with
+  a dry-run push that sends nothing and takes the credential as the real
+  push does. Accepted passes. Refused is `E_GH_UNAVAILABLE` with reason
+  `installation-cannot-push`; a dry run that timed out or could not reach
+  the remote is `installation-check-failed`, never a pass. Every other
+  credential is judged exactly as above. **Limit: the installation route has
+  not yet been run against a real GitHub App installation.** It rests on
+  reports of how GitHub answers one and on the dry run being the request a
+  real push starts with (run here with a user's login: accepted where it may
+  push, HTTP 403 where it may not).
 - **A publication that stops after its push says what it published.** An
   `E_GH` or `E_PR_UNCERTAIN` after a confirmed push now carries `published:
   { branch, head }` (in `result.failed`, in `publish/<alias>-result.json` and

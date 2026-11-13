@@ -274,8 +274,45 @@ export function publishPreflight(o) {
   if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
   let push;
   try { push = text(r.stdout).trim(); } catch { unavailable('gh-failed'); }
-  if (push === 'false') unavailable('no-write-permission');
-  if (push !== 'true') unavailable('gh-failed');
+  if (push === 'true') return;
+  // A GitHub App installation token is not a user: for it GitHub reports the
+  // repository's `permissions` all false, or leaves them out, whatever the
+  // installation was granted, so the answer above says nothing about it.
+  // Only an installation token may list the installation's repositories, and
+  // for one the write question is put to GitHub itself (below). Every other
+  // credential is judged as before, and an unknown answer still refuses.
+  const listed = spawnSync('gh', ['api', 'installation/repositories?per_page=1', '--jq', '.total_count'], { env: env(), timeout: 60000, maxBuffer: MAX });
+  let installation = false;
+  try { installation = !listed.error && !listed.signal && listed.status === 0 && /^\d+$/.test(text(listed.stdout).trim()); } catch { /* not an installation's answer */ }
+  if (!installation) unavailable(push === 'false' ? 'no-write-permission' : 'gh-failed');
+  const answer = acceptsPush(o);
+  if (answer !== 'accepted') unavailable(answer === 'refused' ? 'installation-cannot-push' : 'installation-check-failed');
+}
+// Whether GitHub accepts a push to the repository from this host's Git
+// credential: a dry run that deletes a branch name nothing uses. Git opens the
+// push (the remote authorizes it there, as it will the real one) and sends
+// nothing. The credential reaches Git as it does for the real push, never as
+// an argument; nothing Git prints is forwarded. The remote is the base's own
+// when the caller gives it, else the repository's HTTPS URL.
+// → 'accepted' | 'refused' (the remote said no) | 'unknown' (a timeout, a
+// network error, anything else: could not check). Only 'accepted' passes.
+const PUSH_REFUSED = /The requested URL returned error: 40[13]|Authentication failed|Permission denied|could not read Username|terminal prompts disabled/i;
+function acceptsPush(o) {
+  const remote = o.remote && !/[\r\n\0]/.test(o.remote) && !o.remote.startsWith('-') ? o.remote : `https://github.com/${o.github}.git`;
+  let scratch;
+  try {
+    scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-preflight-'));
+    git(scratch, ['init', '--quiet']);
+    const r = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'push.pushOption=', 'push', '--dry-run', '--porcelain', '--no-signed',
+      '--no-follow-tags', '--recurse-submodules=no', remote, ':refs/heads/okf/preflight-dry-run'], { cwd: scratch, env: { ...env(), LC_ALL: 'C' }, timeout: 60000, maxBuffer: MAX });
+    if (r.error || r.signal) return 'unknown';
+    if (r.status === 0) return 'accepted';
+    // Client lines only, as the push diagnostic reads them: a remote cannot
+    // forge a refusal into, or out of, this classification.
+    const client = (Buffer.isBuffer(r.stderr) ? r.stderr.toString('utf8') : '').split('\n').map(line => line.trimStart()).filter(line => !/^remote:/i.test(line));
+    return client.some(line => PUSH_REFUSED.test(line)) ? 'refused' : 'unknown';
+  } catch { return 'unknown'; }
+  finally { if (scratch) fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 function view(o, { states = ['OPEN'], publishing = true } = {}) {
   let p;
@@ -634,7 +671,7 @@ const FLAGS = {
   'screen-tree': ['repo', 'head', 'root', 'terms-file'],
   screen: ['repo', 'base', 'head', 'text-file', 'terms-file'],
   commit: ['repo', 'base', 'head', 'branch', 'commit-file', 'terms-file'],
-  preflight: ['github'],
+  preflight: ['github', 'remote'],
   create: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'branch', 'body-file', 'terms-file', 'guard-file'],
   rewrite: ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
   'amend-legacy': ['repo', 'remote', 'github', 'base', 'base-branch', 'head', 'pr', 'body-file', 'commit-file'],
@@ -651,7 +688,7 @@ function parse(args) {
     if (key === 'text-file') (o[key] ??= []).push(value);
     else { if (Object.hasOwn(o, key)) fail('E_USAGE'); o[key] = value; }
   }
-  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file'].includes(key) && !o[key]) fail('E_USAGE');
+  for (const key of allowed) if (!['root', 'text-file', 'terms-file', 'guard-file'].includes(key) && !(command === 'preflight' && key === 'remote') && !o[key]) fail('E_USAGE');
   if (o.repo) o.repo = resolve(o.repo); return { command, o };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
