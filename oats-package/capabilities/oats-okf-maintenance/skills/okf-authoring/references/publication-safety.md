@@ -185,18 +185,18 @@ refuses `E_GH_UNAVAILABLE` with a fixed `preflight` diagnostic (`gh-absent`,
 passes: a GitHub App installation token, for which GitHub reports those
 permissions all false or not at all. When the answer is not `true` and `gh
 api installation/repositories` succeeds (only an installation token may call
-it), the helper puts the write question to GitHub with a dry-run push that
-sends nothing, to the repository's HTTPS URL and with gh's credential alone
-(it reads none of the host's Git configuration, no askpass, and `gh auth
-git-credential` is the only helper, so no URL rewrite, SSH key or other
-login answers for the installation): accepted passes, a refusal is
-`installation-cannot-push`, and a timeout, an unreachable github.com, a
-host whose HTTPS needs a proxy or CA only its Git configuration names, or
-`gh` giving Git no credential is `installation-check-failed`. Not yet run
-with a real installation token, and that `gh auth git-credential` serves
-one is unverified. On
-both routes it is gh's credential that is judged, not the one Git uses for
-the base's remote. It cannot tell
+it), the helper puts the write question to GitHub: with gh's token for
+github.com (`gh auth token`, read on a pipe) a child with an empty
+environment requests the repository's push advertisement
+(`info/refs?service=git-receive-pack`), where GitHub authorizes a push.
+Nothing is sent and Git takes no part, so no Git configuration, URL rewrite,
+netrc, SSH key or other login answers for the installation. The
+advertisement passes, a 401 or 403 is `installation-cannot-push`, and a
+timeout, an unreachable github.com, a redirect, no token from gh or any
+other answer is `installation-check-failed`; the request uses no proxy. Not
+yet run with a real installation token. On both routes it is gh's
+credential that is judged, not the one Git uses for the base's remote. It
+cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed
 push carries `published: { branch, head }`.
 

@@ -293,36 +293,47 @@ export function publishPreflight(o) {
   if (answer !== 'accepted') unavailable(answer === 'refused' ? 'installation-cannot-push' : 'installation-check-failed');
 }
 // Whether GitHub accepts a push to the repository from GH'S credential, the
-// one the installation answer was about: a dry run, over HTTPS, that deletes
-// a branch name nothing uses. Git opens the push (GitHub authorizes it there,
-// as it does a real one) and sends nothing. It runs with none of the host's
-// Git configuration (no system or global file, an empty scratch repository)
-// and no askpass, and gh's credential helper is the only one: no
-// url.insteadOf rewrite, extra header, SSH key or other login can answer for
-// the installation. A host whose HTTPS needs a configured proxy or CA
-// therefore reads as "could not check". The token passes from gh to Git over
-// the helper's pipe, never as an argument, and nothing either prints is
-// forwarded.
-// → 'accepted' | 'refused' (GitHub said no to the credential gh gave) |
-// 'unknown' (a timeout, a network error, gh gave Git no credential, anything
-// else: could not check). Only 'accepted' passes.
-const PUSH_REFUSED = /The requested URL returned error: 40[13]|Authentication failed/i;
+// one the installation answer was about. It asks GitHub for the push
+// advertisement, the authenticated request every HTTPS push starts with and
+// the one where GitHub authorizes it: 200 with the advertisement where the
+// credential may push, 401 or 403 where it may not. Nothing is sent. Git is
+// not involved, so nothing of the host's (Git configuration, a template, a
+// URL rewrite, a netrc, an askpass, an SSH key, a proxy variable) can answer
+// for the installation: gh prints its token for github.com on a pipe, and a
+// Node child with an empty environment reads it on stdin and makes the one
+// request, following no redirect. The token is never an argument and nothing
+// either child prints is forwarded. A host that reaches github.com only
+// through a proxy therefore reads as "could not check".
+// → 'accepted' | 'refused' (GitHub said no to gh's credential) | 'unknown'
+// (a timeout, a network error, no token from gh, any other answer: could not
+// check). Only 'accepted' passes.
+const ADVERTISEMENT = `
+let token = ''; for await (const chunk of process.stdin) token += chunk;
+let code = 4;
+try {
+  const r = await fetch(process.argv[1], { redirect: 'manual', signal: AbortSignal.timeout(45000),
+    headers: { 'user-agent': 'git/2.0 (oats-okf preflight)', authorization: 'Basic ' + Buffer.from('x-access-token:' + token).toString('base64') } });
+  if (r.status === 200 && r.headers.get('content-type') === 'application/x-git-receive-pack-advertisement') code = 0;
+  else if (r.status === 401 || r.status === 403) code = 3;
+} catch { /* could not check */ }
+process.exit(code);
+`;
+export function receivePack(url, token) {
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', ADVERTISEMENT, url], { input: token, env: {}, timeout: 60000, maxBuffer: MAX });
+  if (r.error || r.signal) return 'unknown';
+  return r.status === 0 ? 'accepted' : r.status === 3 ? 'refused' : 'unknown';
+}
+// The one request the installation route makes, replaceable in tests only.
+export const probes = { receivePack };
 function acceptsPush(o) {
-  let scratch;
   try {
-    scratch = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf-preflight-'));
-    git(scratch, ['init', '--quiet']);
-    const bare = { ...env(), LC_ALL: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
-    delete bare.SSH_ASKPASS;
-    const r = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', '-c', 'push.pushOption=', '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
-      'push', '--dry-run', '--porcelain', '--no-signed', '--no-follow-tags', '--recurse-submodules=no', `https://github.com/${o.github}.git`, ':refs/heads/okf/preflight-dry-run'],
-    { cwd: scratch, env: bare, timeout: 60000, maxBuffer: MAX });
-    if (r.error || r.signal) return 'unknown';
-    if (r.status === 0) return 'accepted';
-    const stderr = Buffer.isBuffer(r.stderr) ? r.stderr.toString('utf8') : '';
-    return clientLines(stderr).some(line => PUSH_REFUSED.test(line)) ? 'refused' : 'unknown';
+    const r = spawnSync('gh', ['auth', 'token', '--hostname', 'github.com'], { env: env(), timeout: 60000, maxBuffer: MAX });
+    if (r.error || r.signal || r.status !== 0) return 'unknown';
+    const token = text(r.stdout).trim();
+    if (!/^[\x21-\x7e]{1,4096}$/.test(token)) return 'unknown';
+    const answer = probes.receivePack(`https://github.com/${o.github}.git/info/refs?service=git-receive-pack`, token);
+    return answer === 'accepted' || answer === 'refused' ? answer : 'unknown';
   } catch { return 'unknown'; }
-  finally { if (scratch) fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 function view(o, { states = ['OPEN'], publishing = true } = {}) {
   let p;

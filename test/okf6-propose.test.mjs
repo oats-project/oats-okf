@@ -403,7 +403,7 @@ test('a gate that fails while another apply of the same proposal began reports i
 });
 
 test('an installation credential GitHub refuses, or that could not be checked, refuses --apply with its fix line, nothing pushed', async t => {
-  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push .* give the installation access to the repository with contents write/], ['installation-check-failed', /could not be checked .* check the network and `gh auth status`, then run it again/]]) {
+  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push .* give the installation access to the repository with contents write/], ['installation-check-failed', /could not be checked .* check the network \(the check uses no proxy\) and `gh auth status`, then run it again/]]) {
     const f = fixture(t);
     await inProcess(f, async () => {
       const plan = propose(f.home, { plan: true, slug: 'i' }).result; edit(f, plan);

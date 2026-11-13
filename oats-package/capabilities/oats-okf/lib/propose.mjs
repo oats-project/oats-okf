@@ -606,13 +606,13 @@ const GH_FIX = {
   'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
   'gh-failed': 'gh could not read the repository or its permission on it: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
   'no-write-permission': "gh's account has less than write permission on the repository (the label and the PR need it): use an account with write",
-  'installation-cannot-push': "gh is signed in as a GitHub App installation, and GitHub refused that installation a push to the repository (a dry run with gh's own credential: nothing was sent): give the installation access to the repository with contents write",
-  'installation-check-failed': "gh is signed in as a GitHub App installation, and whether GitHub accepts a push from it could not be checked (the dry run timed out, could not reach github.com over HTTPS without this host's Git configuration, or gh gave Git no credential; nothing was sent): check the network and `gh auth status`, then run it again",
+  'installation-cannot-push': "gh is signed in as a GitHub App installation, and GitHub refused that installation a push to the repository (asked with gh's own token; nothing was sent): give the installation access to the repository with contents write",
+  'installation-check-failed': "gh is signed in as a GitHub App installation, and whether GitHub accepts a push from it could not be checked (the request timed out, could not reach github.com directly over HTTPS, or gh gave no token for github.com; nothing was sent): check the network (the check uses no proxy) and `gh auth status`, then run it again",
 };
 /** The one publish predicate: this deployment's credential can publish to
  *  this base (today: gh is present, reads the repository and GitHub says its
- *  credential may push; for a GitHub App installation, GitHub accepts a
- *  dry-run push from gh's credential). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
+ *  credential may push; for a GitHub App installation, GitHub answers gh's
+ *  token with the repository's push advertisement). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
 export function checkPublish(alias, base) {
   const repository = base.pr.repository;
   try { publication.execute('preflight', { github: repository }); }

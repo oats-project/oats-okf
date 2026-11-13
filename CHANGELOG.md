@@ -45,24 +45,25 @@
   above would refuse an installation that can push. When that answer is not
   `true`, the check asks GitHub whether the credential is an installation
   (`gh api installation/repositories`, which only an installation token may
-  call); if it is, it asks GitHub the write question itself, with a dry-run
-  push that sends nothing, to the repository's HTTPS URL and with gh's
-  credential alone: it reads none of the host's Git configuration and no
-  other credential helper or askpass, so the token judged is the one that
-  answered as an installation, never a URL rewrite, an SSH key or another
-  login on the host. Accepted passes. Refused is
-  `E_GH_UNAVAILABLE` with reason `installation-cannot-push`; a dry run that
-  timed out, could not reach github.com, or in which `gh` gave Git no
-  credential is `installation-check-failed`, never a pass; so is a host
-  whose HTTPS to github.com needs a proxy or CA that only its Git
-  configuration names. Every other credential is judged exactly as above. On both
-  routes the check judges gh's credential, not the one Git uses for the
-  base's remote. **Limit: the installation route has not yet been run
-  against a real GitHub App installation.** It rests on reports of how
-  GitHub answers one, on the dry run being the request a real push starts
-  with (run here with a user's login: accepted where it may push, HTTP 403
-  where it may not), and on `gh auth git-credential` handing Git an
-  installation token as it does a user's.
+  call); if it is, it asks GitHub the write question itself: with gh's token
+  for github.com it requests the repository's push advertisement, the
+  authenticated request every HTTPS push starts with and where GitHub
+  authorizes it. Nothing is sent. Git takes no part, so nothing on the host
+  (Git configuration, a URL rewrite, a netrc, an SSH key, another login)
+  can answer for the installation: the token goes from gh to a child with
+  an empty environment over a pipe, never as an argument. The advertisement
+  passes. A 401 or 403 is `E_GH_UNAVAILABLE` with reason
+  `installation-cannot-push`; a timeout, an unreachable github.com, a
+  redirect, no token from gh or any other answer is
+  `installation-check-failed`, never a pass. The request uses no proxy, so
+  a host that reaches github.com only through one gets
+  `installation-check-failed`. Every other credential is judged exactly as
+  above. On both routes the check judges gh's credential, not the one Git
+  uses for the base's remote. **Limit: the installation route has not yet
+  been run against a real GitHub App installation.** It rests on reports of
+  how GitHub answers one and on the push advertisement being where GitHub
+  authorizes a push (run here with a user's login: 200 where it may push,
+  403 where it may not, 401 without a credential).
 - **A publication that stops after its push says what it published.** An
   `E_GH` or `E_PR_UNCERTAIN` after a confirmed push now carries `published:
   { branch, head }` (in `result.failed`, in `publish/<alias>-result.json` and
