@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { uncertaintyDiagnostic } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 
 // Real Git owns objects, reachability, pushes and leases. gh is deliberately
@@ -70,8 +70,13 @@ try {
     const labels = { 'okf-harvest': 'OKF harvest PR (oats.okf)', 'okf-proposal': 'OKF knowledge proposal PR (oats.okf)' };
     assert.ok(Object.hasOwn(labels, a[2]));
     assert.deepEqual(a, ['label', 'create', a[2], '--repo', repo, '--force', '--color', '0E8A16', '--description', labels[a[2]]]); kind = 'label';
+  } else if (a[0] === 'auth') {
+    assert.deepEqual(a, ['auth', 'token', '--hostname', 'github.com']); kind = 'token';
+  } else if (a[0] === 'api' && String(a[3]).startsWith('installation/')) {
+    // Every call of the preflight names github.com: one host, one credential.
+    assert.deepEqual(a, ['api', '--hostname', 'github.com', 'installation/repositories?per_page=1', '--jq', '.total_count']); kind = 'installation';
   } else if (a[0] === 'api') {
-    assert.deepEqual(a, ['api', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
+    assert.deepEqual(a, ['api', '--hostname', 'github.com', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
   } else if (a[0] === 'pr' && a[1] === 'view') {
     assert.deepEqual(a, ['pr', 'view', pr, '--repo', repo, '--json', 'state,headRefOid,headRefName,baseRefName,isCrossRepository,title,body']); kind = 'view';
   } else if (a[0] === 'pr' && a[1] === 'create') {
@@ -98,7 +103,7 @@ try {
   process.exit(97);
 }
 const input = a.includes('--body-file') ? fs.readFileSync(0, 'utf8') : null;
-const entry = { kind, argv: a, input, write: kind !== 'view' && kind !== 'preflight', effect: false };
+const entry = { kind, argv: a, input, write: kind !== 'view' && kind !== 'preflight' && kind !== 'installation' && kind !== 'token', effect: false };
 let response = '';
 if (s.fail === kind) {
   fs.appendFileSync(log, JSON.stringify(entry) + '\n');
@@ -107,7 +112,18 @@ if (s.fail === kind) {
 // gh create/close have no atomic head predicate. A before-write race may
 // legitimately change their target; only a subsequent read can detect it.
 hook('before-' + kind);
-if (kind === 'preflight') {
+if (kind === 'installation' && s.installation === undefined) {
+  // What GitHub answers a user's token: only an installation may ask.
+  fs.appendFileSync(log, JSON.stringify(entry) + '\n');
+  console.error('gh: You must authenticate with an installation access token in order to list repositories for an installation. (HTTP 403)'); process.exit(1);
+} else if (kind === 'installation') {
+  response = String(s.installation);
+} else if (kind === 'token' && s.token === null) {
+  fs.appendFileSync(log, JSON.stringify(entry) + '\n');
+  console.error('no oauth token found for github.com'); process.exit(1);
+} else if (kind === 'token') {
+  response = s.token ?? 'fixture-installation-token';
+} else if (kind === 'preflight') {
   response = s.preflightText ?? String(s.push ?? true);
 } else if (kind === 'view') {
   response = JSON.stringify({ state: s.state, headRefOid: s.overrideHead || head(), headRefName: s.headRefName,
@@ -198,6 +214,17 @@ function fixture(t, { seed } = {}) {
     assert.deepEqual(calls().filter(c => c.unsupported), [], 'fake gh refused an unsupported argv, not a publication refusal');
     return { ...r, out };
   };
+  // The same command in process, with the installation route's one network
+  // request answered by the test: → { out, asked: [{ url, token }] }.
+  const answered = (command, head, answer, extra = {}) => {
+    const script = `const m = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); const asked = [];
+m.probes.receivePack = (url, token) => { asked.push({ url, token }); return ${JSON.stringify(answer)}; };
+let out; try { out = { ok: true, ...m.execute(${JSON.stringify(command)}, ${JSON.stringify(options(command, head, extra))}) }; } catch (e) { out = { ok: false, code: e.code, diagnostic: e.diagnostic }; }
+console.log(JSON.stringify({ out, asked }));`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: root, env, encoding: 'utf8', timeout: 30000 });
+    assert.equal(r.signal, null); assert.equal(r.stderr, ''); assert.deepEqual(calls().filter(c => c.unsupported), []);
+    return JSON.parse(r.stdout);
+  };
   const change = () => { put('expert/decision.md', '# Synthetic proposed decision\n'); return commit(); };
   const publish = (head, branch = BRANCH) => git(repo, 'push', '-q', 'origin', `${head}:refs/heads/${branch}`);
   const open = (head, patch = {}) => { publish(head, patch.headRefName ?? BRANCH); patchGh(patch); };
@@ -223,7 +250,7 @@ process.exit(result.status ?? 98);\n`, { mode: 0o755 });
       assert.deepEqual(JSON.parse(fs.readFileSync(log)), { argv: [remote], changed: true });
     };
   };
-  return { root, repo, remote, bin, env, git, rawGit, put, artifact, commit, base, bodyFile, commitFile, refs, snapshot, calls, patchGh, run, change, publish, open, receiveHook };
+  return { root, repo, remote, bin, env, git, rawGit, put, artifact, commit, base, bodyFile, commitFile, refs, snapshot, calls, patchGh, run, answered, change, publish, open, receiveHook };
 }
 function success(r) {
   assert.equal(r.status, 0, JSON.stringify(r.out)); assert.equal(r.out.ok, true); return r.out;
@@ -1245,8 +1272,75 @@ for (const [reason, patch] of [
   f.patchGh(patch);
   const r = f.run('create', head); refusal(r, 'E_GH_UNAVAILABLE');
   assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } });
-  unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
+  // A credential that is not an installation (the fixture's default) is judged as before.
+  unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), patch.fail ? ['preflight'] : ['preflight', 'installation']);
   assert.deepEqual(f.run('preflight').out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } });
+});
+
+// A GitHub App installation token: GitHub reports the repository's permissions
+// all false, or omits them, whatever the installation was granted. For it the
+// write question goes to GitHub itself: gh's token for github.com requests the
+// repository's push advertisement. That one request is answered by the test
+// here (`f.answered`); the request itself is tested below against a server.
+const ADVERTISEMENT_URL = `https://github.com/${GITHUB}.git/info/refs?service=git-receive-pack`;
+const unavailable = reason => ({ ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } });
+for (const patch of [{ push: false, installation: 1 }, { preflightText: 'null', installation: 3 }, { preflightText: '', installation: 0 }]) {
+  test(`an installation token (${JSON.stringify(patch)}) passes the preflight when GitHub answers gh's token with the push advertisement, and create publishes`, t => {
+    const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ ...patch, token: 'the-token-gh-holds' });
+    const r = f.answered('preflight', undefined, 'accepted');
+    assert.deepEqual(r.out, { ok: true, github: GITHUB, status: 'gh-available' });
+    // The credential judged is gh's own, asked of GitHub over HTTPS: never Git's, never the base's remote.
+    assert.deepEqual(r.asked, [{ url: ADVERTISEMENT_URL, token: 'the-token-gh-holds' }]);
+    unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'installation', 'token'], 'nothing was written');
+    assert.equal(f.answered('create', head, 'accepted').out.ok, true);
+    assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'installation', 'token', 'preflight', 'installation', 'token', 'label', 'create', 'view']);
+  });
+}
+test('an installation token is refused when GitHub refuses it or it cannot be checked: never a pass, never a push', t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ push: false, installation: 1 });
+  for (const command of ['preflight', 'create']) {
+    const h = command === 'create' ? head : undefined;
+    assert.deepEqual(f.answered(command, h, 'refused').out, unavailable('installation-cannot-push'));
+    // Anything but the two known answers is "could not check", whatever it is.
+    for (const answer of ['unknown', 'ACCEPTED', '', null, true, 0]) assert.deepEqual(f.answered(command, h, answer).out, unavailable('installation-check-failed'));
+  }
+  // That Git itself can push to the base's remote (it can, here) changes nothing.
+  unchanged(f, before); assert.ok(f.calls().every(c => !c.write), 'no gh write');
+});
+test('an installation whose gh gives no usable token for github.com is not checked, and the request is never made', t => {
+  const f = fixture(t), before = f.snapshot();
+  for (const token of [null, '', 'two words', 'line\nbreak', 'x'.repeat(4097)]) {
+    f.patchGh({ push: false, installation: 1, token });
+    const r = f.answered('preflight', undefined, 'accepted');
+    assert.deepEqual(r.out, unavailable('installation-check-failed')); assert.deepEqual(r.asked, []);
+  }
+  unchanged(f, before);
+});
+// The request itself, against a local server standing in for GitHub.
+test('the push-advertisement request: the token as Basic auth on stdin, an empty environment, no redirect followed, bounded', async t => {
+  const { receivePack } = await import(pathToFileURL(SCRIPT).href);
+  const server = spawn(process.execPath, ['-e', `
+const http = require('node:http'), basic = t => 'Basic ' + Buffer.from('x-access-token:' + t).toString('base64');
+const s = http.createServer((q, r) => {
+  const a = q.headers.authorization, ad = { 'content-type': 'application/x-git-receive-pack-advertisement' };
+  if (q.url === '/redirect') { r.writeHead(302, { location: '/repo' }); r.end(); }
+  else if (q.url === '/plain') { r.writeHead(200, { 'content-type': 'text/plain' }); r.end('ok'); }
+  else if (q.url === '/missing') { r.writeHead(404); r.end(); }
+  else if (a === basic('can-push')) { r.writeHead(200, ad); r.end('001f# service=git-receive-pack'); }
+  else if (a === basic('read-only')) { r.writeHead(403); r.end(); }
+  else { r.writeHead(401, { 'www-authenticate': 'Basic realm="x"' }); r.end(); }
+});
+s.listen(0, '127.0.0.1', () => console.log(s.address().port));`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => server.kill());
+  const port = await new Promise(done => server.stdout.once('data', d => done(String(d).trim()))), at = path => `http://127.0.0.1:${port}${path}`;
+  assert.equal(receivePack(at('/repo'), 'can-push'), 'accepted');
+  assert.equal(receivePack(at('/repo'), 'read-only'), 'refused');
+  assert.equal(receivePack(at('/repo'), 'unknown-token'), 'refused');
+  // Could not check: a redirect (never followed, even to an accepting URL), a
+  // 200 that is no advertisement, any other status, nothing listening.
+  for (const path of ['/redirect', '/plain', '/missing']) assert.equal(receivePack(at(path), 'can-push'), 'unknown', path);
+  assert.equal(receivePack('http://127.0.0.1:1/repo', 'can-push'), 'unknown');
+  assert.equal(receivePack('not a url', 'can-push'), 'unknown');
 });
 
 test('create refuses E_GH_UNAVAILABLE (gh-absent) on a host without gh, before any push', t => {

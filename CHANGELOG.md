@@ -29,8 +29,8 @@
 - **`oats okf propose --apply` pushed before its first `gh` call, so a host
   without `gh` half-published** (oats-project/oats-okf#148): a pushed branch
   with no PR, and a proposal that could not be applied again. Now `--apply`
-  makes one read-only `gh` call per changed base (`gh api repos/<repo> --jq
-  .permissions.push`) before it pushes anything and before it marks the
+  makes read-only `gh` calls per changed base (first `gh api --hostname
+  github.com repos/<repo> --jq .permissions.push`) before it pushes anything and before it marks the
   proposal as attempted. New refusal `E_GH_UNAVAILABLE`, with `result.reason`
   `gh-absent`, `gh-failed` (not signed in, the repository is not visible, or
   GitHub does not state the credential's permission) or `no-write-permission`
@@ -39,6 +39,35 @@
   fixed, the same `--apply --digest` publishes. With several bases, every
   base is checked before the first push. The check is bounded: it cannot
   tell whether a narrowly scoped token may open a PR.
+  **A GitHub App installation token has its own route in the same check.**
+  For one, GitHub reports the repository's `permissions` all false, or
+  leaves them out, whatever the installation was granted, so the answer
+  above would refuse an installation that can push. When that answer is not
+  `true`, the check asks GitHub whether the credential is an installation
+  (`gh api installation/repositories`, which only an installation token may
+  call); if it is, it asks GitHub the write question itself: with gh's token
+  for github.com it requests the repository's push advertisement, the
+  authenticated request every HTTPS push starts with and where GitHub
+  authorizes it. Nothing is sent. Git takes no part, so nothing on the host
+  (Git configuration, a URL rewrite, a netrc, an SSH key, another login)
+  can answer for the installation: the token goes from gh to a child with
+  an empty environment over a pipe, never as an argument. The advertisement
+  passes. A 401 or 403 is `E_GH_UNAVAILABLE` with reason
+  `installation-cannot-push`; a timeout, an unreachable github.com, a
+  redirect, no token from gh or any other answer is
+  `installation-check-failed`, never a pass. The request uses no proxy, so
+  a host that reaches github.com only through one gets
+  `installation-check-failed`. Every other credential is judged exactly as
+  above. Every call of the check names github.com, so `GH_HOST` or a gh
+  whose default host is another one cannot answer for a different
+  credential. On both routes the check judges gh's credential, not the one
+  Git uses for the base's remote. For an installation it proves contents
+  write only: one without pull-requests and issues write passes and fails
+  at the label or the PR, after the push. **Limit: the installation route has not yet
+  been run against a real GitHub App installation.** It rests on reports of
+  how GitHub answers one and on the push advertisement being where GitHub
+  authorizes a push (run here with a user's login: 200 where it may push,
+  403 where it may not, 401 without a credential).
 - **A publication that stops after its push says what it published.** An
   `E_GH` or `E_PR_UNCERTAIN` after a confirmed push now carries `published:
   { branch, head }` (in `result.failed`, in `publish/<alias>-result.json` and

@@ -606,10 +606,13 @@ const GH_FIX = {
   'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
   'gh-failed': 'gh could not read the repository or its permission on it: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
   'no-write-permission': "gh's account has less than write permission on the repository (the label and the PR need it): use an account with write",
+  'installation-cannot-push': "gh is signed in as a GitHub App installation, and GitHub refused that installation a push to the repository (asked with gh's own token; nothing was sent): give the installation access to the repository with contents write, plus pull-requests and issues write for the PR and its label (which this check cannot see)",
+  'installation-check-failed': "gh is signed in as a GitHub App installation, and whether GitHub accepts a push from it could not be checked (the request timed out, could not reach github.com directly over HTTPS, gh gave no token for github.com, or GitHub gave some other answer; nothing was sent): check the network (the check uses no proxy) and `gh auth status`, then run it again",
 };
 /** The one publish predicate: this deployment's credential can publish to
  *  this base (today: gh is present, reads the repository and GitHub says its
- *  credential may push). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
+ *  credential may push; for a GitHub App installation, GitHub answers gh's
+ *  token with the repository's push advertisement). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
 export function checkPublish(alias, base) {
   const repository = base.pr.repository;
   try { publication.execute('preflight', { github: repository }); }

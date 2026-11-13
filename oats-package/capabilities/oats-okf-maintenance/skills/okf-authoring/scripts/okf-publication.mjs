@@ -261,21 +261,79 @@ function github(o) {
 function gh(o, args, input) { github(o); return run('gh', args, { input }); }
 // The one gh precondition a publication can decide before its push: gh is on
 // this host, can read the repository, and GitHub states that its credential
-// may push there (the label and the PR need write). Read-only. Only an
-// explicit `true` passes: an absent or unknown answer establishes nothing.
+// may push there (the label and the PR need write). Read-only. An explicit
+// `true` passes; an absent or unknown answer establishes nothing, with one
+// further route for a GitHub App installation token (below), which GitHub
+// never answers `true`. It is gh's credential for github.com that is judged,
+// on both routes: every call names that host, so a GH_HOST or a gh signed in
+// elsewhere cannot answer one question for another credential.
 // The REST field, not GraphQL's viewerPermission, which is null for a GitHub
 // App. A bounded check: it cannot tell whether a narrowly scoped token may
 // open a PR. The reason is a fixed constant; gh's output is never forwarded.
 export function publishPreflight(o) {
   github(o);
   const unavailable = reason => { throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
-  const r = spawnSync('gh', ['api', `repos/${o.github}`, '--jq', '.permissions.push'], { env: env(), timeout: 60000, maxBuffer: MAX });
+  const r = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${o.github}`, '--jq', '.permissions.push'], { env: env(), timeout: 60000, maxBuffer: MAX });
   if (r.error?.code === 'ENOENT') unavailable('gh-absent');
   if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
   let push;
   try { push = text(r.stdout).trim(); } catch { unavailable('gh-failed'); }
-  if (push === 'false') unavailable('no-write-permission');
-  if (push !== 'true') unavailable('gh-failed');
+  if (push === 'true') return;
+  // A GitHub App installation token is not a user: for it GitHub reports the
+  // repository's `permissions` all false, or leaves them out, whatever the
+  // installation was granted, so the answer above says nothing about it.
+  // Only an installation token may list the installation's repositories, and
+  // for one the write question is put to GitHub itself (below). Every other
+  // credential is judged as before, and an unknown answer still refuses.
+  const listed = spawnSync('gh', ['api', '--hostname', 'github.com', 'installation/repositories?per_page=1', '--jq', '.total_count'], { env: env(), timeout: 60000, maxBuffer: MAX });
+  let installation = false;
+  try { installation = !listed.error && !listed.signal && listed.status === 0 && /^\d+$/.test(text(listed.stdout).trim()); } catch { /* not an installation's answer */ }
+  if (!installation) unavailable(push === 'false' ? 'no-write-permission' : 'gh-failed');
+  const answer = acceptsPush(o);
+  if (answer !== 'accepted') unavailable(answer === 'refused' ? 'installation-cannot-push' : 'installation-check-failed');
+}
+// Whether GitHub accepts a push to the repository from GH'S credential, the
+// one the installation answer was about. It asks GitHub for the push
+// advertisement, the authenticated request every HTTPS push starts with and
+// the one where GitHub authorizes it: 200 with the advertisement where the
+// credential may push, 401 or 403 where it may not. Nothing is sent. Git is
+// not involved, so nothing of the host's (Git configuration, a template, a
+// URL rewrite, a netrc, an askpass, an SSH key, a proxy variable) can answer
+// for the installation: gh prints its token for github.com on a pipe, and a
+// Node child with an empty environment reads it on stdin and makes the one
+// request, following no redirect. The token is never an argument and nothing
+// either child prints is forwarded. A host that reaches github.com only
+// through a proxy therefore reads as "could not check".
+// → 'accepted' | 'refused' (GitHub said no to gh's credential) | 'unknown'
+// (a timeout, a network error, no token from gh, any other answer: could not
+// check). Only 'accepted' passes.
+const ADVERTISEMENT = `
+let token = ''; for await (const chunk of process.stdin) token += chunk;
+let code = 4;
+try {
+  const r = await fetch(process.argv[1], { redirect: 'manual', signal: AbortSignal.timeout(45000),
+    headers: { 'user-agent': 'git/2.0 (oats-okf preflight)', authorization: 'Basic ' + Buffer.from('x-access-token:' + token).toString('base64') } });
+  if (r.status === 200 && r.headers.get('content-type') === 'application/x-git-receive-pack-advertisement') code = 0;
+  else if (r.status === 401 || r.status === 403) code = 3;
+} catch { /* could not check */ }
+process.exit(code);
+`;
+export function receivePack(url, token) {
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', ADVERTISEMENT, url], { input: token, env: {}, timeout: 60000, maxBuffer: MAX });
+  if (r.error || r.signal) return 'unknown';
+  return r.status === 0 ? 'accepted' : r.status === 3 ? 'refused' : 'unknown';
+}
+// The one request the installation route makes, replaceable in tests only.
+export const probes = { receivePack };
+function acceptsPush(o) {
+  try {
+    const r = spawnSync('gh', ['auth', 'token', '--hostname', 'github.com'], { env: env(), timeout: 60000, maxBuffer: MAX });
+    if (r.error || r.signal || r.status !== 0) return 'unknown';
+    const token = text(r.stdout).trim();
+    if (!/^[\x21-\x7e]{1,4096}$/.test(token)) return 'unknown';
+    const answer = probes.receivePack(`https://github.com/${o.github}.git/info/refs?service=git-receive-pack`, token);
+    return answer === 'accepted' || answer === 'refused' ? answer : 'unknown';
+  } catch { return 'unknown'; }
 }
 function view(o, { states = ['OPEN'], publishing = true } = {}) {
   let p;

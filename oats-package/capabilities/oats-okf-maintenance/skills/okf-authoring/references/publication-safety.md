@@ -176,12 +176,30 @@ fresh `okf-proposal/<date>-<UUID>` key (a 5.x `okf-harvest/` key with a
 version 2 block is still accepted through 6.x), empty expected-old lease and new-ref
 confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
-Before its push, `create` makes one read-only `gh` call (`gh api
+Before its push, `create` makes read-only `gh` calls (first `gh api --hostname github.com
 repos/<repo> --jq .permissions.push`; the `preflight --github OWNER/REPO`
-command runs it alone). Only an explicit `true` passes. A missing `gh`, a
+command runs the check alone). An explicit `true` passes at once. A missing `gh`, a
 failed call or unstated permission, or a credential that may not push
 refuses `E_GH_UNAVAILABLE` with a fixed `preflight` diagnostic (`gh-absent`,
-`gh-failed`, `no-write-permission`): nothing was pushed. It cannot tell
+`gh-failed`, `no-write-permission`): nothing was pushed. One other route
+passes: a GitHub App installation token, for which GitHub reports those
+permissions all false or not at all. When the answer is not `true` and `gh
+api installation/repositories` succeeds (only an installation token may call
+it), the helper puts the write question to GitHub: with gh's token for
+github.com (`gh auth token`, read on a pipe) a child with an empty
+environment requests the repository's push advertisement
+(`info/refs?service=git-receive-pack`), where GitHub authorizes a push.
+Nothing is sent and Git takes no part, so no Git configuration, URL rewrite,
+netrc, SSH key or other login answers for the installation. The
+advertisement passes, a 401 or 403 is `installation-cannot-push`, and a
+timeout, an unreachable github.com, a redirect, no token from gh or any
+other answer is `installation-check-failed`; the request uses no proxy. Not
+yet run with a real installation token. Every call of the check names
+github.com (`--hostname`), so `GH_HOST` cannot split it across two
+credentials. On both routes it is gh's credential that is judged, not the
+one Git uses for the base's remote. For an installation it proves contents
+write only, not the pull-requests and issues write the PR and its label
+need. It cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed
 push carries `published: { branch, head }`.
 

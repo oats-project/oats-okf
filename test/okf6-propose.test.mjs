@@ -331,7 +331,7 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
   refused(f.run(['--apply', '--slug', 'x', '--digest', digest]), 'E_PROPOSAL_EXISTS');
   // An attempted proposal is never called untouched, even when gh is now unusable (it is not re-appliable).
-  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'api repos/acme/kb' } }), 'E_PROPOSAL_EXISTS');
+  refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'api --hostname' } }), 'E_PROPOSAL_EXISTS');
 });
 
 // #148: every gh precondition is decided before the push and before the
@@ -339,7 +339,7 @@ test('a publication failure retains the clone and artefacts, reports safely and 
 const remoteBranches = f => f.git(f.dir, '--git-dir', f.origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/');
 for (const [reason, breakGh, fix] of [
   ['gh-absent', f => fs.rmSync(join(f.dir, 'ghbin', 'gh')), /gh is not installed on this host/],
-  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'api repos/acme/kb' }), /gh could not read the repository or its permission on it: sign gh in/],
+  ['gh-failed', () => ({ FIXTURE_GH_FAIL: 'api --hostname' }), /gh could not read the repository or its permission on it: sign gh in/],
   ['no-write-permission', () => ({ FIXTURE_GH_PUSH: 'false' }), /less than write permission/],
   // GitHub did not say: nothing establishes write, so the attempt never begins.
   ['gh-failed', () => ({ FIXTURE_GH_PUSH: 'null' }), /or its permission on it/],
@@ -400,6 +400,22 @@ test('a gate that fails while another apply of the same proposal began reports i
     let error; try { propose(f.home, { apply: true, slug: 'c', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
     assert.equal(error?.code, 'E_PROPOSAL_EXISTS'); assert.match(error.message, /already applied or attempted/);
   });
+});
+
+test('an installation credential GitHub refuses, or that could not be checked, refuses --apply with its fix line, nothing pushed', async t => {
+  for (const [reason, fix] of [['installation-cannot-push', /signed in as a GitHub App installation, and GitHub refused that installation a push .* give the installation access to the repository with contents write, plus pull-requests and issues write/], ['installation-check-failed', /could not be checked .* check the network \(the check uses no proxy\) and `gh auth status`, then run it again/]]) {
+    const f = fixture(t);
+    await inProcess(f, async () => {
+      const plan = propose(f.home, { plan: true, slug: 'i' }).result; edit(f, plan);
+      const { digest } = propose(f.home, { check: true, slug: 'i' }).result, wrapped = publication.execute, asked = [];
+      publication.execute = (command, o) => { if (command !== 'preflight') return wrapped(command, o); asked.push(o); throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
+      let error; try { propose(f.home, { apply: true, slug: 'i', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
+      assert.equal(error?.code, 'E_GH_UNAVAILABLE'); assert.match(error.message, fix); assert.match(error.message, /Nothing was pushed/);
+      assert.deepEqual(error.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false });
+      assert.deepEqual(asked, [{ github: 'acme/kb' }]);
+      assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'the proposal is not marked as attempted');
+    });
+  }
 });
 
 test('a snapshot that cannot be written after the attempt began fails inside the publication envelope, with the published rows', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
