@@ -997,6 +997,83 @@ one host, `owner` the merge-capable GitHub account) and `oats trigger add`.
 Without the trigger, proposal PRs wait for a human reviewer, or for a
 maintainer the proposer spawns.
 
+## Bringing up a deployment's knowledge store
+
+What a deployment provisions for knowledge to work, in order, and one command
+that checks it. Steps 1 to 3 need an administrator's login on the knowledge
+repository and are done **from outside the agents' trust group** (the
+operator's own machine): that login never enters a container the agents share.
+
+1. **The knowledge repository and its first bundle.** A repository on
+   github.com (the only forge proposals support: the pull request and the
+   `proposal-review` trigger are GitHub's), with an accepted branch holding a
+   valid OKF base: `oats okf init --base <alias> --nodes <file> --output
+   <stage>` stages one for the operator's own first commit
+   ([Explicit provisioning](#explicit-provisioning-init-migrate-unlock)).
+2. **The accepted branch's rule.** A branch ruleset that restricts updates,
+   requires a pull request, blocks force pushes and deletion, and lets only
+   the merging identity's role bypass, for pull requests only:
+   [`examples/knowledge-store/`](examples/knowledge-store/README.md) has the
+   file and the command. Without it the proposer credential can push the
+   accepted branch.
+3. **Two identities.** The **proposer credential**: an identity with the
+   write role only on the knowledge repository, its token limited to that
+   repository with contents write and pull-requests write
+   ([The proposer credential](#the-proposer-credential)). The **merging
+   identity**: a person, or a knowledge maintainer running in its own trust
+   group with its own login; it holds the role on the ruleset's bypass list.
+   Create the `okf-proposal` label once
+   (`gh label create okf-proposal --repo <owner>/<repo>`), or let the first
+   proposal create it.
+4. **In the deployment:** the proposer credential's token in a file the
+   agents' user can read, kept current by the platform (a mounted secret),
+   and `settings.oats.okf.github-token-file` naming it in `oats-local.yaml`;
+   the [bindings document](#the-bindings-document), binding each Git base by
+   its `https://github.com/` URL, and `settings.oats.okf.bindings-file`;
+   `state-dir` and the bindings' `stateDir` on storage that survives a
+   restart; an [`okf.json`](#the-soul-declaration-and-base-metadata) in each
+   soul that uses knowledge; `git` and `gh` in the image.
+5. **Egress:** `github.com` and `api.github.com` on port 443. Where a
+   platform cannot allow egress by hostname, allow GitHub's published address
+   ranges for Git and the API and keep them current, or open port 443 more
+   widely as the deployment's own stated decision. SSH (port 22) is not
+   needed and, with `github-token-file`, not used.
+6. **The review:** the [`proposal-review` trigger](#the-knowledge-maintainer)
+   on the host that holds the merging identity's login, never in the
+   proposers' container; or a person reviews and merges.
+7. **Check it:**
+
+```sh
+oats okf setup --check --soul <a soul that uses knowledge>     # add --json for one JSON document
+```
+
+`setup --check` is unattended and exits 0 only when nothing is missing. Each
+line is `ok`, `warning` or `PROBLEM`, and every problem is followed by its
+whole fix. It checks the settings, the bindings and the state directory;
+`git` and `gh`; that each base's accepted branch can be fetched and is a
+valid OKF base; that the soul's declaration resolves there; and, per Git
+base, the credential (that it reads the repository, can write it, and which
+role its identity holds), the accepted branch's protection (as
+[`oats okf bases`](#the-knowledge-maintainer) reads it) and the
+`okf-proposal` label. It changes nothing on GitHub and creates nothing;
+locally it fills the host's consult cache, as any read does.
+
+What it calls a problem depends on the credential mode, so a deployment that
+runs on a person's own login is told, not broken:
+
+| Finding | `github-token-file` set | not set |
+|---|---|---|
+| the credential cannot read or write the repository | problem | problem |
+| the credential's identity has the maintain or admin role | problem | warning |
+| protection reads `none` or `unknown` | problem | warning |
+| the mode itself | | a warning saying what a shared login means |
+
+Its limits: it reads that a rule exists, not who is on its bypass list; the
+role it reports is the identity's, which a narrowly scoped token may not
+fully have; and `enforced` is readable only from a ruleset, or from classic
+protection with an administrator's login. A deployment's own acceptance run
+should still propose, review and merge one claim on a fixture repository.
+
 ## Explicit provisioning: init, migrate, unlock
 
 Bases and node ownership change only through explicit operator actions, run

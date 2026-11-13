@@ -10,6 +10,7 @@ import { refuseLegacySettings, refuseKnowledgeKeys, removeLegacySettings } from 
 import { writeHarvestPolicy, harvestPolicy } from '../lib/harvest-policy.mjs';
 import { upgradePlan, upgradeApply } from '../lib/upgrade.mjs';
 import { propose } from '../lib/propose.mjs';
+import { setupCheck, renderSetupCheck } from '../lib/setup-check.mjs';
 const HELP=`oats okf status [--home PATH] [--json]
   (spawn-recorded duty to propose, as harvest and publish: on, off, or unknown; no base/network read)
 oats okf inspect [--home PATH] [--json]
@@ -37,6 +38,7 @@ oats okf init --base ALIAS --nodes FILE [--output PATH | --confirm] [--json]
 oats okf migrate --legacy PATH --base ALIAS --node NODE --output PATH [--json]
 oats okf migrate --deliver FILE | --cutover FILE --soul-dir PATH | --forget ID [--json]
 oats okf unlock --lock PATH --token TOKEN [--host-gone HOST] [--json]
+oats okf setup --check --soul SOUL [--json]
 oats okf setup --remove-legacy-settings [--plan] --soul SOUL [--json]
   (from the deployment: deletes only settings.oats.okf.harvest/harvest-runtime/harvest-model
   from its oats-local.yaml; --plan writes nothing)
@@ -75,7 +77,7 @@ else {
   const event=process.env.OATS_EVENT || args[0];
   const hook=['spawn','soul-scaffold'].includes(event);
   const consult=Object.hasOwn(CONSULT,event);
-  let exit=0,answer,text,textMode=(consult || event==='propose') && !args.includes('--json');
+  let exit=0,notReady=false,answer,text,textMode=(consult || event==='propose' || (event==='setup' && args.includes('--check'))) && !args.includes('--json');
   try {
     // Removed 4.x commands refuse whatever their (old) flags were.
     if(['harvest','run-source','complete','retry','harvest-status'].includes(event)) removed(`oats okf ${event}`);
@@ -99,7 +101,7 @@ else {
       bases:['home','fresh'],index:['home','base','fresh'],cat:['home','base','from','fresh'],ls:['home','base','fresh'],
       links:['home','base','fresh'],search:['home','base','all','node','regex','case-sensitive','fresh'],
       subjects:['home','base','kind','fresh'],subject:['home','base','fresh'],claims:['home','base','about','type','kind','fresh'],verdicts:['home','base','check','fresh'],
-      setup:['remove-legacy-settings','plan','harvest','enable','disable','install-host','remove-schedules'],init:['base','nodes','output','confirm'],
+      setup:['remove-legacy-settings','plan','check','harvest','enable','disable','install-host','remove-schedules'],init:['base','nodes','output','confirm'],
       propose:['home','plan','check','apply','slug','digest'],
       migrate:['source-home','legacy','base','node','output','deliver','cutover','soul-dir','forget'],unlock:['lock','token','host-gone']
     };
@@ -144,7 +146,13 @@ else {
     }
     else if(event==='setup' && flags.harvest!==undefined) removed('setup --harvest (the deployment harvest switch)');
     else if(event==='setup' && (flags.enable || flags.disable || flags['install-host'] || flags['remove-schedules'])) removed('setup --enable/--disable/--install-host/--remove-schedules');
-    else if(event==='setup') fail('E_USAGE','setup needs --remove-legacy-settings [--plan]');
+    else if(event==='setup' && flags.check) {
+      const other=Object.keys(flags).filter(k=>!['json','soul','check'].includes(k));
+      if(other.length) fail('E_USAGE',`--check takes no other flag (got --${other.join(', --')})`);
+      result=setupCheck({home});text=renderSetupCheck(result);
+      if(!result.ok) notReady=true;
+    }
+    else if(event==='setup') fail('E_USAGE','setup needs --check, or --remove-legacy-settings [--plan]');
     else if(event==='init') result=initBase(loadBindings(),flags.base,flags.nodes,flags.output,{confirm:!!flags.confirm});
     else if(event==='migrate') {
       if(flags['source-home']) removed('migrate --source-home (4.x source registration)');
@@ -162,5 +170,6 @@ else {
   if(textMode && exit) process.stderr.write(`oats okf ${event}: ${answer.error.code}: ${answer.error.message}\n${answer.error.result?JSON.stringify(answer.error.result,null,2)+'\n':''}`);
   else if(textMode) process.stdout.write(text+'\n');
   else process.stdout.write(JSON.stringify(answer)+'\n');
-  process.exitCode=exit;
+  // setup --check answered (ok: true) and found problems: exit 1, so an unattended bring-up stops.
+  process.exitCode=exit || (notReady?1:0);
 }

@@ -180,7 +180,8 @@ told, not broken:
 | protection reads `none` or `unknown` | problem | warning |
 | ambient mode itself | n/a | warning that states section 2's guarantee |
 
-The command changes nothing, locally or remotely. It does not create the
+The command changes nothing on GitHub; locally it fills the host's consult
+cache, as any read does (found while building it). It does not create the
 repository, the ruleset or the credential: those need an administrator's
 login, which belongs outside the trust group.
 
@@ -317,8 +318,10 @@ were rehearsed and which were not.
    (Juan's side, 2026-11-12). The rehearsal establishes what GitHub reports
    for each kind of token.
 4. **The journey step** (one claim proposed, reviewed and merged on a fixture
-   repository) is added to the deployment bundle's journey by its owner once
-   `setup --check` exists (Juan's side, 2026-11-12).
+   repository) belongs to the acceptance journey of a deployment that runs
+   oats.okf, and its owner adds it there. No deployment's journey is
+   committed to it here (amended 2026-11-13: the deployment this was first
+   planned with keeps its own knowledge capability; the design stays generic).
 
 5. **The separated credential is opt-in** (Pepe's side, 2026-11-12, settled
    from recorded decisions and reported to Pepe, who may overrule): refusing
