@@ -587,7 +587,7 @@ test('condition 1: --check and --apply feed the shipped helper exactly the harve
       // harvester's commit and create, with its flags bound to the same values.
       // The gh preflight sits between them: before the attempt marker and the commit.
       assert.deepEqual(calls.map(([c]) => c), ['screen', 'preflight', 'commit', 'create']);
-      assert.deepEqual(calls[1][1], { github: 'acme/kb' });
+      assert.deepEqual(calls[1][1], { github: 'acme/kb', remote: f.origin });
       const [[, rescreen, rescreened], , [, commit, committedText], [, create, createdText]] = calls;
       assert.deepEqual({ ...rescreen, head: undefined, 'text-file': undefined }, { ...screen, head: undefined, 'text-file': undefined });
       assert.deepEqual(rescreened, screened);
