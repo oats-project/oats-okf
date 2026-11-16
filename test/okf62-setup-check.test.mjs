@@ -37,9 +37,7 @@ function check(t, f, { settings = f.settings, origins, gh, protection = 'enforce
   Object.assign(process.env, { OATS_SETTINGS: JSON.stringify(settings), OATS_SOUL: f.soul, HOME: f.dir, GIT_CONFIG_NOSYSTEM: '1' });
   if (origins) process.env.OATS_SETTINGS_ORIGINS = JSON.stringify(origins); else delete process.env.OATS_SETTINGS_ORIGINS;
   for (const k of ['OATS_INSTANCE_HOME', 'OATS_HOME', 'OATS_BINDING_FILE']) delete process.env[k];
-  const role = { write: { admin: false, maintain: false, push: true }, admin: { admin: true, maintain: true, push: true }, maintain: { admin: false, maintain: true, push: true }, read: { admin: false, maintain: false, push: false } };
-  Object.assign(probes, { has, publish, hostRoutes: routes, protection: () => protection, gh: gh ?? (args => args[0] === 'api' ? JSON.stringify(role.write) : JSON.stringify([{ name: 'okf-proposal' }])) });
-  check.role = role;
+  Object.assign(probes, { has, publish, hostRoutes: routes, protection: () => protection, gh: gh ?? (args => args[0] === 'api' ? JSON.stringify(ROLE.write) : JSON.stringify([{ name: 'okf-proposal' }])) });
   return setupCheck({ soul: f.soul, home: f.dir });
 }
 const by = (r, id) => r.checks.find(c => c.id === id);
@@ -75,7 +73,9 @@ test('in either mode a credential that cannot write, an unreadable repository, a
   }
   assert.deepEqual(asked[0], ['kb', 'acme/kb']);
   const bad = check(t, fixture(t), { publish: () => { throw Object.assign(new Error('github-token-file /x does not exist: provision it; nothing was sent'), { code: 'E_CREDENTIAL' }); } });
-  assert.equal(by(bad, 'credential:kb').status, 'problem'); assert.match(by(bad, 'credential:kb').detail, /^E_CREDENTIAL: github-token-file \/x does not exist/);
+  assert.equal(by(bad, 'credential:kb').status, 'problem'); assert.match(by(bad, 'credential:kb').detail, /^E_CREDENTIAL: github-token-file \/x does not exist/); assert.equal(by(bad, 'credential:kb').fix, 'provision it; nothing was sent');
+  const odd = check(t, fixture(t), { publish: () => { throw Object.assign(new Error('the publication helper refused before anything was pushed (base kb)'), { code: 'E_PUBLICATION' }); } });
+  assert.equal(by(odd, 'credential:kb').status, 'problem'); assert.match(by(odd, 'credential:kb').fix, /run oats okf setup --check again/);
   // A credential that can publish and whose role GitHub does not state (an App installation token; a failed read) is told, not passed as write-only.
   for (const answer of [() => { throw new Error('gh api failed: secret-looking output'); }, gh({ admin: false, maintain: false, push: false }), gh(null)]) {
     const r = check(t, fixture(t), { gh: args => args[0] === 'api' ? answer(args) : JSON.stringify([{ name: 'okf-proposal' }]) });
@@ -103,6 +103,7 @@ test('file mode: the token serves https://github.com/ only, so a base bound any 
   const r = check(t, f, { settings: { ...f.settings, 'github-token-file': token }, origins: { '/github-token-file': { kind: 'host', at: 'oats-local.yaml' } } });
   assert.equal(r.ok, false); assert.equal(r.mode, 'file');
   assert.equal(by(r, 'bindings').status, 'problem'); assert.match(by(r, 'bindings').detail, /E_CREDENTIAL: git base "kb" is not bound by an https:\/\/github\.com\/ URL/);
+  assert.match(by(r, 'bindings').fix, /^bind it by its HTTPS URL .* or remove settings\.oats\.okf\.github-token-file/, 'the refusal\'s own fix, not the generic one');
   // A committed value is refused before anything else is looked at.
   const committed = check(t, f, { settings: { ...f.settings, 'github-token-file': token }, origins: { '/github-token-file': { kind: 'soul', at: 'soul.yaml' } } });
   assert.equal(committed.ok, false); assert.match(by(committed, 'settings').detail, /E_CONFIG: github-token-file from soul \(soul\.yaml\) is not valid: it is host-only/);
@@ -153,6 +154,16 @@ test('hostRoutes reads the user\'s netrc and Git configuration with real git: ki
   assert.ok(!JSON.stringify(found).includes('SECRET-VALUE'));
   fs.writeFileSync(join(home, '.netrc'), 'default login x password SECRET-VALUE\n'); fs.writeFileSync(join(home, '.gitconfig'), '[http]\n\textraheader = "authorization: bearer SECRET-VALUE"\n');
   assert.deepEqual(hostRoutes(env), ['a netrc entry that answers for github.com (.netrc in this user\'s home)', 'an authorization header (http.extraHeader) in the user Git configuration']);
+  // curl matches a netrc host without regard to case.
+  fs.writeFileSync(join(home, '.netrc'), 'machine GitHub.COM login x password SECRET-VALUE\n'); fs.writeFileSync(join(home, '.gitconfig'), '');
+  assert.deepEqual(hostRoutes(env), ['a netrc entry that answers for github.com (.netrc in this user\'s home)']);
+  // An included file is Git's configuration too; a conditional include cannot be evaluated here and is said so.
+  fs.rmSync(join(home, '.netrc'));
+  fs.writeFileSync(join(home, 'gh.inc'), '[http "https://github.com/"]\n\textraheader = "Authorization: Basic SECRET-VALUE"\n[url "https://mirror.example.com/"]\n\tinsteadOf = https://github.com/\n');
+  fs.writeFileSync(join(home, '.gitconfig'), '[include]\n\tpath = gh.inc\n');
+  assert.deepEqual(hostRoutes(env), ['an authorization header (http.extraHeader) in the user Git configuration', 'a rewrite of https://github.com/ URLs (url.<base>.insteadOf or pushInsteadOf) in the user Git configuration']);
+  fs.writeFileSync(join(home, '.gitconfig'), '[includeIf "hasconfig:remote.*.url:https://github.com/**"]\n\tpath = gh.inc\n');
+  assert.deepEqual(hostRoutes(env), ['a conditional include (includeIf) in the user Git configuration, which this check cannot evaluate']);
 });
 
 test('the command: text by default, one JSON document with --json, exit 1 when not ready', t => {

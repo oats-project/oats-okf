@@ -1046,7 +1046,10 @@ operator's own machine): that login never enters a container the agents share.
    ([The proposer credential](#the-proposer-credential)). The **merging
    identity**: a person, or a knowledge maintainer running in its own trust
    group with its own login; it holds the role on the ruleset's bypass list.
-   Create the `okf-proposal` label once
+   Every proposal creates or updates the `okf-proposal` label after its
+   push, so the proposer credential must also be allowed to write labels
+   (for a GitHub App: issues write; whether a token with only contents and
+   pull-requests write may is not proven in a live run). Create the label once
    (`gh label create okf-proposal --repo <owner>/<repo>`), or let the first
    proposal create it.
 4. **In the deployment:** the proposer credential's token in a file the

@@ -24,21 +24,25 @@ export const AMBIENT_MEANING = 'knowledge writes use this user\'s own git and gh
  *  helper, so that Git would act with another credential, or elsewhere, and
  *  not with the token file's: a netrc entry for github.com, and in the system
  *  or user Git configuration an authorization header or a rewrite of
- *  https://github.com/ URLs. Names kinds and scopes only, never a value (a
- *  header or a rewritten URL can hold a credential). */
+ *  https://github.com/ URLs. Included files are followed (include.path); a
+ *  conditional include (includeIf) depends on the repository Git runs in,
+ *  which this check cannot evaluate, so its presence is reported as such.
+ *  Names kinds and scopes only, never a value (a header or a rewritten URL
+ *  can hold a credential). */
 export function hostRoutes(env = cleanEnv()) {
   const found = new Set(), hub = 'https://github.com/';
   const touches = url => { const u = String(url).toLowerCase(); return hub.startsWith(u) || u.startsWith('https://github.com'); };
   if (env.HOME) {
-    try { if (/(?:^|\s)(?:machine\s+github\.com|default)(?:\s|$)/.test(fs.readFileSync(join(env.HOME, '.netrc'), 'utf8'))) found.add('a netrc entry that answers for github.com (.netrc in this user\'s home)'); }
+    try { if (/(?:^|\s)(?:machine\s+github\.com|default)(?:\s|$)/i.test(fs.readFileSync(join(env.HOME, '.netrc'), 'utf8'))) found.add('a netrc entry that answers for github.com (.netrc in this user\'s home)'); }
     catch (e) { if (e?.code !== 'ENOENT') found.add('a netrc that could not be read (.netrc in this user\'s home)'); }
   }
   for (const [flag, scope] of [['--system', 'system'], ['--global', 'user']]) {
     let out;
-    try { out = exec('git', ['config', flag, '-z', '--get-regexp', '^(url\\..*\\.(insteadof|pushinsteadof)|http\\.(.*\\.)?extraheader)$'], { env, acceptedStatus: [0, 1], trim: false }); }
+    try { out = exec('git', ['config', flag, '--includes', '-z', '--get-regexp', '^(url\\..*\\.(insteadof|pushinsteadof)|http\\.(.*\\.)?extraheader|includeif\\..*\\.path)$'], { env, acceptedStatus: [0, 1], trim: false }); }
     catch { found.add(`the ${scope} Git configuration could not be read`); continue; }
     for (const record of out.split('\0').filter(Boolean)) {
       const cut = record.indexOf('\n'), key = cut < 0 ? record : record.slice(0, cut), value = cut < 0 ? '' : record.slice(cut + 1);
+      if (/^includeif\./i.test(key)) { found.add(`a conditional include (includeIf) in the ${scope} Git configuration, which this check cannot evaluate`); continue; }
       if (/^url\./i.test(key)) { if (touches(value)) found.add(`a rewrite of https://github.com/ URLs (url.<base>.insteadOf or pushInsteadOf) in the ${scope} Git configuration`); continue; }
       const scoped = /^http\.(.*)\.extraheader$/i.exec(key);
       if ((!scoped || touches(scoped[1])) && /^\s*authorization\s*:/i.test(value)) found.add(`an authorization header (http.extraHeader) in the ${scope} Git configuration`);
@@ -64,7 +68,10 @@ export const probes = {
 export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() } = {}) {
   const checks = [];
   const add = (id, status, detail, fix) => { checks.push({ id, status, detail, ...(fix ? { fix } : {}) }); return status === 'ok'; };
-  const guard = (id, fix, fn) => { try { return fn(); } catch (e) { add(id, 'problem', `${e.code ?? 'E_OKF'}: ${e.message}`, fix); return undefined; } };
+  // A credential or configuration refusal carries its own whole fix after
+  // its first colon: that is the fix, never a generic one that contradicts it.
+  const ownFix = e => { const said = String(e?.message ?? ''), cut = said.indexOf(': '); return ['E_CREDENTIAL', 'E_CONFIG'].includes(e?.code) ? (cut < 0 ? said : said.slice(cut + 2)) : null; };
+  const guard = (id, fix, fn) => { try { return fn(); } catch (e) { add(id, 'problem', `${e.code ?? 'E_OKF'}: ${e.message}`, ownFix(e) ?? fix); return undefined; } };
   const done = mode => ({ ok: !checks.some(c => c.status === 'problem'), mode, checks });
 
   // 1. Settings, bindings, state directory.
@@ -80,8 +87,9 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
   catch { add('state', 'problem', 'the state directory (the bindings file\'s stateDir) is missing or not writable by this user', 'create it on durable storage, owned by the user the agents run as'); }
 
   // 2. Tools.
-  const git = add('git', probes.has('git') ? 'ok' : 'problem', probes.has('git') ? 'git is on PATH' : 'git is not on PATH', 'install git in the image or on the host');
-  const gh = add('gh', probes.has('gh') ? 'ok' : 'problem', probes.has('gh') ? 'gh is on PATH' : 'gh is not on PATH: proposals cannot open a pull request', 'install the GitHub CLI (gh) in the image or on the host');
+  const hasGit = probes.has('git'), hasGh = probes.has('gh');
+  const git = add('git', hasGit ? 'ok' : 'problem', hasGit ? 'git is on PATH' : 'git is not on PATH', 'install git in the image or on the host');
+  const gh = add('gh', hasGh ? 'ok' : 'problem', hasGh ? 'gh is on PATH' : 'gh is not on PATH: proposals cannot open a pull request', 'install the GitHub CLI (gh) in the image or on the host');
   // The token reaches Git through a credential helper, and the package does
   // not isolate Git from the host: what answers before a helper is a problem
   // where the deployment opted into the separated credential.
@@ -119,7 +127,7 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
     catch (e) {
       const prefix = `base ${alias} (${repo}): `, said = String(e?.message ?? '');
       if (e?.code === 'E_GH_UNAVAILABLE') add(`credential:${alias}`, 'problem', `the credential (${mode}) cannot publish to ${repo} (${e.result?.reason ?? 'unknown'}): proposals cannot push a branch or open a pull request`, said.startsWith(prefix) ? said.slice(prefix.length) : said);
-      else add(`credential:${alias}`, 'problem', `${e?.code ?? 'E_OKF'}: ${said}`);
+      else add(`credential:${alias}`, 'problem', `${e?.code ?? 'E_OKF'}: ${said}`, ownFix(e) ?? 'the check itself could not run: run oats okf setup --check again, and if it repeats report this code to whoever maintains the deployment');
     }
     if (!publishes) continue;
     // Its role, which the predicate does not read. GitHub states none for a
@@ -136,7 +144,7 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
     try {
       const labels = JSON.parse(probes.gh(['label', 'list', '--repo', repo, '--search', 'okf-proposal', '--json', 'name']));
       if (Array.isArray(labels) && labels.some(l => l?.name === 'okf-proposal')) add(`label:${alias}`, 'ok', `the okf-proposal label exists on ${repo}`);
-      else add(`label:${alias}`, 'warning', `the okf-proposal label does not exist on ${repo} yet: the first proposal creates it, which the proposer credential must be allowed to do`, `create it once with an administrator's login: gh label create okf-proposal --repo ${repo} --color 0E8A16 --description "OKF knowledge proposal PR (oats.okf)"`);
+      else add(`label:${alias}`, 'warning', `the okf-proposal label does not exist on ${repo} yet: every proposal creates or updates it after its push, which the proposer credential must be allowed to do (not read here)`, `allow the proposer credential to write labels on ${repo} (for a GitHub App: issues write); creating it once with an administrator's login (gh label create okf-proposal --repo ${repo} --color 0E8A16 --description "OKF knowledge proposal PR (oats.okf)") does not replace that`);
     } catch { add(`label:${alias}`, 'warning', `the labels of ${repo} could not be read`, 'check that the credential can read the repository\'s issues and pull requests'); }
   }
   if (!strict && gitBases.length) add('credential-mode', 'warning', AMBIENT_MEANING, README);

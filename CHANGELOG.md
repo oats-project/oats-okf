@@ -18,7 +18,9 @@
   read `enforced` are problems, and so is anything on the host that answers
   GitHub before the token does (a netrc entry for github.com, an
   authorization header or a rewrite of `https://github.com/` URLs in the
-  system or user Git configuration; named by kind, never by value). Without
+  system or user Git configuration, included files followed and a
+  conditional include reported as not evaluable; named by kind, never by
+  value). Without
   the setting the first two are warnings, with one more that says what a
   shared login means, so no existing deployment starts failing. A credential
   GitHub states no role for (a GitHub App installation token) is a warning
@@ -31,7 +33,9 @@
     credential a direct push to the accepted branch and a merge, under the
     example ruleset (which has not been applied to a real repository); (3)
     what GitHub reports for such a token (its role, its permissions, the
-    branch's protection), which this check reads. The tests replace what
+    branch's protection), which this check reads, and whether a token with
+    contents and pull-requests write may write the label every proposal
+    creates or updates. The tests replace what
     GitHub answers: they prove the table of findings and fixes.
 
 - **A proposer credential separate from the maintainer's**

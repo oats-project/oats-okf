@@ -117,7 +117,7 @@ that may read the repository's settings, or read `unknown` as "check by hand".
 
 To check a whole deployment in one step (settings, bases, the credential's
 role, this protection and the label), run `oats okf setup --check --soul
-<soul>` (oats.okf 6.1): every problem names its fix, and with the host
+<soul>` (oats.okf 6.2): every problem names its fix, and with the host
 setting `github-token-file` an unprotected branch or an admin credential is
 a problem, not a warning.
 
