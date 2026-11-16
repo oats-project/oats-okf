@@ -10,7 +10,8 @@
 // the separated proposer credential and everything it needs is a problem;
 // without it, the same findings are warnings that say what ambient mode means.
 import { spawnSync } from 'node:child_process';
-import { fs, join, exec, cleanEnv, displayRepo } from './io.mjs';
+import { isAbsolute } from 'node:path';
+import { fs, join, resolve, dirname, exec, cleanEnv, displayRepo } from './io.mjs';
 import { settings, loadBindings, declaration, tokenFile, gitTimeoutMs } from './config.mjs';
 import { bases as basesReport, acceptedResolution, protection } from './consult.mjs';
 import { ghChildEnv } from './stores.mjs';
@@ -24,31 +25,45 @@ export const AMBIENT_MEANING = 'knowledge writes use this user\'s own git and gh
  *  helper, so that Git would act with another credential, or elsewhere, and
  *  not with the token file's: a netrc entry for github.com, and in the system
  *  or user Git configuration an authorization header or a rewrite of
- *  https://github.com/ URLs. Included files are followed (include.path); a
- *  conditional include (includeIf) depends on the repository Git runs in,
- *  which this check cannot evaluate, so its presence is reported as such.
- *  Names kinds and scopes only, never a value (a header or a rewritten URL
- *  can hold a credential). */
+ *  https://github.com/ URLs. Included files are followed. A conditional
+ *  include (includeIf) depends on the repository Git runs in, so its
+ *  condition is taken as true and the file it names is read the same way.
+ *  → { routes, unread }: what was found, and what could not be read. Names
+ *  kinds and scopes only, never a value (a header or a rewritten URL can
+ *  hold a credential). */
 export function hostRoutes(env = cleanEnv()) {
-  const found = new Set(), hub = 'https://github.com/';
+  const routes = new Set(), unread = new Set(), hub = 'https://github.com/';
   const touches = url => { const u = String(url).toLowerCase(); return hub.startsWith(u) || u.startsWith('https://github.com'); };
   if (env.HOME) {
-    try { if (/(?:^|\s)(?:machine\s+github\.com|default)(?:\s|$)/i.test(fs.readFileSync(join(env.HOME, '.netrc'), 'utf8'))) found.add('a netrc entry that answers for github.com (.netrc in this user\'s home)'); }
-    catch (e) { if (e?.code !== 'ENOENT') found.add('a netrc that could not be read (.netrc in this user\'s home)'); }
+    // curl matches the host without regard to case, and accepts it quoted.
+    try { if (/(?:^|\s)(?:machine\s+"?github\.com"?|default)(?:\s|$)/i.test(fs.readFileSync(join(env.HOME, '.netrc'), 'utf8'))) routes.add('a netrc entry that answers for github.com (.netrc in this user\'s home)'); }
+    catch (e) { if (e?.code !== 'ENOENT') unread.add('the netrc in this user\'s home (.netrc)'); }
   }
-  for (const [flag, scope] of [['--system', 'system'], ['--global', 'user']]) {
+  const KEYS = '^(url\\..*\\.(insteadof|pushinsteadof)|http\\.(.*\\.)?extraheader|includeif\\..*\\.path)$';
+  const seen = new Set();
+  const scan = (source, scope, depth) => {
     let out;
-    try { out = exec('git', ['config', flag, '--includes', '-z', '--get-regexp', '^(url\\..*\\.(insteadof|pushinsteadof)|http\\.(.*\\.)?extraheader|includeif\\..*\\.path)$'], { env, acceptedStatus: [0, 1], trim: false }); }
-    catch { found.add(`the ${scope} Git configuration could not be read`); continue; }
-    for (const record of out.split('\0').filter(Boolean)) {
-      const cut = record.indexOf('\n'), key = cut < 0 ? record : record.slice(0, cut), value = cut < 0 ? '' : record.slice(cut + 1);
-      if (/^includeif\./i.test(key)) { found.add(`a conditional include (includeIf) in the ${scope} Git configuration, which this check cannot evaluate`); continue; }
-      if (/^url\./i.test(key)) { if (touches(value)) found.add(`a rewrite of https://github.com/ URLs (url.<base>.insteadOf or pushInsteadOf) in the ${scope} Git configuration`); continue; }
+    try { out = exec('git', ['config', ...source, '--includes', '--show-origin', '-z', '--get-regexp', KEYS], { env, acceptedStatus: [0, 1], trim: false }); }
+    catch { unread.add(depth ? `a file the ${scope} Git configuration conditionally includes` : `the ${scope} Git configuration`); return; }
+    const fields = out.split('\0');
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      const origin = fields[i], record = fields[i + 1], cut = record.indexOf('\n'), key = cut < 0 ? record : record.slice(0, cut), value = cut < 0 ? '' : record.slice(cut + 1);
+      if (/^includeif\./i.test(key)) {
+        // As Git resolves it: ~/ against the home, a relative path against the including file.
+        const from = origin.startsWith('file:') ? origin.slice(5) : null;
+        const path = value.startsWith('~/') && env.HOME ? join(env.HOME, value.slice(2)) : isAbsolute(value) ? value : from ? resolve(dirname(from), value) : null;
+        if (path === null || depth >= 8) { unread.add(`a file the ${scope} Git configuration conditionally includes`); continue; }
+        if (seen.has(path) || !fs.existsSync(path)) continue;   // Git ignores an include that is not there
+        seen.add(path); scan(['--file', path], scope, depth + 1); continue;
+      }
+      if (/^url\./i.test(key)) { if (touches(value)) routes.add(`a rewrite of https://github.com/ URLs (url.<base>.insteadOf or pushInsteadOf) in the ${scope} Git configuration`); continue; }
+      // Git lets * stand for a host label, so a wildcard host may be github.com.
       const scoped = /^http\.(.*)\.extraheader$/i.exec(key);
-      if ((!scoped || touches(scoped[1])) && /^\s*authorization\s*:/i.test(value)) found.add(`an authorization header (http.extraHeader) in the ${scope} Git configuration`);
+      if ((!scoped || touches(scoped[1]) || scoped[1].includes('*')) && /^\s*authorization\s*:/i.test(value)) routes.add(`an authorization header (http.extraHeader) in the ${scope} Git configuration`);
     }
-  }
-  return [...found];
+  };
+  scan(['--system'], 'system', 0); scan(['--global'], 'user', 0);
+  return { routes: [...routes], unread: [...unread] };
 }
 
 /** The seams a test replaces: which binaries exist and what gh answers. */
@@ -68,9 +83,9 @@ export const probes = {
 export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() } = {}) {
   const checks = [];
   const add = (id, status, detail, fix) => { checks.push({ id, status, detail, ...(fix ? { fix } : {}) }); return status === 'ok'; };
-  // A credential or configuration refusal carries its own whole fix after
-  // its first colon: that is the fix, never a generic one that contradicts it.
-  const ownFix = e => { const said = String(e?.message ?? ''), cut = said.indexOf(': '); return ['E_CREDENTIAL', 'E_CONFIG'].includes(e?.code) ? (cut < 0 ? said : said.slice(cut + 2)) : null; };
+  // A refusal that carries its own whole fix (`fix`) is fixed that way; every
+  // other problem keeps the fix of the step that found it.
+  const ownFix = e => typeof e?.fix === 'string' && e.fix ? e.fix : null;
   const guard = (id, fix, fn) => { try { return fn(); } catch (e) { add(id, 'problem', `${e.code ?? 'E_OKF'}: ${e.message}`, ownFix(e) ?? fix); return undefined; } };
   const done = mode => ({ ok: !checks.some(c => c.status === 'problem'), mode, checks });
 
@@ -94,8 +109,11 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
   // not isolate Git from the host: what answers before a helper is a problem
   // where the deployment opted into the separated credential.
   if (strict && git) {
-    const routes = probes.hostRoutes();
-    if (routes.length) add('host-git', 'problem', `Git on this host may not use the token in github-token-file: ${routes.join('; ')}`, 'remove each of them from the agents\' container (the token file is the one GitHub credential there), or remove settings.oats.okf.github-token-file to use this user\'s own login');
+    const { routes, unread } = probes.hostRoutes();
+    const found = [...routes, ...unread.map(what => `${what} could not be read`)];
+    const fixes = [...(routes.length ? ['remove each of them from the agents\' container (the token file is the one GitHub credential there), or remove settings.oats.okf.github-token-file to use this user\'s own login'] : []),
+      ...(unread.length ? ['repair what could not be read, or make it readable by this user, so that it can be checked'] : [])];
+    if (found.length) add('host-git', 'problem', `Git on this host may not use the token in github-token-file: ${found.join('; ')}`, fixes.join('; and '));
     else add('host-git', 'ok', 'no netrc entry, authorization header or URL rewrite answers for github.com in this user\'s home or the system and user Git configuration');
   }
 
