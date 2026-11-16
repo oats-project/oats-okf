@@ -180,7 +180,8 @@ told, not broken:
 | protection reads `none` or `unknown` | problem | warning |
 | ambient mode itself | n/a | warning that states section 2's guarantee |
 
-The command changes nothing, locally or remotely. It does not create the
+The command changes nothing on GitHub; locally it fills the host's consult
+cache, as any read does (found while building it). It does not create the
 repository, the ruleset or the credential: those need an administrator's
 login, which belongs outside the trust group.
 
@@ -317,8 +318,10 @@ were rehearsed and which were not.
    (Juan's side, 2026-11-12). The rehearsal establishes what GitHub reports
    for each kind of token.
 4. **The journey step** (one claim proposed, reviewed and merged on a fixture
-   repository) is added to the deployment bundle's journey by its owner once
-   `setup --check` exists (Juan's side, 2026-11-12).
+   repository) belongs to the acceptance journey of a deployment that runs
+   oats.okf, and its owner adds it there. No deployment's journey is
+   committed to it here (amended 2026-11-13: the deployment this was first
+   planned with keeps its own knowledge capability; the design stays generic).
 
 5. **The separated credential is opt-in** (Pepe's side, 2026-11-12, settled
    from recorded decisions and reported to Pepe, who may overrule): refusing
@@ -343,7 +346,8 @@ build may start.
    does not isolate Git from them (doing so would also drop a host's proxy
    and certificate settings). A deployment that sets `github-token-file`
    keeps none of them for github.com; the README says so, and `setup
-   --check` reports the ones it finds as a `problem` in file mode. The
+   --check` reports the ones it finds as a `problem` in file mode (a new
+   row of C3's table; ambient mode does not look). The
    publish predicate runs no Git, so they cannot answer it.
 3. **No rehearsal.** Pepe decided on 2026-11-16 to skip the rehearsal of
    section 5: no second GitHub identity and no test repository are provided.
@@ -354,3 +358,7 @@ build may start.
    what GitHub reports for such a token (role, permissions, protection),
    which `setup --check` reads. Each pull request and its release-notes
    entry names them.
+4. **C3, two additions.** The write test is the publish predicate of #148
+   and #157, as C1 required. A credential that can publish and for which
+   GitHub states no role (a GitHub App installation token) is a `warning` in
+   both modes: its permissions are the App's, which the check cannot read.

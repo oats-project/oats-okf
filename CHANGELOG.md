@@ -4,6 +4,40 @@
 
 ### Added
 
+- **A checked bring-up path for a deployment's knowledge store**
+  (oats-project/oats-okf#150). Nothing said what a deployment must provision
+  for knowledge to work, and nothing checked it. New: `oats okf setup --check
+  --soul <soul> [--json]`, read-only towards GitHub and unattended: it checks
+  the settings, the bindings and the state directory, `git` and `gh`, that
+  each base is reachable and valid, that the soul's declaration resolves, and
+  per Git base the credential (that it can publish, by the one check
+  `propose --apply` runs before its push; its identity's role), the accepted
+  branch's protection and the `okf-proposal` label. Every problem names its
+  whole fix; exit 1 when anything is missing. With `github-token-file` set,
+  an identity with the maintain or admin role and a protection that does not
+  read `enforced` are problems, and so is anything on the host that answers
+  GitHub before the token does (a netrc entry for github.com, an
+  authorization header or a rewrite of `https://github.com/` URLs in the
+  system or user Git configuration, included files followed, a
+  conditional include's file read as if its condition held; named by kind, never by
+  value). Without
+  the setting the first two are warnings, with one more that says what a
+  shared login means, so no existing deployment starts failing. A credential
+  GitHub states no role for (a GitHub App installation token) is a warning
+  in both modes. The README's new "Bringing up a deployment's knowledge
+  store" lists what to provision, in order, and who does it where;
+  `examples/knowledge-store/` has the accepted branch's ruleset.
+  - **Not proven in a live run.** No rehearsal against GitHub was made, and
+    no test claims these: (1) a proposal opened through `github-token-file`
+    on a real private repository; (2) GitHub refusing a write-role-only
+    credential a direct push to the accepted branch and a merge, under the
+    example ruleset (which has not been applied to a real repository); (3)
+    what GitHub reports for such a token (its role, its permissions, the
+    branch's protection), which this check reads, and whether a token with
+    contents and pull-requests write may write the label every proposal
+    creates or updates. The tests replace what
+    GitHub answers: they prove the table of findings and fixes.
+
 - **A proposer credential separate from the maintainer's**
   (oats-project/oats-okf#149). In a container every agent reads every
   credential, and knowledge writes used whatever `git` and `gh` found, which

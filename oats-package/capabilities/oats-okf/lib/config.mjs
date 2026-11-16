@@ -22,14 +22,18 @@ export function settings() {
   return s;
 }
 const TOKEN_FIXES = 'provision the deployment\'s proposer credential there (README: "The proposer credential"), or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user\'s own git and gh login';
-const HELPER_PATH = 'github-token-file cannot be used on this installation: the path of the Node binary or of oats.okf\'s publication helper contains a single quote, so Git cannot be given the credential helper: install them under a path without one, or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user\'s own git and gh login';
+const HELPER_PROBLEM = 'github-token-file cannot be used on this installation: the path of the Node binary or of oats.okf\'s publication helper contains a single quote, so Git cannot be given the credential helper';
+const HELPER_FIX = 'install them under a path without one, or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user\'s own git and gh login';
 const TOKEN_REASONS = { path: 'is not a usable path', missing: 'does not exist', 'not-a-file': 'is not a file', unreadable: 'cannot be read', empty: 'is empty', malformed: 'does not hold one token (one line of printable characters)' };
+// A refusal whose message ends in its own whole fix also carries it as
+// `fix`, for a caller that lists problem and fix apart (setup --check).
+const failFix = (code, problem, fix, tail = '') => { throw Object.assign(new Error(`${problem}: ${fix}${tail}`), { code, fix }); };
 /** E_CREDENTIAL, the whole fix in the message, never the file's content.
  *  `unsent`: only a caller that knows nothing left this host says so. */
 export function credentialRefusal(file, reason, { unsent = false } = {}) {
   const tail = unsent ? '; nothing was sent' : '';
-  if (reason === 'helper-path') fail('E_CREDENTIAL', HELPER_PATH + tail);
-  fail('E_CREDENTIAL', `github-token-file ${file} ${TOKEN_REASONS[reason] ?? 'cannot be used'}: ${TOKEN_FIXES}${tail}`);
+  if (reason === 'helper-path') failFix('E_CREDENTIAL', HELPER_PROBLEM, HELPER_FIX, tail);
+  failFix('E_CREDENTIAL', `github-token-file ${file} ${TOKEN_REASONS[reason] ?? 'cannot be used'}`, TOKEN_FIXES, tail);
 }
 /** oats.okf 6.2: the host's proposer credential file, or undefined (today's
  *  behaviour: the user's own git and gh login). Host-only: a path on one
@@ -43,8 +47,8 @@ export function tokenFile(env = process.env) {
   if (file === undefined) return undefined;
   const layer = parseOrigins(env.OATS_SETTINGS_ORIGINS)['/github-token-file'], kind = typeof layer?.kind === 'string' ? layer.kind : null;
   const move = 'set it in this deployment\'s oats-local.yaml under settings.oats.okf, and remove it';
-  if (kind === null && env.OATS_SETTINGS_ORIGINS !== undefined) fail('E_CONFIG', `github-token-file from an unknown origin is not valid: it is host-only (a path on one machine); ${move} wherever else it is set (soul.yaml knowledge:, oats-workspace.yaml, or a --provider oats.okf flag)`);
-  if (kind !== null && kind !== 'host') fail('E_CONFIG', `github-token-file from ${kind}${typeof layer.at === 'string' ? ` (${layer.at})` : ''} is not valid: it is host-only (a path on one machine); ${move} there`);
+  if (kind === null && env.OATS_SETTINGS_ORIGINS !== undefined) failFix('E_CONFIG', 'github-token-file from an unknown origin is not valid: it is host-only (a path on one machine)', `${move} wherever else it is set (soul.yaml knowledge:, oats-workspace.yaml, or a --provider oats.okf flag)`);
+  if (kind !== null && kind !== 'host') failFix('E_CONFIG', `github-token-file from ${kind}${typeof layer.at === 'string' ? ` (${layer.at})` : ''} is not valid: it is host-only (a path on one machine)`, `${move} there`);
   if (typeof file !== 'string' || !isAbsolute(file) || resolve(file) !== file || /[\0\r\n']/.test(file)) fail('E_CONFIG', 'github-token-file must be a normalized absolute path (no quote or line break)');
   return file;
 }
@@ -54,7 +58,7 @@ export function requireTokenBases(bindings, env = process.env) {
   const file = tokenFile(env);
   if (file === undefined) return bindings;
   for (const [alias, base] of Object.entries(bindings.bases)) {
-    if (base.kind === 'git' && !/^https:\/\/github\.com\//.test(base.repository)) fail('E_CREDENTIAL', `git base "${alias}" is not bound by an https://github.com/ URL, and github-token-file serves only those: bind it by its HTTPS URL in the bindings file, or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user's own git and gh login; nothing was sent`);
+    if (base.kind === 'git' && !/^https:\/\/github\.com\//.test(base.repository)) failFix('E_CREDENTIAL', `git base "${alias}" is not bound by an https://github.com/ URL, and github-token-file serves only those`, 'bind it by its HTTPS URL in the bindings file, or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user\'s own git and gh login', '; nothing was sent');
   }
   return bindings;
 }
@@ -121,7 +125,7 @@ export function loadBindings(file = settings()['bindings-file'], opts = {}) {
   safePath(file); return requireTokenBases({ file, ...validateBindings(readJSON(file),file,opts) });
 }
 export function declaration(soul) {
-  if(fs.existsSync(join(soul,'.okf-cutover.json'))) fail('E_MIGRATION','incomplete explicit migration cutover: rerun its recorded migrate --cutover command');
+  if(fs.existsSync(join(soul,'.okf-cutover.json'))) failFix('E_MIGRATION','incomplete explicit migration cutover','rerun its recorded migrate --cutover command');
   if(fs.existsSync(join(soul,'knowledge'))) fail('E_MIGRATION','legacy soul/knowledge exists: use oats okf migrate --soul <soul> to preserve and stage it, then explicit cutover; no automatic loss');
   if(!fs.existsSync(join(soul,'okf.json'))) fail('E_CONFIG',`soul has no okf.json: this soul reads/owns no knowledge yet. Provision it explicitly (oats okf init --soul <soul>, or oats okf migrate --soul <soul> for a legacy soul), or deactivate oats.okf for this soul; nothing was created`);
   return validateDeclaration(readJSON(join(soul,'okf.json')));
