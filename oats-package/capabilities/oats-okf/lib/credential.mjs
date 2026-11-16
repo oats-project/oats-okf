@@ -55,13 +55,13 @@ export function hostRefusal(diagnostic) {
 }
 
 /** The host scan, replaceable in tests only. */
-export const hostProbe = { scan: () => hostRoutes(cleanEnv()) };
+export const hostProbe = { scan: (env = process.env) => hostRoutes(cleanEnv(env)) };
 /** Before a push the library makes itself (a migration's delivery): with
  *  github-token-file, refuse E_HOST_CREDENTIAL while the host can answer
  *  GitHub in the token's place. Without the setting the host is not looked
  *  at. The publication helper applies the same gate to its own commands. */
 export function refuseHostRoutes(env = process.env) {
   if (tokenFile(env) === undefined) return;
-  const found = hostProbe.scan();
+  const found = hostProbe.scan(env);
   if (found.routes.length || found.unread.length) hostRefusal(found);
 }

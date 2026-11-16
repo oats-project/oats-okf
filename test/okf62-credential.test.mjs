@@ -163,8 +163,9 @@ test('with github-token-file, migrate --deliver to a Git base refuses E_HOST_CRE
   hostProbe.scan = saved.scan; fs.writeFileSync(join(d, '.netrc'), 'machine github.com login x password SECRET-VALUE\n');
   const real = code(() => deliverMigration(record));
   assert.equal(real.code, 'E_HOST_CREDENTIAL'); assert.match(real.message, /a netrc entry that answers for github\.com/); assert.ok(!real.message.includes('SECRET-VALUE')); assert.equal(fs.readFileSync(record, 'utf8'), before);
-  fs.rmSync(calls, { force: true });   // the scan itself asked the stand-in git for its configuration
+  // The scan itself asked the stand-in git for its configuration, and nothing else was started.
+  assert.ok(fs.readFileSync(calls, 'utf8').trim().split('\n').every(row => row.startsWith('git config ')), 'only the scan ran');
   // Without the setting the host is not looked at: the delivery goes on to its own checks, which refuse this stand-in record for their own reasons.
-  delete process.env.OATS_SETTINGS; delete process.env.OATS_SETTINGS_ORIGINS; hostProbe.scan = () => assert.fail('the host is the caller\'s own business');
-  assert.notEqual(code(() => deliverMigration(record)).code, 'E_HOST_CREDENTIAL');
+  delete process.env.OATS_SETTINGS; delete process.env.OATS_SETTINGS_ORIGINS; let ambient = 0; hostProbe.scan = () => { ambient += 1; return { routes: ['x'], unread: [] }; };
+  assert.notEqual(code(() => deliverMigration(record)).code, 'E_HOST_CREDENTIAL'); assert.equal(ambient, 0, 'the host is the caller\'s own business');
 });
