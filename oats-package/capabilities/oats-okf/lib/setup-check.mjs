@@ -37,7 +37,7 @@ export function hostRoutes(env = cleanEnv()) {
   if (env.HOME) {
     // curl matches the host without regard to case, and accepts it quoted.
     try { if (/(?:^|\s)(?:machine\s+"?github\.com"?|default)(?:\s|$)/i.test(fs.readFileSync(join(env.HOME, '.netrc'), 'utf8'))) routes.add('a netrc entry that answers for github.com (.netrc in this user\'s home)'); }
-    catch (e) { if (e?.code !== 'ENOENT') unread.add('the netrc in this user\'s home (.netrc)'); }
+    catch { /* absent, or not readable by this user: then Git's curl cannot read it either, and it is no route */ }
   }
   const KEYS = '^(url\\..*\\.(insteadof|pushinsteadof)|http\\.(.*\\.)?extraheader|includeif\\..*\\.path)$';
   const seen = new Set();
@@ -119,7 +119,7 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
 
   // 3. The soul's declaration, and each base.
   const decl = guard('declaration', 'give the soul an okf.json (oats okf init, or migrate), or deactivate oats.okf for it', () => {
-    if (!soul) throw Object.assign(new Error('no soul: run it as oats okf setup --check --soul <soul> from the deployment'), { code: 'E_USAGE' });
+    if (!soul) throw Object.assign(new Error('no soul: run it as oats okf setup --check --soul <soul> from the deployment'), { code: 'E_USAGE', fix: 'run it as oats okf setup --check --soul <soul> from the deployment' });
     return declaration(fs.realpathSync(soul));
   });
   const gitBases = Object.entries(bindings.bases).filter(([, b]) => b.kind === 'git');
@@ -143,8 +143,8 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
     let publishes = false;
     try { probes.publish(alias, base); publishes = true; }
     catch (e) {
-      const prefix = `base ${alias} (${repo}): `, said = String(e?.message ?? '');
-      if (e?.code === 'E_GH_UNAVAILABLE') add(`credential:${alias}`, 'problem', `the credential (${mode}) cannot publish to ${repo} (${e.result?.reason ?? 'unknown'}): proposals cannot push a branch or open a pull request`, said.startsWith(prefix) ? said.slice(prefix.length) : said);
+      const said = String(e?.message ?? '');
+      if (e?.code === 'E_GH_UNAVAILABLE') add(`credential:${alias}`, 'problem', `the credential (${mode}) cannot publish to ${repo} (${e.result?.reason ?? 'unknown'}): proposals cannot push a branch or open a pull request`, ownFix(e) ?? said);
       else add(`credential:${alias}`, 'problem', `${e?.code ?? 'E_OKF'}: ${said}`, ownFix(e) ?? 'the check itself could not run: run oats okf setup --check again, and if it repeats report this code to whoever maintains the deployment');
     }
     if (!publishes) continue;

@@ -64,7 +64,7 @@ test('ambient mode tells and does not break: an admin login, no branch rule and 
 
 test('in either mode a credential that cannot write, an unreadable repository, a missing gh and an unusable state directory are problems', t => {
   // The write test is the one publish predicate: its refusal is the problem, its fix line the fix.
-  const asked = [], refuse = reason => (alias, base) => { asked.push([alias, base.pr.repository]); throw Object.assign(new Error(`base kb (acme/kb): the predicate's own fix for ${reason}`), { code: 'E_GH_UNAVAILABLE', result: { reason } }); };
+  const asked = [], refuse = reason => (alias, base) => { asked.push([alias, base.pr.repository]); throw Object.assign(new Error(`base kb (acme/kb): the predicate's own fix for ${reason}`), { code: 'E_GH_UNAVAILABLE', fix: `the predicate's own fix for ${reason}`, result: { reason } }); };
   for (const reason of ['no-write-permission', 'gh-failed', 'installation-cannot-push', 'installation-check-failed']) {
     const r = check(t, fixture(t), { publish: refuse(reason), gh: () => assert.fail('the role is not read for a credential that cannot publish') });
     assert.equal(r.ok, false);
@@ -93,6 +93,12 @@ test('in either mode a credential that cannot write, an unreadable repository, a
 test('a soul without a declaration, or one the base does not agree with, is a problem that names the fix', t => {
   const f = fixture(t); fs.rmSync(join(f.soul, 'okf.json'));
   assert.equal(by(check(t, f), 'declaration').status, 'problem');
+  // Refusals that end in their own fix carry it: no soul named, and a soul in the middle of a cutover.
+  const c = fixture(t); fs.writeFileSync(join(c.soul, '.okf-cutover.json'), '{}');
+  assert.deepEqual(by(check(t, c), 'declaration'), { id: 'declaration', status: 'problem', detail: 'E_MIGRATION: incomplete explicit migration cutover: rerun its recorded migrate --cutover command', fix: 'rerun its recorded migrate --cutover command' });
+  const n = fixture(t), saved = { ...probes }; t.after(() => Object.assign(probes, saved)); check(t, n);
+  delete process.env.OATS_SOUL;
+  assert.deepEqual(by(setupCheck({ soul: undefined, home: n.dir }), 'declaration'), { id: 'declaration', status: 'problem', detail: 'E_USAGE: no soul: run it as oats okf setup --check --soul <soul> from the deployment', fix: 'run it as oats okf setup --check --soul <soul> from the deployment' });
   const g = fixture(t); json(join(g.soul, 'okf.json'), { version: 1, owner: 'someone-else', owns: ['kb/expert'], reads: [] });
   const r = check(t, g);
   assert.equal(r.ok, false); assert.equal(by(r, 'declaration').status, 'problem'); assert.match(by(r, 'declaration').fix, /so they agree/);
@@ -185,6 +191,8 @@ test('hostRoutes reads the user\'s netrc and Git configuration with real git: ki
   // Git lets * stand for a host label; curl accepts a quoted netrc host.
   fs.writeFileSync(join(home, '.gitconfig'), '[http "https://*.com/"]\n\textraheader = "Authorization: Basic SECRET-VALUE"\n'); fs.writeFileSync(join(home, '.netrc'), 'machine "github.com" login x password SECRET-VALUE\n');
   assert.deepEqual(hostRoutes(env).routes, ['a netrc entry that answers for github.com (.netrc in this user\'s home)', 'an authorization header (http.extraHeader) in the user Git configuration']);
+  // A netrc this user cannot read is no route: Git's curl cannot read it either.
+  if (process.getuid?.() !== 0) { fs.chmodSync(join(home, '.netrc'), 0o000); fs.writeFileSync(join(home, '.gitconfig'), ''); assert.deepEqual(hostRoutes(env), { routes: [], unread: [] }); fs.chmodSync(join(home, '.netrc'), 0o600); }
   fs.writeFileSync(join(home, '.gitconfig'), '[broken\n'); fs.rmSync(join(home, '.netrc'));
   assert.deepEqual(hostRoutes(env), { routes: [], unread: ['the system Git configuration', 'the user Git configuration'] }, 'git reads no scope while one is broken');
 });
