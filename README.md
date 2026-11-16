@@ -69,7 +69,6 @@ settings:
 | `git-timeout` | Seconds for each Git operation that talks to a remote (clone, fetch, push, ls-remote); default 600. Local object reads keep a short fixed limit. |
 | `consult-max-age` | Seconds a Git base's cached accepted commit may age before a consult read refetches; default 300, 0 refetches on every read. |
 | `screen-terms-file` | Optional (6.0). Absolute path of a host text file, one term per line: `oats okf propose` refuses any outgoing content (concepts, file names, commit text, PR body, branch) containing a term, case-insensitively, as rule `host-term`, by location only. It only adds refusals. Absent: the fixed content-screen rules only. |
-
 | `github-token-file` | Optional (6.2), **host-only**. Absolute path of a file holding one GitHub token, the deployment's proposer credential: see [The proposer credential](#the-proposer-credential). Absent: the user's own `git` and `gh` login, as before. |
 
 Any other key is refused (`E_CONFIG`).
@@ -144,7 +143,10 @@ When it is set:
   locator refuses with `E_CREDENTIAL`, naming the base and the fix.
 - A missing, unreadable, empty or malformed file refuses with
   `E_CREDENTIAL`, naming the path and both fixes (provision the file, or
-  remove the setting). There is no fall-back to another credential.
+  remove the setting). There is no fall-back to another credential. A
+  consult read whose fetch fails for that reason still serves the cached
+  accepted commit, `stale` with that reason, like any failed fetch: a
+  secret that is not mounted yet does not stop the agents reading.
 
 **It is host-only.** The value is a path on one machine. The kernel accepts
 it only from the deployment's own `oats-local.yaml` (a soul, a workspace file

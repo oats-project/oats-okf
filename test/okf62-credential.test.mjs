@@ -10,6 +10,8 @@ import { spawnSync } from 'node:child_process';
 import { tokenEnv, readToken } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 import { tokenFile, requireTokenBases } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { credentialMode, gitCredentialEnv, ghEnv, refuseBadTokenFile } from '../oats-package/capabilities/oats-okf/lib/credential.mjs';
+import { staleReason } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
+import { unavailable } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
 
 const TOKEN = 'synthetic-token-0123456789';
 function scratch(t) { const d = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'okf61-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; }
@@ -98,7 +100,22 @@ test('the library\'s one seam: mode, a git environment that reads no token, a gh
   for (const fn of [() => ghEnv(base, on), () => refuseBadTokenFile(on)]) {
     const e = code(fn);
     assert.equal(e.code, 'E_CREDENTIAL');
-    assert.equal(e.message, `github-token-file ${f} does not exist: provision the deployment's proposer credential there (README: "The proposer credential"), or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user's own git and gh login; nothing was sent`);
+    assert.equal(e.message, `github-token-file ${f} does not exist: provision the deployment's proposer credential there (README: "The proposer credential"), or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user's own git and gh login`, 'never "nothing was sent": a gh call can follow a push');
   }
   refuseBadTokenFile({});
+});
+
+test('an unusable token file fails a fetch like any authentication failure: a due consult read serves the cached commit, stale with the fix', t => {
+  const d = scratch(t), f = join(d, 'absent'), saved = { ...process.env }, base = { repository: 'https://github.com/o/r.git' };
+  t.after(() => { for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); });
+  const failed = () => code(() => unavailable(base, 'kb', 'fetch', new Error("fatal: could not read Username for 'https://github.com': terminal prompts disabled")));
+  delete process.env.OATS_SETTINGS; delete process.env.OATS_SETTINGS_ORIGINS;
+  const ambient = failed();
+  assert.equal(ambient.code, 'E_BASE_UNAVAILABLE'); assert.match(staleReason(ambient, 'T'), /^fetch of the accepted branch failed at T \(reason: auth\); serving the last fetched accepted commit$/);
+  Object.assign(process.env, settingsEnv(f));
+  const file = failed();
+  assert.equal(file.code, 'E_CREDENTIAL');
+  assert.match(staleReason(file, 'T'), new RegExp(`^fetch of the accepted branch failed at T \\(reason: credential; github-token-file ${f} does not exist: provision .*\\); serving the last fetched accepted commit$`));
+  // Anything else is not a failed fetch and is not served over.
+  assert.equal(staleReason(Object.assign(new Error('x'), { code: 'E_CONFIG' }), 'T'), null); assert.equal(staleReason(new Error('x'), 'T'), null);
 });

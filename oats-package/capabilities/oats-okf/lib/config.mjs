@@ -22,10 +22,14 @@ export function settings() {
   return s;
 }
 const TOKEN_FIXES = 'provision the deployment\'s proposer credential there (README: "The proposer credential"), or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user\'s own git and gh login';
+const HELPER_PATH = 'github-token-file cannot be used on this installation: the path of the Node binary or of oats.okf\'s publication helper contains a single quote, so Git cannot be given the credential helper: install them under a path without one, or remove settings.oats.okf.github-token-file from oats-local.yaml to use this user\'s own git and gh login';
 const TOKEN_REASONS = { path: 'is not a usable path', missing: 'does not exist', 'not-a-file': 'is not a file', unreadable: 'cannot be read', empty: 'is empty', malformed: 'does not hold one token (one line of printable characters)' };
-/** E_CREDENTIAL, the whole fix in the message, never the file's content. */
-export function credentialRefusal(file, reason) {
-  fail('E_CREDENTIAL', `github-token-file ${file} ${TOKEN_REASONS[reason] ?? 'cannot be used'}: ${TOKEN_FIXES}; nothing was sent`);
+/** E_CREDENTIAL, the whole fix in the message, never the file's content.
+ *  `unsent`: only a caller that knows nothing left this host says so. */
+export function credentialRefusal(file, reason, { unsent = false } = {}) {
+  const tail = unsent ? '; nothing was sent' : '';
+  if (reason === 'helper-path') fail('E_CREDENTIAL', HELPER_PATH + tail);
+  fail('E_CREDENTIAL', `github-token-file ${file} ${TOKEN_REASONS[reason] ?? 'cannot be used'}: ${TOKEN_FIXES}${tail}`);
 }
 /** oats.okf 6.2: the host's proposer credential file, or undefined (today's
  *  behaviour: the user's own git and gh login). Host-only: a path on one

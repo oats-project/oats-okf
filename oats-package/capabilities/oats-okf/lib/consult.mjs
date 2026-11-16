@@ -101,6 +101,15 @@ function gitContext(bindings, alias, base, cache, state, { offline = false } = {
   if (state.error) receipt.reason = state.error;
   return { alias, base, bindings, kind: 'git', cache, commit, receipt };
 }
+/** Why a failed fetch still serves the cached commit, or null when it must
+ *  not. An unusable github-token-file (6.2) is such a failure like any other
+ *  authentication failure: a secret that is not mounted yet, or a refresher
+ *  mid-write, must not fail every agent's read. The reason names its fix. */
+export function staleReason(e, now) {
+  if (e?.code === 'E_BASE_UNAVAILABLE') return `fetch of the accepted branch failed at ${now} (reason: ${e.reason || 'unknown'}); serving the last fetched accepted commit`;
+  if (e?.code === 'E_CREDENTIAL') return `fetch of the accepted branch failed at ${now} (reason: credential; ${e.message}); serving the last fetched accepted commit`;
+  return null;
+}
 function resolveGit(bindings, alias, base, { fresh = false, preferCached = false } = {}) {
   const cache = cacheDir(bindings, base), lock = cacheLock(bindings, base);
   fs.mkdirSync(dirname(cache), { recursive: true, mode: 0o700 });
@@ -133,9 +142,9 @@ function resolveGit(bindings, alias, base, { fresh = false, preferCached = false
       }
       try { fetchAccepted(base, alias, cache); state = { ...state, fetchedAt: now, attemptedAt: now, error: null }; }
       catch (e) {
-        if (e.code !== 'E_BASE_UNAVAILABLE') throw e;
         // Serve the last fetched accepted commit, loudly; retry after max-age or --fresh.
-        state = { ...state, attemptedAt: now, error: `fetch of the accepted branch failed at ${now} (reason: ${e.reason || 'unknown'}); serving the last fetched accepted commit` };
+        const error = staleReason(e, now); if (error === null) throw e;
+        state = { ...state, attemptedAt: now, error };
       }
       save(stateFile(cache), state);
       return gitContext(bindings, alias, base, cache, state);

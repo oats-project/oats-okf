@@ -184,7 +184,12 @@ to `git` through the helper's own `git-credential` mode for
 `https://github.com` only and to `gh` in that child's environment, and never
 appears in an argument or a result. A missing or malformed file is
 `E_CREDENTIAL` with `diagnostic.reason` (`missing`, `unreadable`,
-`not-a-file`, `empty`, `malformed`, `path`), exit 2, before anything is sent.
+`not-a-file`, `empty`, `malformed`, `path`; `helper-path` when the Node
+binary's or this script's own path contains a single quote), exit 2. The
+file is checked when a command starts, before anything is sent, and read
+again at each use: when it turns unusable later, `create` reports
+`published` after its push, and on `rewrite`, `merge` and `close` an
+`E_CREDENTIAL` can follow a push or a posted comment.
 The gate is still not a sandbox: it does not hide the file from the caller.
 
 ## Create

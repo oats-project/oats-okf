@@ -17,10 +17,13 @@ export const credentialMode = (env = process.env) => tokenFile(env) === undefine
  *  remote wants one, so local Git work never depends on the file. */
 export function gitCredentialEnv(base, env = process.env) {
   const file = tokenFile(env);
-  return file === undefined ? base : tokenEnv(base, file);
+  if (file === undefined) return base;
+  try { return tokenEnv(base, file); }
+  catch (e) { if (e?.code === 'E_CREDENTIAL') credentialRefusal(file, e.diagnostic?.reason); throw e; }
 }
 /** A gh child's environment. A bad token file refuses here (E_CREDENTIAL,
- *  naming the fix) before gh starts. */
+ *  naming the fix) before gh starts. A caller may be past a push by then
+ *  (a delivery's PR step), so the refusal never claims nothing was sent. */
 export function ghEnv(base, env = process.env) {
   const file = tokenFile(env);
   if (file === undefined) return base;

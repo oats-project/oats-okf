@@ -600,7 +600,7 @@ export function runHelper(command, options) {
     // Before anything was sent, an unusable token file is the whole-fix
     // refusal. After the push it is a publication error like any other: it
     // keeps what was published, and never says "nothing was sent".
-    if (code === 'E_CREDENTIAL' && options['token-file'] && !e.published) credentialRefusal(options['token-file'], e.diagnostic?.reason);
+    if (code === 'E_CREDENTIAL' && options['token-file'] && !e.published) credentialRefusal(options['token-file'], e.diagnostic?.reason, { unsent: true });
     const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) };
     failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : code === 'E_CREDENTIAL' && e.published ? 'the token in github-token-file became unusable after the push (its file was missing, empty or malformed when gh needed it)' : `the publication helper refused (${code})`, result);
   }
@@ -634,7 +634,7 @@ export function checkPublish(alias, base) {
   const repository = base.pr.repository, file = tokenFile();
   try { publication.execute('preflight', { github: repository, ...tokenOption() }); }
   catch (e) {
-    if (e?.code === 'E_CREDENTIAL' && file !== undefined) credentialRefusal(file, e.diagnostic?.reason);
+    if (e?.code === 'E_CREDENTIAL' && file !== undefined) credentialRefusal(file, e.diagnostic?.reason, { unsent: true });
     if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
     const reason = e.diagnostic?.reason;
     failWith('E_GH_UNAVAILABLE', `base ${alias} (${repository}): ${(file === undefined ? GH_FIX : TOKEN_FIX)[reason] ?? 'gh is not usable'}`, { reason, alias, repository, pushed: false, ...(file === undefined ? {} : { credential: 'file' }) });

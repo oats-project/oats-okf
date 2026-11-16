@@ -16,7 +16,7 @@ const validator = fileURLToPath(new URL('./okf-validate.mjs', import.meta.url));
 // With github-token-file (6.2) the same environment carries the one credential source.
 export const gitEnv = (env = cleanEnv()) => gitCredentialEnv({...env,GIT_NO_REPLACE_OBJECTS:'1',GIT_GRAFT_FILE:'/dev/null/no-grafts'});
 /** Every gh child of the library: the deployment's credential, or the user's own login. */
-export const ghChildEnv = (env = cleanEnv()) => ghEnv({...env});
+export const ghChildEnv = (env = cleanEnv()) => ghEnv(env);
 export const git = (cwd,args,opts={}) => exec('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','protocol.ext.allow=never','-c','core.commitGraph=false','-C',cwd,...args],{cwd,...opts,env:gitEnv(opts.env)});
 function baseError(code,message,base,alias,step,reason) {throw Object.assign(new Error(redactUrls(message)),{code,base:alias,repository:displayRepo(base.repository),step,reason});}
 function baseRemedy(alias) {return `fix the binding for base alias "${alias}" in the bindings file, or remove the base from the bindings`;}

@@ -22,9 +22,9 @@ function inspectBytes(bytes, location, options) {
 const oid = value => { if (!OID.test(value || '')) fail('E_OID'); return value; };
 // Native credentials stay available; inherited Git selectors, external diff,
 // replacement objects, hooks and interactive prompts cannot change the gate.
-function env() {
+function env({ gh = false } = {}) {
   return tokenEnv({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/.test(k))),
-    GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' }, tokenFile);
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' }, tokenFile, { gh });
 }
 // oats.okf 6.2: the deployment's proposer credential, a GitHub token in a file
 // (setting github-token-file, or --token-file here). When one is named, every
@@ -67,7 +67,7 @@ const INHERITED = /^(?:GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRI
  *  file there is an authentication failure). `file` absent: `base`. */
 export function tokenEnv(base, file, { gh = false } = {}) {
   if (file === undefined || file === null) return base;
-  if (/'/.test(process.execPath) || /'/.test(SELF)) throw credentialError('path');
+  if (/'/.test(process.execPath) || /'/.test(SELF)) throw credentialError('helper-path');
   const config = [['core.askPass', ''], ['credential.helper', ''], ['credential.https://github.com.helper', `!'${process.execPath}' '${SELF}' git-credential`],
     ['credential.https://github.com.useHttpPath', 'false'], ['protocol.ssh.allow', 'never'], ['protocol.git.allow', 'never'], ['protocol.http.allow', 'never']];
   const out = Object.fromEntries(Object.entries(base).filter(([k]) => !INHERITED.test(k)));
@@ -122,7 +122,7 @@ function uncertain(code, diagnostic) {
   throw Object.assign(new Error(code), { code, diagnostic: diagnostic ?? uncertaintyDiagnostic() });
 }
 function run(command, args, { cwd, input, optional = false, indexFile, publication = false } = {}) {
-  const childEnv = command === 'gh' ? tokenEnv(env(), tokenFile, { gh: true }) : env();
+  const childEnv = env({ gh: command === 'gh' });
   // Only an internally-created private reconciliation index supplies this.
   // Inherited GIT_INDEX_FILE was already removed by env().
   if (indexFile) childEnv.GIT_INDEX_FILE = indexFile;
@@ -336,7 +336,7 @@ function gh(o, args, input) { github(o); return run('gh', args, { input }); }
 export function publishPreflight(o) {
   github(o);
   const unavailable = reason => { throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
-  const ghEnv = tokenEnv(env(), tokenFile, { gh: true });
+  const ghEnv = env({ gh: true });
   const r = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${o.github}`, '--jq', '.permissions.push'], { env: ghEnv, timeout: 60000, maxBuffer: MAX });
   if (r.error?.code === 'ENOENT') unavailable('gh-absent');
   if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
