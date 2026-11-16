@@ -363,8 +363,9 @@ build may start.
    GitHub states no role (a GitHub App installation token) is a `warning` in
    both modes: its permissions are the App's, which the check cannot read.
 5. **A publication refuses on what item 2 names** (asked by Juan's side on
-   its read of #153 and #155, 2026-11-16). In file mode `propose --apply`
-   and the maintainer's helper look at the host before the push and refuse
+   its read of #153 and #155, 2026-11-16). In file mode `propose --apply`,
+   `migrate --deliver` and the maintainer's helper look at the host before
+   the push and refuse
    with `E_HOST_CREDENTIAL` when a netrc entry, an authorization header or a
    URL rewrite answers for github.com; the package resets `http.extraHeader`
    for its own Git calls. `setup --check` reports the same findings. Reads

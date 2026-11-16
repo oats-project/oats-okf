@@ -12,14 +12,15 @@
   `https://github.com/` URLs on the host; until now only `setup --check`
   reported them. Now `propose --apply` (before anything is pushed and before
   the proposal is marked as attempted; the same `--apply` works once the
-  host is fixed) and every publishing command of the maintainer's helper
-  run with `--token-file` look at the host first and refuse with the new
+  host is fixed), `oats okf migrate --deliver` to a Git base (before it
+  fetches, records a push intent or pushes) and every publishing command of
+  the maintainer's helper run with `--token-file` look at the host first and refuse with the new
   `E_HOST_CREDENTIAL`, naming each kind found (never a value) and the whole
   fix. The package also resets `http.extraHeader` for its own Git calls in
   this mode, unscoped and for `https://github.com/`: a host header no longer
   travels with them (this drops any other header a host set that way too),
   and a header scoped more narrowly is what the refusal catches. Not
-  refused: reads (a consult fetch) and `oats okf migrate --deliver`.
+  refused: reads (a consult fetch).
   **Without `github-token-file`, nothing changes.**
   - **Still not proven in a live run** (as for #149 and #150 below): a
     proposal opened through `github-token-file` on a real private
