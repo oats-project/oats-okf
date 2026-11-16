@@ -202,7 +202,7 @@ function tracedGit(f,{failFetch=false,batchFault=null}={}) {
   write(join(bin,'git'),`#!${process.execPath}
 const fs=require('node:fs'),cp=require('node:child_process');
 const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');
-if(${failFetch} && args.includes('fetch')) {console.error('network is unreachable');process.exit(1);}
+if(${JSON.stringify(failFetch)} && args.includes('fetch')) {console.error(${JSON.stringify(typeof failFetch==='string'?failFetch:'network is unreachable')});process.exit(1);}
 if(${JSON.stringify(batchFault)} && args.includes('--batch')) {
   const input=fs.readFileSync(0,'utf8'),oid=input.split('\\n')[0];
   const faults={missing:oid+' missing\\n',wrong:'0'.repeat(40)+' blob 0\\n\\n',truncated:oid+' blob 99\\nx',type:oid+' tree 0\\n\\n',delimiter:oid+' blob 0\\nx',trailing:input.trim().split('\\n').map(id=>id+' blob 0\\n\\n').join('')+'extra'};
@@ -253,6 +253,30 @@ test('spawn uses an expired cached commit without fetching or renewing it; the f
   assert.match(read.out.result.text,/New accepted content/);
   assert.equal(read.out.result.receipt.stale,false);
   assert.equal(trace.calls().filter(a=>a.includes('fetch')).length,1);
+});
+
+// oats.okf 6.2 (#149): the read itself, through resolveGit. The base is bound
+// by its https://github.com/ URL, which this host's Git rewrites to the local
+// fixture repository; the fetch failure is the one Git reports when its
+// credential helper yields nothing.
+test('with github-token-file, a due read whose fetch fails on an unusable token file serves the cached commit, stale with the file and its fix',t=>{
+  const f=fixture(t,{repository:'https://github.com/acme/kb.git'}),head=f.git('rev-parse','HEAD'),token=join(f.dir,'token');
+  write(join(f.user,'.gitconfig'),`[url "${f.repo}"]\n\tinsteadOf = https://github.com/acme/kb.git\n`);
+  write(token,'synthetic-token\n');
+  const settings={'github-token-file':token},trace=tracedGit(f,{failFetch:"fatal: could not read Username for 'https://github.com': terminal prompts disabled"});
+  const primed=run(f,['bases','--json'],{settings});
+  assert.equal(primed.status,0,primed.stdout+primed.stderr);assert.equal(primed.out.result.bases[0].commit,head);
+  expire(f);fs.rmSync(token);
+  const read=run(f,['cat','--base','project','/expert/decision.md','--json'],{...trace,settings});
+  assert.equal(read.status,0,read.stdout+read.stderr);
+  const receipt=read.out.result.receipt;
+  assert.equal(receipt.commit,head);assert.equal(receipt.stale,true);
+  assert.match(receipt.reason,new RegExp(`reason: credential; github-token-file ${token} does not exist: provision .*serving the last fetched accepted commit`));
+  assert.equal(trace.calls().filter(a=>a.includes('fetch')).length,1,'the fetch was tried');
+  // The file is back: the same failure is an authentication failure like any other, still served.
+  write(token,'synthetic-token\n');expire(f);
+  const auth=run(f,['cat','--base','project','/expert/decision.md','--json'],{...trace,settings});
+  assert.equal(auth.status,0,auth.stdout);assert.equal(auth.out.result.receipt.stale,true);assert.match(auth.out.result.receipt.reason,/reason: auth\)/);
 });
 
 test('spawn honors read-only refs and never clears failed-fetch state; read TTL zero still fetches',t=>{

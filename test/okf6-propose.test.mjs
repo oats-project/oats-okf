@@ -418,6 +418,18 @@ test('an installation credential GitHub refuses, or that could not be checked, r
   }
 });
 
+test('a credential refusal at create, before its push, reaches the operator whole: nothing was pushed, and the refusal\'s own text with its fix', async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'k' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'k' }).result, wrapped = publication.execute;
+    publication.execute = (command, o) => { if (command !== 'create') return wrapped(command, o); throw Object.assign(new Error('E_CREDENTIAL'), { code: 'E_CREDENTIAL', diagnostic: { phase: 'credential', reason: 'empty' } }); };
+    let error; try { propose(f.home, { apply: true, slug: 'k', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
+    assert.equal(error?.code, 'E_CREDENTIAL');
+    assert.match(error.message, /Do not retry: report it; nothing was pushed for base kb: the publication helper refused \(E_CREDENTIAL\)$/);
+    assert.equal(error.result.failed.published, undefined);
+  });
+});
 test('a snapshot that cannot be written after the attempt began fails inside the publication envelope, with the published rows', { skip: process.getuid?.() === 0 && 'root ignores directory modes' }, async t => {
   const f = fixture(t);
   await inProcess(f, async () => {

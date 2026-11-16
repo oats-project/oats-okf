@@ -868,7 +868,7 @@ export function apply(source, slug, expected) {
       const pushed = e.result?.published;
       const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}), ...(pushed ? { published: pushed } : {}) };
       try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
-      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${aftermath(code, r, branch, bodyFile, pushed, late)}`,
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${code === 'E_CREDENTIAL' && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late)}`,
         { published, failed: safe, proposal: dir });
     }
   }

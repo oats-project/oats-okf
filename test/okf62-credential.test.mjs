@@ -105,7 +105,7 @@ test('the library\'s one seam: mode, a git environment that reads no token, a gh
   refuseBadTokenFile({});
 });
 
-test('an unusable token file fails a fetch like any authentication failure: a due consult read serves the cached commit, stale with the fix', t => {
+test('after a fetch that failed on authentication, an unusable token file refuses E_CREDENTIAL and staleReason accepts it as a failed fetch (the read itself: okf5-consult)', t => {
   const d = scratch(t), f = join(d, 'absent'), saved = { ...process.env }, base = { repository: 'https://github.com/o/r.git' };
   t.after(() => { for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); });
   const failed = () => code(() => unavailable(base, 'kb', 'fetch', new Error("fatal: could not read Username for 'https://github.com': terminal prompts disabled")));
