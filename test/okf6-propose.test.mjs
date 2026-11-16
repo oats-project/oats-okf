@@ -432,6 +432,19 @@ test('a host that can answer GitHub in the token file\'s place refuses --apply b
   });
 });
 
+test('a host route that appears between the gate and create refuses at create, after the marker: not re-appliable, nothing pushed for that base, the kinds and the fix in the message', async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'r' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'r' }).result, wrapped = publication.execute;
+    publication.execute = (command, o) => { if (command !== 'create') return wrapped(command, o); throw Object.assign(new Error('E_HOST_CREDENTIAL'), { code: 'E_HOST_CREDENTIAL', diagnostic: { phase: 'host', routes: ['a netrc entry that answers for github.com (.netrc in this user\'s home)'], unread: [] } }); };
+    let error; try { propose(f.home, { apply: true, slug: 'r', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
+    assert.equal(error?.code, 'E_HOST_CREDENTIAL');
+    assert.match(error.message, /Do not retry: report it; nothing was pushed for base kb: Git on this host may not use the token in github-token-file: a netrc entry that answers for github\.com \(\.netrc in this user's home\): remove each of them /);
+    assert.ok(fs.existsSync(join(plan.proposal, 'publish')), 'the proposal is marked as attempted'); assert.equal(error.result.failed.published, undefined);
+  });
+});
+
 test('a credential refusal at create, before its push, says nothing was pushed for that base and carries the helper\'s refusal text', async t => {
   const f = fixture(t);
   await inProcess(f, async () => {

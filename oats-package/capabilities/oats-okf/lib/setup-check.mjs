@@ -100,7 +100,9 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
     try { probes.publish(alias, base); publishes = true; }
     catch (e) {
       const said = String(e?.message ?? '');
-      if (e?.code === 'E_GH_UNAVAILABLE') add(`credential:${alias}`, 'problem', `the credential (${mode}) cannot publish to ${repo} (${e.result?.reason ?? 'unknown'}): proposals cannot push a branch or open a pull request`, ownFix(e) ?? said);
+      // The predicate refuses on the host before it judges the token: host-git above says what and how to fix it.
+      if (e?.code === 'E_HOST_CREDENTIAL') add(`credential:${alias}`, 'problem', `the credential (${mode}) was not judged for ${repo}, nor were its role, the branch's protection and the label read: the host-git problem above stops the publish check`, 'fix the host-git problem, then run oats okf setup --check again');
+      else if (e?.code === 'E_GH_UNAVAILABLE') add(`credential:${alias}`, 'problem', `the credential (${mode}) cannot publish to ${repo} (${e.result?.reason ?? 'unknown'}): proposals cannot push a branch or open a pull request`, ownFix(e) ?? said);
       else add(`credential:${alias}`, 'problem', `${e?.code ?? 'E_OKF'}: ${said}`, ownFix(e) ?? 'the check itself could not run: run oats okf setup --check again, and if it repeats report this code to whoever maintains the deployment');
     }
     if (!publishes) continue;

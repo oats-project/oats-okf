@@ -35,7 +35,9 @@ function env({ gh = false } = {}) {
 // and never another credential, and SSH, git:// and plain HTTP are refused,
 // so no SSH key stands in (a local repository stays readable). Git is NOT isolated from the host's own
 // configuration: a netrc, an http.extraHeader or a URL rewrite there answers
-// before any helper is asked (the README says a deployment keeps none). The file is read at each
+// before any helper is asked. tokenEnv resets http.extraHeader, unscoped and
+// for https://github.com/, and hostGate refuses every publishing command
+// while one of the three exists; a read (a fetch) is not refused. The file is read at each
 // use, so a rotated token needs no restart. The token never reaches an
 // argument, an error or a log: git asks this script (`git-credential`, for
 // https://github.com only), and gh gets it in its own child environment.

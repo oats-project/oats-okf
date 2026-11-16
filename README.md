@@ -1120,7 +1120,9 @@ fully have; for a GitHub App installation token GitHub states no role, so
 what the App was granted is checked by eye; `enforced` is readable only from
 a ruleset, or from classic protection with an administrator's login; and the
 host check reads the user's netrc and the system and user Git configuration,
-not a clone's own. **None of it has been run against GitHub with a
+not a clone's own; a host problem it finds there stops the publish check,
+so the credential, its role, the protection and the label are then not read
+until the host is fixed and the check is run again. **None of it has been run against GitHub with a
 write-role-only credential:** what GitHub reports for such a token, and that
 GitHub then refuses it a direct push and a merge under the ruleset in
 `examples/knowledge-store/`, are not proven in a live run. A deployment's own acceptance run
