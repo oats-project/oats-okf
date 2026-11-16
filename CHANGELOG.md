@@ -18,8 +18,8 @@
   read `enforced` are problems, and so is anything on the host that answers
   GitHub before the token does (a netrc entry for github.com, an
   authorization header or a rewrite of `https://github.com/` URLs in the
-  system or user Git configuration, included files followed and a
-  conditional include reported as not evaluable; named by kind, never by
+  system or user Git configuration, included files followed, a
+  conditional include's file read as if its condition held; named by kind, never by
   value). Without
   the setting the first two are warnings, with one more that says what a
   shared login means, so no existing deployment starts failing. A credential
