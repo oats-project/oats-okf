@@ -329,3 +329,28 @@ were rehearsed and which were not.
 
 Both sides agreed C1 to C4 on 2026-11-12 with the changes recorded here. The
 build may start.
+
+## 7. Changes after the agreement (2026-11-16)
+
+1. **Release.** Attribution (#151) shipped in oats.okf 6.1.0. The credential
+   (#149) and the bring-up check (#150) follow in 6.2.
+2. **C1 is narrower than written above.** "Uses that token and no other
+   credential" holds for credential helpers, `gh`'s login, inherited token
+   variables and SSH. It does not hold against the host's own configuration:
+   a netrc entry for github.com, an `http.extraHeader` or a URL rewrite in
+   the system or user Git configuration answers before any credential helper
+   is asked, and Git offers no setting that turns a netrc off. The package
+   does not isolate Git from them (doing so would also drop a host's proxy
+   and certificate settings). A deployment that sets `github-token-file`
+   keeps none of them for github.com; the README says so, and `setup
+   --check` reports the ones it finds as a `problem` in file mode. The
+   publish predicate runs no Git, so they cannot answer it.
+3. **No rehearsal.** Pepe decided on 2026-11-16 to skip the rehearsal of
+   section 5: no second GitHub identity and no test repository are provided.
+   Three claims are therefore not proven in a live run, and no test claims
+   them: a proposal opened through `github-token-file` on a real private
+   repository; GitHub refusing the write-role-only credential a direct push
+   to the accepted branch and a merge, under the documented ruleset; and
+   what GitHub reports for such a token (role, permissions, protection),
+   which `setup --check` reads. Each pull request and its release-notes
+   entry names them.

@@ -13,8 +13,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail, quote } from './io.mjs';
-import { settings, resolveNodes, gitTimeoutMs } from './config.mjs';
-import { git as rawGit, gitEnv, preflightLocalRepository, unavailable, validateBase, ID_WARNING, unstampedWarning } from './stores.mjs';
+import { settings, resolveNodes, gitTimeoutMs, tokenFile, credentialRefusal } from './config.mjs';
+import { git as rawGit, gitEnv, ghChildEnv, preflightLocalRepository, unavailable, validateBase, ID_WARNING, unstampedWarning } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
 import { isBridgedMeta } from './okf-reindex.mjs';
@@ -593,33 +593,52 @@ function termsFile() {
   return file;
 }
 /** Run one helper command in process; its refusals keep their codes. */
-function runHelper(command, options) {
+export function runHelper(command, options) {
   try { return publication.execute(command, { ...options }); }
   catch (e) {
     const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
+    // Before this call's push, an unusable token file is the whole-fix
+    // refusal. After it, it is a publication error like any other and keeps
+    // what was published. Neither says "nothing was sent": another base's PR
+    // may be open by now, and the caller says what was pushed for this one.
+    if (code === 'E_CREDENTIAL' && options['token-file'] && !e.published) credentialRefusal(options['token-file'], e.diagnostic?.reason);
     const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) };
-    failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : `the publication helper refused (${code})`, result);
+    failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : code === 'E_CREDENTIAL' && e.published ? 'the token in github-token-file became unusable after the push (its file was missing, empty or malformed when gh needed it)' : `the publication helper refused (${code})`, result);
   }
 }
 
+/** The helper option that names the deployment's credential file, if any. */
+const tokenOption = () => { const file = tokenFile(); return file === undefined ? {} : { 'token-file': file }; };
 const GH_FIX = {
   'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
   'gh-failed': 'gh could not read the repository or its permission on it: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
   'no-write-permission': "gh's account has less than write permission on the repository (the label and the PR need it): use an account with write",
-  'installation-cannot-push': "gh is signed in as a GitHub App installation, and GitHub refused that installation a push to the repository (asked with gh's own token; nothing was sent): give the installation access to the repository with contents write, plus pull-requests and issues write for the PR and its label (which this check cannot see)",
+  'installation-cannot-push': "gh is signed in as a GitHub App installation, and GitHub refused that installation a push to the repository or does not show it the repository (asked with gh's own token; nothing was sent): give the installation access to the repository with contents write, plus pull-requests and issues write for the PR and its label (which this check cannot see)",
   'installation-check-failed': "gh is signed in as a GitHub App installation, and whether GitHub accepts a push from it could not be checked (the request timed out, could not reach github.com directly over HTTPS, gh gave no token for github.com, or GitHub gave some other answer; nothing was sent): check the network (the check uses no proxy) and `gh auth status`, then run it again",
 };
+// The same answers when the deployment's own credential was judged
+// (github-token-file): the fix is the token and its identity, never gh's login.
+const TOKEN_FIX = {
+  'gh-absent': 'gh is not installed on this host (or not on PATH): install it (github-token-file supplies its credential)',
+  'gh-failed': 'GitHub did not show the repository or a permission on it to the token in github-token-file: check that the token is valid and not expired, and that its identity can see the repository',
+  'no-write-permission': 'the identity of the token in github-token-file has less than write permission on the repository (the label and the PR need it): give that identity the write role there',
+  'installation-cannot-push': 'the token in github-token-file is a GitHub App installation\'s, and GitHub refused it a push to the repository or does not show it the repository (asked with that token; nothing was sent): give the installation access to the repository with contents write, plus pull-requests and issues write for the PR and its label (which this check cannot see)',
+  'installation-check-failed': 'the token in github-token-file is a GitHub App installation\'s, and whether GitHub accepts a push from it could not be checked (the request timed out, could not reach github.com directly over HTTPS, or GitHub gave some other answer; nothing was sent): check the network (the check uses no proxy), then run it again',
+};
 /** The one publish predicate: this deployment's credential can publish to
- *  this base (today: gh is present, reads the repository and GitHub says its
- *  credential may push; for a GitHub App installation, GitHub answers gh's
- *  token with the repository's push advertisement). Read-only; refuses E_GH_UNAVAILABLE with the fix. */
+ *  this base. With github-token-file it is that file's token that is judged,
+ *  otherwise gh's own login: gh is present, reads the repository and GitHub
+ *  says the credential may push; for a GitHub App installation, GitHub answers
+ *  the token with the repository's push advertisement. Read-only; refuses
+ *  E_GH_UNAVAILABLE with the fix, or E_CREDENTIAL for an unusable file. */
 export function checkPublish(alias, base) {
-  const repository = base.pr.repository;
-  try { publication.execute('preflight', { github: repository }); }
+  const repository = base.pr.repository, file = tokenFile();
+  try { publication.execute('preflight', { github: repository, ...tokenOption() }); }
   catch (e) {
+    if (e?.code === 'E_CREDENTIAL' && file !== undefined) credentialRefusal(file, e.diagnostic?.reason, { unsent: true });
     if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
     const reason = e.diagnostic?.reason;
-    failWith('E_GH_UNAVAILABLE', `base ${alias} (${repository}): ${GH_FIX[reason] ?? 'gh is not usable'}`, { reason, alias, repository, pushed: false });
+    failWith('E_GH_UNAVAILABLE', `base ${alias} (${repository}): ${(file === undefined ? GH_FIX : TOKEN_FIX)[reason] ?? 'gh is not usable'}`, { reason, alias, repository, pushed: false, ...(file === undefined ? {} : { credential: 'file' }) });
   }
 }
 /** How a publication that stopped after a step it cannot undo is finished or
@@ -738,7 +757,7 @@ function duplicates(base) {
   const out = [];
   for (const label of ['okf-proposal', 'okf-harvest']) {
     try {
-      const rows = JSON.parse(exec('gh', ['pr', 'list', '--repo', base.pr.repository, '--label', label, '--state', 'open', '--limit', '100', '--json', 'number,title,url'], { timeout: 30000 }));
+      const rows = JSON.parse(exec('gh', ['pr', 'list', '--repo', base.pr.repository, '--label', label, '--state', 'open', '--limit', '100', '--json', 'number,title,url'], { timeout: 30000, env: ghChildEnv() }));
       for (const r of Array.isArray(rows) ? rows : []) out.push({ label, number: r.number, title: String(r.title ?? '').slice(0, 200), url: String(r.url ?? '') });
     } catch { return { unavailable: 'gh pr list failed or gh is absent: open proposals could not be listed; check them by hand' }; }
   }
@@ -832,7 +851,7 @@ export function apply(source, slug, expected) {
       // changed since the comparison above: the commit object is immutable, so
       // its tree must be the digest-bound one before anything leaves the host.
       if (!/^[0-9a-f]{40,64}$/.test(committed?.head ?? '') || git(r.clone, ['rev-parse', '--verify', `${committed.head}^{tree}`]) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the committed tree is not the one --check showed (the clone's index changed during --apply); nothing was pushed`);
-      const created = runHelper('create', { repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
+      const created = runHelper('create', { ...tokenOption(), repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
         'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
       // The PR is confirmed: a receipt that cannot be written is a warning,
@@ -850,7 +869,7 @@ export function apply(source, slug, expected) {
       const pushed = e.result?.published;
       const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}), ...(pushed ? { published: pushed } : {}) };
       try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
-      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${aftermath(code, r, branch, bodyFile, pushed, late)}`,
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${code === 'E_CREDENTIAL' && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late)}`,
         { published, failed: safe, proposal: dir });
     }
   }
