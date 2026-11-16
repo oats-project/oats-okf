@@ -4,6 +4,32 @@
 
 ### Added
 
+- **With `github-token-file`, a publication refuses when the host can answer
+  GitHub in the token's place** (follow-up to oats-project/oats-okf#149,
+  asked by the deployment side's review of #153 and #155). The publish
+  check judged the file's token, but Git's push could still be answered by
+  a netrc entry for github.com, an authorization header or a rewrite of
+  `https://github.com/` URLs on the host; until now only `setup --check`
+  reported them. Now `propose --apply` (before anything is pushed and before
+  the proposal is marked as attempted; the same `--apply` works once the
+  host is fixed) and every publishing command of the maintainer's helper
+  run with `--token-file` look at the host first and refuse with the new
+  `E_HOST_CREDENTIAL`, naming each kind found (never a value) and the whole
+  fix. The package also resets `http.extraHeader` for its own Git calls in
+  this mode, unscoped and for `https://github.com/`: a host header no longer
+  travels with them (this drops any other header a host set that way too),
+  and a header scoped more narrowly is what the refusal catches. Not
+  refused: reads (a consult fetch) and `oats okf migrate --deliver`.
+  **Without `github-token-file`, nothing changes.**
+  - **Still not proven in a live run** (as for #149 and #150 below): a
+    proposal opened through `github-token-file` on a real private
+    repository; GitHub refusing the write-role-only credential a direct
+    push and a merge under the example ruleset; and what GitHub reports for
+    such a token (role, permissions, protection, label write), which
+    `setup --check` reads. This change's tests use the real `git` for the
+    host scan and for the header reset against a local server, and a fake
+    `gh`.
+
 - **A checked bring-up path for a deployment's knowledge store**
   (oats-project/oats-okf#150). Nothing said what a deployment must provision
   for knowledge to work, and nothing checked it. New: `oats okf setup --check

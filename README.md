@@ -125,14 +125,23 @@ When it is set:
   elsewhere. A deployment that sets `github-token-file` keeps none of them
   for github.com in the agents' container. Where one exists, Git may act
   with that credential or at that destination and not with the file's
-  token.
+  token. **A publication therefore refuses first:** `propose --apply`, and
+  each publishing command of the maintainer's helper run with
+  `--token-file`, looks at the host when it starts and refuses with
+  `E_HOST_CREDENTIAL` when one of the three exists, or when the system or
+  user Git configuration cannot be read; the message names each kind found
+  (never a value) and the fix. `oats okf setup --check` reports the same
+  findings. Reads (a consult fetch) and `oats okf migrate --deliver` are not
+  refused. The package also resets `http.extraHeader` for its own Git calls,
+  unscoped and for `https://github.com/`; a header scoped more narrowly is
+  not reset, and is what the refusal catches.
 - `propose --apply`'s check before the push
   ([`E_GH_UNAVAILABLE`](#how-knowledge-is-proposed)) judges the file's
   token, not `gh`'s login: `gh` reads the repository's permission with it,
   and for a GitHub App installation token the push advertisement is
   requested with the token read from the file. Git takes no part in that
-  check, so the three host routes above cannot answer it; they can still
-  answer the push that follows.
+  check, so the three host routes above cannot answer it; the refusal above
+  keeps them from answering the push that follows.
 - The file is read at each use: a rotated token is picked up without a
   restart. It holds the token alone, on one line.
 - The token is given to `git` by a credential helper the package supplies,
@@ -765,6 +774,7 @@ the spawn or the workspace set is ignored and named in `--plan`'s
 | `E_CONTENT_REFUSED` / `E_CONTENT_INPUT` | the content screen's codes (findings name locations and rules only; `host-term` is the host's own list) |
 | `E_PROPOSAL_FORMAT` | `proposal.md` malformed (title, a missing or empty section, a provenance block of its own) or a backing-note line unreadable under the 5.8 note-locator rules; or the clone is not the one plan made (a symlink in its path or anywhere under its `.git`, a `.git` that is a file, or a shared or alternate object store) |
 | `E_CREDENTIAL` | with `github-token-file` set: the file is missing, unreadable, empty or not one token, or a Git base is not bound by an `https://github.com/` URL; the message names the path or the base and the whole fix, never the file's content |
+| `E_HOST_CREDENTIAL` | with `github-token-file` set, `--apply` before anything is pushed and before the proposal is marked as attempted (the same `--apply` works once the host is fixed): something on this host answers GitHub before the token does, so Git would push with another credential or elsewhere. A netrc entry for github.com, an authorization header (`http.extraHeader`) or a rewrite of `https://github.com/` URLs in the system or user Git configuration, or a configuration that cannot be read. The message names each kind found, never a value, and the whole fix |
 | `E_GIT` | a Git command on a proposal clone failed (a required filter, a corrupt clone): the message names the subcommand and exit status only; Git's own output is withheld, as it may carry private content |
 | `E_NOTE` | a warning in `--check`, not a refusal: a named note missing or unreadable is listed without a hash, never hashed silently |
 | `E_UNSUPPORTED` | every owned base is a directory base ("convert it to a Git base or edit it in a reviewed change"); a directory base among Git bases is skipped with that reason |

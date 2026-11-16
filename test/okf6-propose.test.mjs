@@ -418,6 +418,20 @@ test('an installation credential GitHub refuses, or that could not be checked, r
   }
 });
 
+test('a host that can answer GitHub in the token file\'s place refuses --apply before the attempt marker: nothing pushed, the same apply works once the host is fixed', async t => {
+  const f = fixture(t);
+  await inProcess(f, async () => {
+    const plan = propose(f.home, { plan: true, slug: 'h' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'h' }).result, wrapped = publication.execute;
+    publication.execute = (command, o) => { if (command !== 'preflight') return wrapped(command, o); throw Object.assign(new Error('E_HOST_CREDENTIAL'), { code: 'E_HOST_CREDENTIAL', diagnostic: { phase: 'host', routes: ['an authorization header (http.extraHeader) in the system Git configuration'], unread: [] } }); };
+    let error; try { propose(f.home, { apply: true, slug: 'h', digest }); } catch (e) { error = e; } finally { publication.execute = wrapped; }
+    assert.equal(error?.code, 'E_HOST_CREDENTIAL');
+    assert.match(error.message, /^Git on this host may not use the token in github-token-file: an authorization header \(http\.extraHeader\) in the system Git configuration: remove each of them .*\. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again$/);
+    assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'the proposal is not marked as attempted');
+    assert.equal(propose(f.home, { apply: true, slug: 'h', digest }).result.prs.length, 1);
+  });
+});
+
 test('a credential refusal at create, before its push, says nothing was pushed for that base and carries the helper\'s refusal text', async t => {
   const f = fixture(t);
   await inProcess(f, async () => {
@@ -500,6 +514,12 @@ test('with github-token-file the one publish predicate judges that file: it is p
       assert.deepEqual(e.result, { reason, alias: 'kb', repository: 'acme/kb', pushed: false, credential: 'file' });
       assert.deepEqual(asked, [['preflight', { github: 'acme/kb', 'token-file': '/run/secrets/okf-token' }]]);
     }
+    // The host can answer GitHub in the file's place: the helper's refusal, with the whole fix, before anything is asked of gh.
+    publication.execute = () => { throw Object.assign(new Error('E_HOST_CREDENTIAL'), { code: 'E_HOST_CREDENTIAL', diagnostic: { phase: 'host', routes: ['a netrc entry that answers for github.com (.netrc in this user\'s home)'], unread: ['the user Git configuration'] } }); };
+    const h = refusal();
+    assert.equal(h.code, 'E_HOST_CREDENTIAL');
+    assert.equal(h.message, 'Git on this host may not use the token in github-token-file: a netrc entry that answers for github.com (.netrc in this user\'s home); the user Git configuration could not be read: ' + h.fix);
+    assert.match(h.fix, /^remove each of them from the agents' container .*; and repair what could not be read, or make it readable by this user, so that it can be checked$/);
     answer('E_CREDENTIAL'); const e = refusal();
     assert.equal(e.code, 'E_CREDENTIAL'); assert.match(e.message, /^github-token-file \/run\/secrets\/okf-token does not exist: provision .* nothing was sent$/);
   } finally { publication.execute = wrapped; for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); }

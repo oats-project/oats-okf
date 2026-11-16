@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { tokenEnv, readToken } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 import { tokenFile, requireTokenBases } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { credentialMode, gitCredentialEnv, ghEnv, refuseBadTokenFile } from '../oats-package/capabilities/oats-okf/lib/credential.mjs';
@@ -118,4 +118,26 @@ test('after a fetch that failed on authentication, an unusable token file refuse
   assert.match(staleReason(file, 'T'), new RegExp(`^fetch of the accepted branch failed at T \\(reason: credential; github-token-file ${f} does not exist: provision .*\\); serving the last fetched accepted commit$`));
   // Anything else is not a failed fetch and is not served over.
   assert.equal(staleReason(Object.assign(new Error('x'), { code: 'E_CONFIG' }), 'T'), null); assert.equal(staleReason(new Error('x'), 'T'), null);
+});
+
+// What Git sends, seen by a local server. tokenEnv refuses plain HTTP, so the
+// test alone re-allows it for 127.0.0.1; everything else is tokenEnv's.
+test('tokenEnv resets http.extraHeader: an unscoped header in the host configuration is not sent; the same reset is set for the https://github.com/ scope, which is not asked here (a more specific scope is not reset: the gate refuses on it)', async t => {
+  const d = scratch(t), f = tokenAt(d), seen = join(d, 'seen.jsonl');
+  const server = spawn(process.execPath, ['-e', `
+const http = require('node:http'), fs = require('node:fs');
+const s = http.createServer((q, r) => { fs.appendFileSync(${JSON.stringify(seen)}, JSON.stringify(q.headers) + '\\n'); r.writeHead(404); r.end(); });
+s.listen(0, '127.0.0.1', () => console.log(s.address().port));`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => server.kill());
+  const port = await new Promise(done => server.stdout.once('data', x => done(String(x).trim())));
+  fs.writeFileSync(join(d, '.gitconfig'), '[http]\n\textraHeader = "X-Ambient: unscoped"\n');
+  const base = { PATH: process.env.PATH, HOME: d, GIT_CONFIG_NOSYSTEM: '1' };
+  const allowHttp = env => { const n = Number(env.GIT_CONFIG_COUNT ?? 0); return { ...env, GIT_CONFIG_COUNT: String(n + 1), [`GIT_CONFIG_KEY_${n}`]: 'protocol.http.allow', [`GIT_CONFIG_VALUE_${n}`]: 'always' }; };
+  const ask = env => { fs.rmSync(seen, { force: true }); spawnSync('git', ['ls-remote', `http://127.0.0.1:${port}/x.git`], { env: allowHttp(env), encoding: 'utf8', timeout: 20000 }); return fs.readFileSync(seen, 'utf8').trim().split('\n').map(row => JSON.parse(row)); };
+  assert.ok(ask(base).every(h => h['x-ambient'] === 'unscoped'), 'the fixture: without the token file the host header is sent');
+  const file = ask(tokenEnv(base, f));
+  assert.ok(file.length > 0); assert.ok(file.every(h => !('x-ambient' in h)), 'reset at command scope');
+  // The reset tokenEnv sets for https://github.com/ is of the same kind; that scope cannot be asked without the network.
+  const env = tokenEnv(base, f), keys = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+  assert.ok(keys.some(([k, v]) => k === 'http.extraHeader' && v === '')); assert.ok(keys.some(([k, v]) => k === 'http.https://github.com/.extraHeader' && v === ''));
 });

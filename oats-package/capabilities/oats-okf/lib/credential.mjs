@@ -37,3 +37,18 @@ export function refuseBadTokenFile(env = process.env) {
   if (file === undefined) return;
   try { readToken(file); } catch (e) { if (e?.code === 'E_CREDENTIAL') credentialRefusal(file, e.diagnostic?.reason); throw e; }
 }
+
+/** What the host scan found, as one problem and its whole fix: the text of
+ *  `setup --check`'s host-git line and of the refusal before a push. */
+export function hostFinding({ routes = [], unread = [] } = {}) {
+  const found = [...routes, ...unread.map(what => `${what} could not be read`)];
+  const fixes = [...(routes.length ? ['remove each of them from the agents\' container (the token file is the one GitHub credential there), or remove settings.oats.okf.github-token-file to use this user\'s own login'] : []),
+    ...(unread.length ? ['repair what could not be read, or make it readable by this user, so that it can be checked'] : [])];
+  return found.length ? { detail: `Git on this host may not use the token in github-token-file: ${found.join('; ')}`, fix: fixes.join('; and ') } : null;
+}
+/** E_HOST_CREDENTIAL from the publication helper, with the whole fix. The
+ *  helper refuses when a command starts, so nothing was sent by that command. */
+export function hostRefusal(diagnostic) {
+  const finding = hostFinding(diagnostic) ?? { detail: 'Git on this host may not use the token in github-token-file', fix: 'run oats okf setup --check for what answers for github.com on this host' };
+  throw Object.assign(new Error(`${finding.detail}: ${finding.fix}`), { code: 'E_HOST_CREDENTIAL', fix: finding.fix });
+}
