@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 6.2.0 — 2026-11-16
+
+Requires OATS >=0.69.2, unchanged. Knowledge writes from a container: an
+optional, host-only setting `github-token-file` gives every remote `git` and
+`gh` call of oats.okf the token in that file, and no other login (#149). New
+`oats okf setup --check --soul <soul>` says whether a deployment is
+provisioned for knowledge and names each fix (#150). With the setting, a
+publication refuses `E_HOST_CREDENTIAL` while the host can answer GitHub in
+the token's place (a netrc entry, an `http.extraHeader` or a rewrite of
+`https://github.com/` URLs). **What a deployment must change:** nothing.
+Without `github-token-file`, everything behaves as in 6.1.0. **Not yet proven
+in a live run:** a proposal opened through `github-token-file` on a real
+private repository; GitHub refusing the write-role-only credential a direct
+push and a merge under the example ruleset; and what GitHub reports for such
+a token, which `setup --check` reads (the entries below).
 
 ### Added
 
