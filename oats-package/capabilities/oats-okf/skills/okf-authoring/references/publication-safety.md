@@ -176,7 +176,14 @@ yields no token is an authentication failure, never another credential. The help
 from the host's own configuration: a netrc entry for github.com, an
 authorization header (`http.extraHeader`) or a URL rewrite (`insteadOf`,
 `pushInsteadOf`) in the system or user Git configuration answers before any
-credential helper is asked, so a host that uses a token file keeps none of
+credential helper is asked. With a token file, `preflight`, `create`,
+`rewrite`, `amend-legacy`, `merge`, `close` and `close-unsafe` therefore look
+at the host when they start and refuse `E_HOST_CREDENTIAL` (exit 2,
+`diagnostic: { phase: "host", routes, unread }`, fixed kinds and never a
+value) when one exists or the system or user Git configuration cannot be
+read; nothing was sent by that command. The helper also resets
+`http.extraHeader`, unscoped and for `https://github.com/`, for its own Git
+children. A host that uses a token file keeps none of
 them for github.com. The `preflight` check runs no Git: with a token file
 it judges that file's token (`gh` is handed it; the installation route
 reads it from the file and does not ask `gh auth token`). The token is read at each use, goes

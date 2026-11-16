@@ -6,10 +6,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { tokenEnv, readToken } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 import { tokenFile, requireTokenBases } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { credentialMode, gitCredentialEnv, ghEnv, refuseBadTokenFile } from '../oats-package/capabilities/oats-okf/lib/credential.mjs';
+import { credentialMode, gitCredentialEnv, ghEnv, refuseBadTokenFile, hostProbe } from '../oats-package/capabilities/oats-okf/lib/credential.mjs';
+import { deliverMigration } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
+import { hash } from '../oats-package/capabilities/oats-okf/lib/io.mjs';
 import { staleReason } from '../oats-package/capabilities/oats-okf/lib/consult.mjs';
 import { unavailable } from '../oats-package/capabilities/oats-okf/lib/stores.mjs';
 
@@ -118,4 +120,52 @@ test('after a fetch that failed on authentication, an unusable token file refuse
   assert.match(staleReason(file, 'T'), new RegExp(`^fetch of the accepted branch failed at T \\(reason: credential; github-token-file ${f} does not exist: provision .*\\); serving the last fetched accepted commit$`));
   // Anything else is not a failed fetch and is not served over.
   assert.equal(staleReason(Object.assign(new Error('x'), { code: 'E_CONFIG' }), 'T'), null); assert.equal(staleReason(new Error('x'), 'T'), null);
+});
+
+// What Git sends, seen by a local server. tokenEnv refuses plain HTTP, so the
+// test alone re-allows it for 127.0.0.1; everything else is tokenEnv's.
+test('tokenEnv resets http.extraHeader: an unscoped header in the host configuration is not sent; the same reset is set for the https://github.com/ scope, which is not asked here (a more specific scope is not reset: the gate refuses on it)', async t => {
+  const d = scratch(t), f = tokenAt(d), seen = join(d, 'seen.jsonl');
+  const server = spawn(process.execPath, ['-e', `
+const http = require('node:http'), fs = require('node:fs');
+const s = http.createServer((q, r) => { fs.appendFileSync(${JSON.stringify(seen)}, JSON.stringify(q.headers) + '\\n'); r.writeHead(404); r.end(); });
+s.listen(0, '127.0.0.1', () => console.log(s.address().port));`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => server.kill());
+  const port = await new Promise(done => server.stdout.once('data', x => done(String(x).trim())));
+  fs.writeFileSync(join(d, '.gitconfig'), '[http]\n\textraHeader = "X-Ambient: unscoped"\n');
+  const base = { PATH: process.env.PATH, HOME: d, GIT_CONFIG_NOSYSTEM: '1' };
+  const allowHttp = env => { const n = Number(env.GIT_CONFIG_COUNT ?? 0); return { ...env, GIT_CONFIG_COUNT: String(n + 1), [`GIT_CONFIG_KEY_${n}`]: 'protocol.http.allow', [`GIT_CONFIG_VALUE_${n}`]: 'always' }; };
+  const ask = env => { fs.rmSync(seen, { force: true }); spawnSync('git', ['ls-remote', `http://127.0.0.1:${port}/x.git`], { env: allowHttp(env), encoding: 'utf8', timeout: 20000 }); return fs.readFileSync(seen, 'utf8').trim().split('\n').map(row => JSON.parse(row)); };
+  assert.ok(ask(base).every(h => h['x-ambient'] === 'unscoped'), 'the fixture: without the token file the host header is sent');
+  const file = ask(tokenEnv(base, f));
+  assert.ok(file.length > 0); assert.ok(file.every(h => !('x-ambient' in h)), 'reset at command scope');
+  // The reset tokenEnv sets for https://github.com/ is of the same kind; that scope cannot be asked without the network.
+  const env = tokenEnv(base, f), keys = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+  assert.ok(keys.some(([k, v]) => k === 'http.extraHeader' && v === '')); assert.ok(keys.some(([k, v]) => k === 'http.https://github.com/.extraHeader' && v === ''));
+});
+
+test('with github-token-file, migrate --deliver to a Git base refuses E_HOST_CREDENTIAL before anything of the delivery starts: no git, no gh, the record untouched; without the setting the host is not looked at', t => {
+  const d = scratch(t), f = tokenAt(d), bin = join(d, 'bin'), calls = join(d, 'calls.log'), saved = { env: { ...process.env }, scan: hostProbe.scan };
+  t.after(() => { hostProbe.scan = saved.scan; for (const k of Object.keys(process.env)) if (!(k in saved.env)) delete process.env[k]; Object.assign(process.env, saved.env); });
+  fs.mkdirSync(bin);
+  for (const tool of ['git', 'gh']) fs.writeFileSync(join(bin, tool), `#!/bin/sh\necho ${tool} "$@" >> '${calls}'\nexit 1\n`, { mode: 0o755 });
+  const proposal = { run: 'r1', before: {}, after: {} }, proposalFile = join(d, 'proposal.json'), record = join(d, 'migration.json');
+  fs.writeFileSync(proposalFile, JSON.stringify(proposal));
+  const migration = { proposal: proposalFile, proposalHash: hash(proposal), base: { id: 'kb-1', kind: 'git', repository: 'https://github.com/o/r.git', root: '.', acceptedBranch: 'main', pr: { repository: 'o/r' } }, stage: { checkout: join(d, 'stage'), head: 'a'.repeat(40) }, receipt: { status: 'staged' } };
+  fs.writeFileSync(record, JSON.stringify(migration));
+  const before = fs.readFileSync(record, 'utf8');
+  Object.assign(process.env, settingsEnv(f), { PATH: bin, HOME: d });
+  let scans = 0; hostProbe.scan = () => { scans += 1; return { routes: ['a rewrite of https://github.com/ URLs (url.<base>.insteadOf or pushInsteadOf) in the user Git configuration'], unread: [] }; };
+  const e = code(() => deliverMigration(record));
+  assert.equal(e.code, 'E_HOST_CREDENTIAL'); assert.match(e.message, /^Git on this host may not use the token in github-token-file: a rewrite of https:\/\/github\.com\/ URLs .*: remove each of them /); assert.equal(typeof e.fix, 'string');
+  assert.equal(scans, 1); assert.equal(fs.existsSync(calls), false, 'neither git nor gh was started: nothing was fetched, pushed or opened'); assert.equal(fs.readFileSync(record, 'utf8'), before, 'no push intent was recorded');
+  // The real scan, on a home with a netrc entry for github.com (git itself is not needed to find it).
+  hostProbe.scan = saved.scan; fs.writeFileSync(join(d, '.netrc'), 'machine github.com login x password SECRET-VALUE\n');
+  const real = code(() => deliverMigration(record));
+  assert.equal(real.code, 'E_HOST_CREDENTIAL'); assert.match(real.message, /a netrc entry that answers for github\.com/); assert.ok(!real.message.includes('SECRET-VALUE')); assert.equal(fs.readFileSync(record, 'utf8'), before);
+  // The scan itself asked the stand-in git for its configuration, and nothing else was started.
+  assert.ok(fs.readFileSync(calls, 'utf8').trim().split('\n').every(row => row.startsWith('git config ')), 'only the scan ran');
+  // Without the setting the host is not looked at: the delivery goes on to its own checks, which refuse this stand-in record for their own reasons.
+  delete process.env.OATS_SETTINGS; delete process.env.OATS_SETTINGS_ORIGINS; let ambient = 0; hostProbe.scan = () => { ambient += 1; return { routes: ['x'], unread: [] }; };
+  assert.notEqual(code(() => deliverMigration(record)).code, 'E_HOST_CREDENTIAL'); assert.equal(ambient, 0, 'the host is the caller\'s own business');
 });

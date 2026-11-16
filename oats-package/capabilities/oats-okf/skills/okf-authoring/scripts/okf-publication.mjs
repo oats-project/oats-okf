@@ -2,7 +2,7 @@
 // Publication gate, not a sandbox: callers still have their native credentials.
 // Never forward Git/gh stderr, matched values, or raw remote response text.
 import fs from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -35,7 +35,9 @@ function env({ gh = false } = {}) {
 // and never another credential, and SSH, git:// and plain HTTP are refused,
 // so no SSH key stands in (a local repository stays readable). Git is NOT isolated from the host's own
 // configuration: a netrc, an http.extraHeader or a URL rewrite there answers
-// before any helper is asked (the README says a deployment keeps none). The file is read at each
+// before any helper is asked. tokenEnv resets http.extraHeader, unscoped and
+// for https://github.com/, and hostGate refuses every publishing command
+// while one of the three exists; a read (a fetch) is not refused. The file is read at each
 // use, so a rotated token needs no restart. The token never reaches an
 // argument, an error or a log: git asks this script (`git-credential`, for
 // https://github.com only), and gh gets it in its own child environment.
@@ -68,7 +70,7 @@ const INHERITED = /^(?:GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRI
 export function tokenEnv(base, file, { gh = false } = {}) {
   if (file === undefined || file === null) return base;
   if (/'/.test(process.execPath) || /'/.test(SELF)) throw credentialError('helper-path');
-  const config = [['core.askPass', ''], ['credential.helper', ''], ['credential.https://github.com.helper', `!'${process.execPath}' '${SELF}' git-credential`],
+  const config = [['core.askPass', ''], ['http.extraHeader', ''], ['http.https://github.com/.extraHeader', ''], ['credential.helper', ''], ['credential.https://github.com.helper', `!'${process.execPath}' '${SELF}' git-credential`],
     ['credential.https://github.com.useHttpPath', 'false'], ['protocol.ssh.allow', 'never'], ['protocol.git.allow', 'never'], ['protocol.http.allow', 'never']];
   const out = Object.fromEntries(Object.entries(base).filter(([k]) => !INHERITED.test(k)));
   out.GIT_CONFIG_COUNT = String(config.length);
@@ -389,8 +391,64 @@ export function receivePack(url, token) {
   if (r.error || r.signal) return 'unknown';
   return r.status === 0 ? 'accepted' : r.status === 3 ? 'refused' : 'unknown';
 }
-// The one request the installation route makes, replaceable in tests only.
-export const probes = { receivePack };
+/** What on this host answers GitHub before Git asks the package's credential
+ *  helper, so that Git would act with another credential, or elsewhere, and
+ *  not with the token file's: a netrc entry for github.com, and in the system
+ *  or user Git configuration an authorization header or a rewrite of
+ *  https://github.com/ URLs. Included files are followed. A conditional
+ *  include (includeIf) depends on the repository Git runs in, so its
+ *  condition is taken as true and the file it names is read the same way.
+ *  → { routes, unread }: what was found, and what could not be read. Names
+ *  kinds and scopes only, never a value (a header or a rewritten URL can
+ *  hold a credential). */
+export function hostRoutes(childEnv = env()) {
+  const env = childEnv;
+  const routes = new Set(), unread = new Set(), hub = 'https://github.com/';
+  const touches = url => { const u = String(url).toLowerCase(); return hub.startsWith(u) || u.startsWith('https://github.com'); };
+  if (env.HOME) {
+    // curl matches the host without regard to case, and accepts it quoted.
+    try { if (/(?:^|\s)(?:machine\s+"?github\.com"?|default)(?:\s|$)/i.test(fs.readFileSync(join(env.HOME, '.netrc'), 'utf8'))) routes.add('a netrc entry that answers for github.com (.netrc in this user\'s home)'); }
+    catch { /* absent, or not readable by this user: then Git's curl cannot read it either, and it is no route */ }
+  }
+  const KEYS = '^(url\\..*\\.(insteadof|pushinsteadof)|http\\.(.*\\.)?extraheader|includeif\\..*\\.path)$';
+  const seen = new Set();
+  const scan = (source, scope, depth) => {
+    let out;
+    const r = spawnSync('git', ['config', ...source, '--includes', '--show-origin', '-z', '--get-regexp', KEYS], { env, encoding: 'utf8', timeout: 60000, maxBuffer: MAX });
+    if (!r.error && !r.signal && (r.status === 0 || r.status === 1)) out = r.stdout;
+    else { unread.add(depth ? `a file the ${scope} Git configuration conditionally includes` : `the ${scope} Git configuration`); return; }
+    const fields = out.split('\0');
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      const origin = fields[i], record = fields[i + 1], cut = record.indexOf('\n'), key = cut < 0 ? record : record.slice(0, cut), value = cut < 0 ? '' : record.slice(cut + 1);
+      if (/^includeif\./i.test(key)) {
+        // As Git resolves it: ~/ against the home, a relative path against the including file.
+        const from = origin.startsWith('file:') ? origin.slice(5) : null;
+        const path = value.startsWith('~/') && env.HOME ? join(env.HOME, value.slice(2)) : isAbsolute(value) ? value : from ? resolve(dirname(from), value) : null;
+        if (path === null || depth >= 8) { unread.add(`a file the ${scope} Git configuration conditionally includes`); continue; }
+        if (seen.has(path) || !fs.existsSync(path)) continue;   // Git ignores an include that is not there
+        seen.add(path); scan(['--file', path], scope, depth + 1); continue;
+      }
+      if (/^url\./i.test(key)) { if (touches(value)) routes.add(`a rewrite of https://github.com/ URLs (url.<base>.insteadOf or pushInsteadOf) in the ${scope} Git configuration`); continue; }
+      // Git lets * stand for a host label, so a wildcard host may be github.com.
+      const scoped = /^http\.(.*)\.extraheader$/i.exec(key);
+      if ((!scoped || touches(scoped[1]) || scoped[1].includes('*')) && /^\s*authorization\s*:/i.test(value)) routes.add(`an authorization header (http.extraHeader) in the ${scope} Git configuration`);
+    }
+  };
+  scan(['--system'], 'system', 0); scan(['--global'], 'user', 0);
+  return { routes: [...routes], unread: [...unread] };
+}
+
+// The installation route's one request and the host scan, replaceable in tests only.
+export const probes = { receivePack, hostRoutes };
+// With a token file, nothing that publishes starts while the host can answer
+// GitHub in the token's place: Git would push with that credential, or
+// elsewhere, after a check that judged the token. Fixed kinds only.
+function hostGate() {
+  const { routes, unread } = probes.hostRoutes(env());
+  if (routes.length || unread.length) throw Object.assign(new Error('E_HOST_CREDENTIAL'), { code: 'E_HOST_CREDENTIAL', diagnostic: { phase: 'host', routes, unread } });
+}
+const PUBLISHES = new Set(['preflight', 'create', 'rewrite', 'amend-legacy', 'merge', 'close', 'close-unsafe']);
+
 function acceptsPush(o) {
   try {
     let token;
@@ -611,6 +669,7 @@ function comment(o, bytes) {
 export function execute(command, o) {
   tokenFile = o['token-file'];
   if (tokenFile !== undefined) readToken(tokenFile);
+  if (tokenFile !== undefined && PUBLISHES.has(command)) hostGate();
   o.terms = loadTerms(o['terms-file']);
   if (command === 'screen-text') {
     if (!o['text-file']?.length) fail('E_USAGE');

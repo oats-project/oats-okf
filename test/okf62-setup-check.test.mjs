@@ -72,6 +72,9 @@ test('in either mode a credential that cannot write, an unreadable repository, a
     assert.equal(by(r, 'protection:kb'), undefined);
   }
   assert.deepEqual(asked[0], ['kb', 'acme/kb']);
+  // The predicate refused on the host: said once, pointing at host-git, and nothing else is read for that base.
+  const routed = check(t, fixture(t), { publish: () => { throw Object.assign(new Error('Git on this host may not use the token in github-token-file: x: remove it'), { code: 'E_HOST_CREDENTIAL', fix: 'remove it' }); }, gh: () => assert.fail('nothing is read') });
+  assert.deepEqual(by(routed, 'credential:kb'), { id: 'credential:kb', status: 'problem', detail: "the credential (ambient) was not judged for acme/kb, nor were its role, the branch's protection and the label read: the host-git problem above stops the publish check", fix: 'fix the host-git problem, then run oats okf setup --check again' });
   const bad = check(t, fixture(t), { publish: () => { throw Object.assign(new Error('github-token-file /x does not exist: provision it; nothing was sent'), { code: 'E_CREDENTIAL', fix: 'provision it' }); } });
   assert.equal(by(bad, 'credential:kb').status, 'problem'); assert.match(by(bad, 'credential:kb').detail, /^E_CREDENTIAL: github-token-file \/x does not exist/); assert.equal(by(bad, 'credential:kb').fix, 'provision it');
   const odd = check(t, fixture(t), { publish: () => { throw Object.assign(new Error('the publication helper refused before anything was pushed (base kb)'), { code: 'E_PUBLICATION' }); } });

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { fs, join, resolve, dirname, safePath, atomic, hash, cleanEnv, exec, fail, quote } from './io.mjs';
 import { settings, resolveNodes, gitTimeoutMs, tokenFile, credentialRefusal } from './config.mjs';
+import { hostRefusal } from './credential.mjs';
 import { git as rawGit, gitEnv, ghChildEnv, preflightLocalRepository, unavailable, validateBase, ID_WARNING, unstampedWarning } from './stores.mjs';
 import { consultSource } from './sources.mjs';
 import { harvestPolicy } from './harvest-policy.mjs';
@@ -602,6 +603,8 @@ export function runHelper(command, options) {
     // what was published. Neither says "nothing was sent": another base's PR
     // may be open by now, and the caller says what was pushed for this one.
     if (code === 'E_CREDENTIAL' && options['token-file'] && !e.published) credentialRefusal(options['token-file'], e.diagnostic?.reason);
+    // The helper looks at the host when the command starts, before its push.
+    if (code === 'E_HOST_CREDENTIAL') hostRefusal(e.diagnostic);
     const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) };
     failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : code === 'E_CREDENTIAL' && e.published ? 'the token in github-token-file became unusable after the push (its file was missing, empty or malformed when gh needed it)' : `the publication helper refused (${code})`, result);
   }
@@ -630,12 +633,14 @@ const TOKEN_FIX = {
  *  otherwise gh's own login: gh is present, reads the repository and GitHub
  *  says the credential may push; for a GitHub App installation, GitHub answers
  *  the token with the repository's push advertisement. Read-only; refuses
- *  E_GH_UNAVAILABLE with the fix, or E_CREDENTIAL for an unusable file. */
+ *  E_GH_UNAVAILABLE with the fix, E_CREDENTIAL for an unusable file, or
+ *  E_HOST_CREDENTIAL when the host can answer GitHub in the file's place. */
 export function checkPublish(alias, base) {
   const repository = base.pr.repository, file = tokenFile();
   try { publication.execute('preflight', { github: repository, ...tokenOption() }); }
   catch (e) {
     if (e?.code === 'E_CREDENTIAL' && file !== undefined) credentialRefusal(file, e.diagnostic?.reason, { unsent: true });
+    if (e?.code === 'E_HOST_CREDENTIAL') hostRefusal(e.diagnostic);
     if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
     const reason = e.diagnostic?.reason;
     const fix = (file === undefined ? GH_FIX : TOKEN_FIX)[reason] ?? 'gh is not usable';
@@ -822,7 +827,7 @@ export function apply(source, slug, expected) {
       // Another --apply of this proposal may have begun while gh was asked:
       // then it is attempted, and never reported as untouched.
       if (present(publish)) attempted();
-      if (e?.code === 'E_GH_UNAVAILABLE') e.message += '. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again';
+      if (['E_GH_UNAVAILABLE', 'E_HOST_CREDENTIAL'].includes(e?.code)) e.message += '. Nothing was pushed and the proposal is unchanged: fix this host, then run the same --apply again';
       throw e;
     }
   }
@@ -871,7 +876,7 @@ export function apply(source, slug, expected) {
       const pushed = e.result?.published;
       const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}), ...(pushed ? { published: pushed } : {}) };
       try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
-      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${code === 'E_CREDENTIAL' && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late)}`,
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_CREDENTIAL', 'E_HOST_CREDENTIAL'].includes(code) && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late)}`,
         { published, failed: safe, proposal: dir });
     }
   }

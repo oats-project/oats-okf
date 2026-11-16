@@ -10,61 +10,20 @@
 // the separated proposer credential and everything it needs is a problem;
 // without it, the same findings are warnings that say what ambient mode means.
 import { spawnSync } from 'node:child_process';
-import { isAbsolute } from 'node:path';
-import { fs, join, resolve, dirname, exec, cleanEnv, displayRepo } from './io.mjs';
+import { fs, exec, cleanEnv, displayRepo } from './io.mjs';
+import { hostRoutes as helperHostRoutes } from '../skills/okf-authoring/scripts/okf-publication.mjs';
 import { settings, loadBindings, declaration, tokenFile, gitTimeoutMs } from './config.mjs';
 import { bases as basesReport, acceptedResolution, protection } from './consult.mjs';
 import { ghChildEnv } from './stores.mjs';
-import { credentialMode } from './credential.mjs';
+import { credentialMode, hostFinding } from './credential.mjs';
 import { checkPublish } from './propose.mjs';
 
 const README = 'the README\'s "Bringing up a deployment\'s knowledge store"';
 export const AMBIENT_MEANING = 'knowledge writes use this user\'s own git and gh login: inside one trust group every agent can do on the knowledge repository whatever that login can, merges included. For a real gate, provision a write-role-only proposer credential (settings.oats.okf.github-token-file in oats-local.yaml) and keep the merging identity outside the agents\' trust group';
 
-/** What on this host answers GitHub before Git asks the package's credential
- *  helper, so that Git would act with another credential, or elsewhere, and
- *  not with the token file's: a netrc entry for github.com, and in the system
- *  or user Git configuration an authorization header or a rewrite of
- *  https://github.com/ URLs. Included files are followed. A conditional
- *  include (includeIf) depends on the repository Git runs in, so its
- *  condition is taken as true and the file it names is read the same way.
- *  → { routes, unread }: what was found, and what could not be read. Names
- *  kinds and scopes only, never a value (a header or a rewritten URL can
- *  hold a credential). */
-export function hostRoutes(env = cleanEnv()) {
-  const routes = new Set(), unread = new Set(), hub = 'https://github.com/';
-  const touches = url => { const u = String(url).toLowerCase(); return hub.startsWith(u) || u.startsWith('https://github.com'); };
-  if (env.HOME) {
-    // curl matches the host without regard to case, and accepts it quoted.
-    try { if (/(?:^|\s)(?:machine\s+"?github\.com"?|default)(?:\s|$)/i.test(fs.readFileSync(join(env.HOME, '.netrc'), 'utf8'))) routes.add('a netrc entry that answers for github.com (.netrc in this user\'s home)'); }
-    catch { /* absent, or not readable by this user: then Git's curl cannot read it either, and it is no route */ }
-  }
-  const KEYS = '^(url\\..*\\.(insteadof|pushinsteadof)|http\\.(.*\\.)?extraheader|includeif\\..*\\.path)$';
-  const seen = new Set();
-  const scan = (source, scope, depth) => {
-    let out;
-    try { out = exec('git', ['config', ...source, '--includes', '--show-origin', '-z', '--get-regexp', KEYS], { env, acceptedStatus: [0, 1], trim: false }); }
-    catch { unread.add(depth ? `a file the ${scope} Git configuration conditionally includes` : `the ${scope} Git configuration`); return; }
-    const fields = out.split('\0');
-    for (let i = 0; i + 1 < fields.length; i += 2) {
-      const origin = fields[i], record = fields[i + 1], cut = record.indexOf('\n'), key = cut < 0 ? record : record.slice(0, cut), value = cut < 0 ? '' : record.slice(cut + 1);
-      if (/^includeif\./i.test(key)) {
-        // As Git resolves it: ~/ against the home, a relative path against the including file.
-        const from = origin.startsWith('file:') ? origin.slice(5) : null;
-        const path = value.startsWith('~/') && env.HOME ? join(env.HOME, value.slice(2)) : isAbsolute(value) ? value : from ? resolve(dirname(from), value) : null;
-        if (path === null || depth >= 8) { unread.add(`a file the ${scope} Git configuration conditionally includes`); continue; }
-        if (seen.has(path) || !fs.existsSync(path)) continue;   // Git ignores an include that is not there
-        seen.add(path); scan(['--file', path], scope, depth + 1); continue;
-      }
-      if (/^url\./i.test(key)) { if (touches(value)) routes.add(`a rewrite of https://github.com/ URLs (url.<base>.insteadOf or pushInsteadOf) in the ${scope} Git configuration`); continue; }
-      // Git lets * stand for a host label, so a wildcard host may be github.com.
-      const scoped = /^http\.(.*)\.extraheader$/i.exec(key);
-      if ((!scoped || touches(scoped[1]) || scoped[1].includes('*')) && /^\s*authorization\s*:/i.test(value)) routes.add(`an authorization header (http.extraHeader) in the ${scope} Git configuration`);
-    }
-  };
-  scan(['--system'], 'system', 0); scan(['--global'], 'user', 0);
-  return { routes: [...routes], unread: [...unread] };
-}
+/** What on this host answers GitHub before the token file does: the publication
+ *  helper's own scan (it refuses on it before a push), over this user's home. */
+export const hostRoutes = (env = cleanEnv()) => helperHostRoutes(env);
 
 /** The seams a test replaces: which binaries exist and what gh answers. */
 export const probes = {
@@ -109,11 +68,8 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
   // not isolate Git from the host: what answers before a helper is a problem
   // where the deployment opted into the separated credential.
   if (strict && git) {
-    const { routes, unread } = probes.hostRoutes();
-    const found = [...routes, ...unread.map(what => `${what} could not be read`)];
-    const fixes = [...(routes.length ? ['remove each of them from the agents\' container (the token file is the one GitHub credential there), or remove settings.oats.okf.github-token-file to use this user\'s own login'] : []),
-      ...(unread.length ? ['repair what could not be read, or make it readable by this user, so that it can be checked'] : [])];
-    if (found.length) add('host-git', 'problem', `Git on this host may not use the token in github-token-file: ${found.join('; ')}`, fixes.join('; and '));
+    const finding = hostFinding(probes.hostRoutes());
+    if (finding) add('host-git', 'problem', finding.detail, finding.fix);
     else add('host-git', 'ok', 'no netrc entry, authorization header or URL rewrite answers for github.com in this user\'s home or the system and user Git configuration');
   }
 
@@ -144,7 +100,9 @@ export function setupCheck({ soul = process.env.OATS_SOUL, home = process.cwd() 
     try { probes.publish(alias, base); publishes = true; }
     catch (e) {
       const said = String(e?.message ?? '');
-      if (e?.code === 'E_GH_UNAVAILABLE') add(`credential:${alias}`, 'problem', `the credential (${mode}) cannot publish to ${repo} (${e.result?.reason ?? 'unknown'}): proposals cannot push a branch or open a pull request`, ownFix(e) ?? said);
+      // The predicate refuses on the host before it judges the token: host-git above says what and how to fix it.
+      if (e?.code === 'E_HOST_CREDENTIAL') add(`credential:${alias}`, 'problem', `the credential (${mode}) was not judged for ${repo}, nor were its role, the branch's protection and the label read: the host-git problem above stops the publish check`, 'fix the host-git problem, then run oats okf setup --check again');
+      else if (e?.code === 'E_GH_UNAVAILABLE') add(`credential:${alias}`, 'problem', `the credential (${mode}) cannot publish to ${repo} (${e.result?.reason ?? 'unknown'}): proposals cannot push a branch or open a pull request`, ownFix(e) ?? said);
       else add(`credential:${alias}`, 'problem', `${e?.code ?? 'E_OKF'}: ${said}`, ownFix(e) ?? 'the check itself could not run: run oats okf setup --check again, and if it repeats report this code to whoever maintains the deployment');
     }
     if (!publishes) continue;

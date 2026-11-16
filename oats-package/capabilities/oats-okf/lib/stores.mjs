@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { fs, join, dirname, safePath, readJSON, atomic, tree, materialize, digest, hash, withLock, exec, cleanEnv, fail, relPath, overlaps, resolve, within, redactUrls, displayRepo } from './io.mjs';
 import { metadata, noGit, gitTimeoutMs } from './config.mjs';
 import { isBridgedMeta, subjectOfPath } from './okf-reindex.mjs';
-import { gitCredentialEnv, ghEnv, refuseBadTokenFile } from './credential.mjs';
+import { gitCredentialEnv, ghEnv, refuseBadTokenFile, refuseHostRoutes } from './credential.mjs';
 const validator = fileURLToPath(new URL('./okf-validate.mjs', import.meta.url));
 // Never let local replace refs reinterpret frozen OIDs, including inside Git's
 // transport subprocesses. Override even an explicitly supplied command env.
@@ -528,6 +528,9 @@ function carriesDelivered(cwd,branch,commit,head) {
   catch(e) {if(e.status===1) return false;throw e;}
 }
 export function gitPublish(base, stage, proposal, receipt, persist, {beforePublish=()=>{},prIdentity=receipt.pr,pr:presentation}={}) {
+  // 6.2: with github-token-file, nothing of a delivery starts (no fetch, no
+  // push intent, no push, no PR) while the host can answer GitHub in its place.
+  refuseHostRoutes();
   const cwd=stage.checkout, branch=`okf/${proposal.attempt || proposal.run}-${base.id}`;
   verifyRemote(base,cwd);
   const baseline=immutableCommit(cwd,stage.head);

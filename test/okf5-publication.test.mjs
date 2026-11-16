@@ -218,11 +218,14 @@ function fixture(t, { seed } = {}) {
   };
   // The same command in process, with the installation route's one network
   // request answered by the test: → { out, asked: [{ url, token }] }.
-  const answered = (command, head, answer, extra = {}) => {
-    const script = `const m = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); const asked = [];
+  // The host scan is answered too (`host`, default: nothing found), so a test
+  // never depends on this machine's own Git configuration; `scans` counts it.
+  const answered = (command, head, answer, extra = {}, host = { routes: [], unread: [] }) => {
+    const script = `const m = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); const asked = []; let scans = 0;
 m.probes.receivePack = (url, token) => { asked.push({ url, token }); return ${JSON.stringify(answer)}; };
+m.probes.hostRoutes = () => { scans += 1; return ${JSON.stringify(host)}; };
 let out; try { out = { ok: true, ...m.execute(${JSON.stringify(command)}, ${JSON.stringify(options(command, head, extra))}) }; } catch (e) { out = { ok: false, code: e.code, diagnostic: e.diagnostic }; }
-console.log(JSON.stringify({ out, asked }));`;
+console.log(JSON.stringify({ out, asked, scans }));`;
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: root, env, encoding: 'utf8', timeout: 30000 });
     assert.equal(r.signal, null); assert.equal(r.stderr, ''); assert.deepEqual(calls().filter(c => c.unsupported), []);
     return JSON.parse(r.stdout);
@@ -1373,6 +1376,33 @@ test('an unusable token file refuses the preflight with E_CREDENTIAL before gh i
   for (const [file, reason] of [[join(f.root, 'absent-token'), 'missing'], [f.artifact('empty-token', ''), 'empty'], [f.artifact('two-tokens', 'a b\n'), 'malformed']]) {
     assert.deepEqual(f.answered('preflight', undefined, 'accepted', { 'token-file': file }).out, { ok: false, code: 'E_CREDENTIAL', diagnostic: { phase: 'credential', reason } });
   }
+  assert.deepEqual(f.calls(), []); unchanged(f, before);
+});
+
+// With a token file, a host that can answer GitHub in the token's place stops
+// every publishing command when it starts: Git would push with that other
+// credential after a check that judged the token. What the scan finds is
+// tested with the real git in okf62-setup-check; here it is answered.
+test('with a token file, every publishing command refuses E_HOST_CREDENTIAL before gh or a push when the host can answer for github.com; without one the host is not looked at', t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot(), file = f.artifact('proposer-token', 'the-file-token\n');
+  const host = { routes: ['a netrc entry that answers for github.com (.netrc in this user\'s home)'], unread: ['the user Git configuration'] };
+  for (const command of ['preflight', 'create', 'rewrite', 'amend-legacy', 'merge', 'close', 'close-unsafe']) {
+    const r = f.answered(command, command === 'preflight' ? undefined : head, 'accepted', { 'token-file': file }, host);
+    assert.deepEqual(r.out, { ok: false, code: 'E_HOST_CREDENTIAL', diagnostic: { phase: 'host', ...host } }, command); assert.equal(r.scans, 1);
+  }
+  for (const part of [{ routes: host.routes, unread: [] }, { routes: [], unread: host.unread }]) assert.equal(f.answered('create', head, 'accepted', { 'token-file': file }, part).out.code, 'E_HOST_CREDENTIAL');
+  assert.deepEqual(f.calls(), [], 'gh was never started'); unchanged(f, before);
+  // A clean host passes; local commands and the caller's own login are not gated.
+  assert.equal(f.answered('preflight', undefined, 'accepted', { 'token-file': file }).out.ok, true);
+  const ambient = f.answered('preflight', undefined, 'accepted', {}, host);
+  assert.equal(ambient.out.ok, true); assert.equal(ambient.scans, 0, 'without a token file the host is the caller\'s own business');
+});
+test('the gate reads the real host: a netrc entry for github.com in the caller\'s home refuses create through the CLI, naming kinds only', t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot(), file = f.artifact('proposer-token', 'the-file-token\n');
+  fs.writeFileSync(join(f.root, 'home', '.netrc'), 'machine github.com login x password SECRET-VALUE\n');
+  const r = f.run('create', head, { 'token-file': file });
+  assert.equal(r.out.code, 'E_HOST_CREDENTIAL'); assert.equal(r.out.diagnostic.phase, 'host');
+  assert.ok(r.out.diagnostic.routes.includes('a netrc entry that answers for github.com (.netrc in this user\'s home)')); assert.ok(!r.stdout.includes('SECRET-VALUE'));
   assert.deepEqual(f.calls(), []); unchanged(f, before);
 });
 
