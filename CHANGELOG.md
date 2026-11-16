@@ -14,7 +14,8 @@
   absolute path of a file holding one GitHub token. When set, every remote
   `git` call and every `gh` call of the package is given that token
   (credential helpers cleared, `gh`'s login and inherited token variables
-  not consulted, transports other than HTTPS refused), read at each use;
+  not consulted, the host's askpass switched off, SSH, `git://` and plain
+  HTTP refused), read at each use;
   every Git base must be bound by its `https://github.com/` URL; a missing,
   unreadable, empty or malformed file, or another locator, refuses with the
   new `E_CREDENTIAL`, naming the whole fix. `propose --apply`'s check before

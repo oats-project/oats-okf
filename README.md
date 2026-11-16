@@ -113,8 +113,10 @@ When it is set:
 - Every `git` call of the package that talks to a remote (clone, fetch,
   ls-remote, push) and every `gh` call is given that token. Ambient Git
   credential helpers are cleared, `gh`'s stored login and an inherited
-  `GH_TOKEN` or `GITHUB_TOKEN` are not consulted, and Git transports other
-  than HTTPS are refused, so no SSH key stands in.
+  `GH_TOKEN` or `GITHUB_TOKEN` are not consulted, the host's askpass
+  (`core.askPass`, `GIT_ASKPASS`) is switched off, and SSH, `git://` and
+  plain HTTP are refused, so no SSH key stands in (a local repository stays
+  readable).
 - **The package does not isolate Git from the host's own configuration.**
   The token reaches Git through a credential helper, and three things on a
   host answer GitHub before Git asks any helper: a netrc entry for

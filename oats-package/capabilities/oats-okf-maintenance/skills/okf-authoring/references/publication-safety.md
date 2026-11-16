@@ -169,8 +169,10 @@ By default the helper's `git` and `gh` children use the caller's native
 credentials. With `--token-file <absolute path>` (oats.okf 6.2; `oats okf
 propose` passes the host's `github-token-file` setting) they are given the
 GitHub token in that file: ambient credential helpers are cleared,
-inherited token variables and `gh`'s stored login are not consulted, and
-transports other than HTTPS are refused. The helper does not isolate Git
+inherited token variables and `gh`'s stored login are not consulted, the
+host's askpass (`core.askPass`) is switched off, and SSH, `git://` and
+plain HTTP are refused (a local repository stays readable). A file that
+yields no token is an authentication failure, never another credential. The helper does not isolate Git
 from the host's own configuration: a netrc entry for github.com, an
 authorization header (`http.extraHeader`) or a URL rewrite (`insteadOf`,
 `pushInsteadOf`) in the system or user Git configuration answers before any

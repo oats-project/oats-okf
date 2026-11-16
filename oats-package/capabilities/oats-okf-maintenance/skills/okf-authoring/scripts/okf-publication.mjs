@@ -30,8 +30,10 @@ function env() {
 // (setting github-token-file, or --token-file here). When one is named, every
 // remote git call and every gh call of this process tree is given that token:
 // ambient credential helpers are cleared, gh's stored login and inherited
-// token variables are not consulted, and transports other than HTTPS are
-// refused, so no SSH key stands in. Git is NOT isolated from the host's own
+// token variables are not consulted, the host's askpass (core.askPass) is
+// switched off, so a file that yields no token is an authentication failure
+// and never another credential, and SSH, git:// and plain HTTP are refused,
+// so no SSH key stands in (a local repository stays readable). Git is NOT isolated from the host's own
 // configuration: a netrc, an http.extraHeader or a URL rewrite there answers
 // before any helper is asked (the README says a deployment keeps none). The file is read at each
 // use, so a rotated token needs no restart. The token never reaches an
@@ -66,7 +68,7 @@ const INHERITED = /^(?:GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRI
 export function tokenEnv(base, file, { gh = false } = {}) {
   if (file === undefined || file === null) return base;
   if (/'/.test(process.execPath) || /'/.test(SELF)) throw credentialError('path');
-  const config = [['credential.helper', ''], ['credential.https://github.com.helper', `!'${process.execPath}' '${SELF}' git-credential`],
+  const config = [['core.askPass', ''], ['credential.helper', ''], ['credential.https://github.com.helper', `!'${process.execPath}' '${SELF}' git-credential`],
     ['credential.https://github.com.useHttpPath', 'false'], ['protocol.ssh.allow', 'never'], ['protocol.git.allow', 'never'], ['protocol.http.allow', 'never']];
   const out = Object.fromEntries(Object.entries(base).filter(([k]) => !INHERITED.test(k)));
   out.GIT_CONFIG_COUNT = String(config.length);

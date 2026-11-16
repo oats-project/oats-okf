@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
 import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
-import { backingNotes, SKELETON, propose, publication, checkPublish, provenance as provenanceBlock } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
+import { backingNotes, SKELETON, propose, publication, checkPublish, runHelper, provenance as provenanceBlock } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
 import { execute as shippedExecute } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
 import { isolatedGit } from './fixtures/isolated-git.mjs';
 // oats.okf 6.0 (docs/design/2026-11-10-no-harvesters-propose-by-pr.md): the
@@ -459,7 +459,7 @@ test('the commit names the proposer in trailers: the messaging identity and its 
   assert.ok(!withheld.warnings[0].includes(SECRET), 'the warning never echoes the value');
 });
 
-test('github-token-file reaches the whole flow: a base not bound over HTTPS and a committed value each refuse with the fix, before anything is cloned or sent', t => {
+test('with github-token-file, a base not bound over HTTPS and a committed value each refuse at --plan with the fix, before anything is cloned or sent', t => {
   const origins = kind => ({ OATS_SETTINGS_ORIGINS: JSON.stringify({ '/github-token-file': { kind, at: 'x' } }) });
   const f = fixture(t, { settings: { 'github-token-file': '/nonexistent/okf-token' } });
   // The fixture's base is a local repository: the token serves https://github.com/ only.
@@ -491,6 +491,16 @@ test('with github-token-file the one publish predicate judges that file: it is p
     answer('E_CREDENTIAL'); const e = refusal();
     assert.equal(e.code, 'E_CREDENTIAL'); assert.match(e.message, /^github-token-file \/run\/secrets\/okf-token does not exist: provision .* nothing was sent$/);
   } finally { publication.execute = wrapped; for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); }
+});
+
+test('a token file that turns unusable after the push keeps what was published: it is never reported as "nothing was sent"', () => {
+  const wrapped = publication.execute, published = { branch: 'okf-proposal/20261116-x', head: 'a'.repeat(40) }, options = { 'token-file': '/run/secrets/okf-token' };
+  const thrown = extra => { publication.execute = () => { throw Object.assign(new Error('E_CREDENTIAL'), { code: 'E_CREDENTIAL', diagnostic: { phase: 'credential', reason: 'empty' }, ...extra }); }; try { runHelper('create', options); } catch (e) { return e; } finally { publication.execute = wrapped; } assert.fail('expected a refusal'); };
+  const before = thrown({});
+  assert.equal(before.code, 'E_CREDENTIAL'); assert.match(before.message, /^github-token-file \/run\/secrets\/okf-token is empty: .* nothing was sent$/); assert.equal(before.result, undefined);
+  const after = thrown({ published });
+  assert.equal(after.code, 'E_CREDENTIAL'); assert.deepEqual(after.result.published, published); assert.equal(after.result.diagnostic.reason, 'empty');
+  assert.match(after.message, /became unusable after the push/); assert.doesNotMatch(after.message, /nothing was sent/);
 });
 
 test('the operator form reads a retirement recovery copy and names the form in the provenance', t => {

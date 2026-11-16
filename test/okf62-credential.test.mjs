@@ -48,6 +48,16 @@ test('tokenEnv makes the file the only credential helper (a host netrc or Git co
   fs.writeFileSync(f, 'rotated-token\n'); assert.match(fill('github.com', env).stdout, /^password=rotated-token$/m);
   // A bad file is an authentication failure for git, and a refusal before gh starts.
   fs.rmSync(f); assert.notEqual(fill('github.com', env).status, 0);
+  // Even where the host's Git configuration names an askpass: Git must not turn to it for another credential.
+  const ask = join(d, 'askpass'); fs.writeFileSync(ask, '#!/bin/sh\necho ambient-askpass\n', { mode: 0o755 });
+  fs.appendFileSync(join(d, '.gitconfig'), `[core]\n\taskPass = ${ask}\n`);
+  assert.match(fill('github.com', { ...base, GIT_ASKPASS: undefined, GH_TOKEN: undefined }).stdout, /ambient/, 'the fixture: without the token file an ambient source answers');
+  for (const text of [null, '', 'two words\n']) {
+    if (text === null) fs.rmSync(f, { force: true }); else fs.writeFileSync(f, text);
+    const r = fill('github.com', env);
+    assert.notEqual(r.status, 0, JSON.stringify(text)); assert.ok(!r.stdout.includes('ambient'), 'no ambient credential stands in for an unusable file');
+  }
+  fs.rmSync(f, { force: true });
   assert.equal(code(() => tokenEnv(base, f, { gh: true })).diagnostic.reason, 'missing');
   const g = tokenEnv(base, tokenAt(d), { gh: true });
   assert.equal(g.GH_TOKEN, TOKEN); assert.equal(Object.hasOwn(g, 'GITHUB_TOKEN'), false);

@@ -593,16 +593,21 @@ function termsFile() {
   return file;
 }
 /** Run one helper command in process; its refusals keep their codes. */
-function runHelper(command, options) {
+export function runHelper(command, options) {
   try { return publication.execute(command, { ...options }); }
   catch (e) {
     const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-    if (code === 'E_CREDENTIAL' && options['token-file']) credentialRefusal(options['token-file'], e.diagnostic?.reason);
+    // Before anything was sent, an unusable token file is the whole-fix
+    // refusal. After the push it is a publication error like any other: it
+    // keeps what was published, and never says "nothing was sent".
+    if (code === 'E_CREDENTIAL' && options['token-file'] && !e.published) credentialRefusal(options['token-file'], e.diagnostic?.reason);
     const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) };
-    failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : `the publication helper refused (${code})`, result);
+    failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : code === 'E_CREDENTIAL' && e.published ? 'the token in github-token-file became unusable after the push (its file was missing, empty or malformed when gh needed it)' : `the publication helper refused (${code})`, result);
   }
 }
 
+/** The helper option that names the deployment's credential file, if any. */
+const tokenOption = () => { const file = tokenFile(); return file === undefined ? {} : { 'token-file': file }; };
 const GH_FIX = {
   'gh-absent': 'gh is not installed on this host (or not on PATH): install it and sign it in',
   'gh-failed': 'gh could not read the repository or its permission on it: sign gh in (gh auth login, or GH_TOKEN) with an account that can see it',
@@ -627,7 +632,7 @@ const TOKEN_FIX = {
  *  E_GH_UNAVAILABLE with the fix, or E_CREDENTIAL for an unusable file. */
 export function checkPublish(alias, base) {
   const repository = base.pr.repository, file = tokenFile();
-  try { publication.execute('preflight', { github: repository, ...(file === undefined ? {} : { 'token-file': file }) }); }
+  try { publication.execute('preflight', { github: repository, ...tokenOption() }); }
   catch (e) {
     if (e?.code === 'E_CREDENTIAL' && file !== undefined) credentialRefusal(file, e.diagnostic?.reason);
     if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
@@ -845,7 +850,7 @@ export function apply(source, slug, expected) {
       // changed since the comparison above: the commit object is immutable, so
       // its tree must be the digest-bound one before anything leaves the host.
       if (!/^[0-9a-f]{40,64}$/.test(committed?.head ?? '') || git(r.clone, ['rev-parse', '--verify', `${committed.head}^{tree}`]) !== r.tree) fail('E_DIGEST', `base ${r.alias}: the committed tree is not the one --check showed (the clone's index changed during --apply); nothing was pushed`);
-      const created = runHelper('create', { ...(tokenFile() === undefined ? {} : { 'token-file': tokenFile() }), repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
+      const created = runHelper('create', { ...tokenOption(), repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
         'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
       // The PR is confirmed: a receipt that cannot be written is a warning,
