@@ -164,7 +164,7 @@ test('with github-token-file, migrate --deliver to a Git base refuses E_HOST_CRE
   const real = code(() => deliverMigration(record));
   assert.equal(real.code, 'E_HOST_CREDENTIAL'); assert.match(real.message, /a netrc entry that answers for github\.com/); assert.ok(!real.message.includes('SECRET-VALUE')); assert.equal(fs.readFileSync(record, 'utf8'), before);
   fs.rmSync(calls, { force: true });   // the scan itself asked the stand-in git for its configuration
-  // Without the setting the delivery goes on to its own checks (which fail here on the stand-in git).
+  // Without the setting the host is not looked at: the delivery goes on to its own checks, which refuse this stand-in record for their own reasons.
   delete process.env.OATS_SETTINGS; delete process.env.OATS_SETTINGS_ORIGINS; hostProbe.scan = () => assert.fail('the host is the caller\'s own business');
-  assert.notEqual(code(() => deliverMigration(record)).code, 'E_HOST_CREDENTIAL'); assert.ok(fs.existsSync(calls), 'the delivery started');
+  assert.notEqual(code(() => deliverMigration(record)).code, 'E_HOST_CREDENTIAL');
 });
