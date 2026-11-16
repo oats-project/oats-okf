@@ -418,7 +418,7 @@ test('an installation credential GitHub refuses, or that could not be checked, r
   }
 });
 
-test('a credential refusal at create, before its push, reaches the operator whole: nothing was pushed, and the refusal\'s own text with its fix', async t => {
+test('a credential refusal at create, before its push, says nothing was pushed for that base and carries the helper\'s refusal text', async t => {
   const f = fixture(t);
   await inProcess(f, async () => {
     const plan = propose(f.home, { plan: true, slug: 'k' }).result; edit(f, plan);
@@ -509,7 +509,7 @@ test('a token file that turns unusable after the push keeps what was published: 
   const wrapped = publication.execute, published = { branch: 'okf-proposal/20261116-x', head: 'a'.repeat(40) }, options = { 'token-file': '/run/secrets/okf-token' };
   const thrown = extra => { publication.execute = () => { throw Object.assign(new Error('E_CREDENTIAL'), { code: 'E_CREDENTIAL', diagnostic: { phase: 'credential', reason: 'empty' }, ...extra }); }; try { runHelper('create', options); } catch (e) { return e; } finally { publication.execute = wrapped; } assert.fail('expected a refusal'); };
   const before = thrown({});
-  assert.equal(before.code, 'E_CREDENTIAL'); assert.match(before.message, /^github-token-file \/run\/secrets\/okf-token is empty: .* nothing was sent$/); assert.equal(before.result, undefined);
+  assert.equal(before.code, 'E_CREDENTIAL'); assert.match(before.message, /^github-token-file \/run\/secrets\/okf-token is empty: provision .* own git and gh login$/); assert.doesNotMatch(before.message, /nothing was sent/); assert.equal(before.result, undefined);
   const after = thrown({ published });
   assert.equal(after.code, 'E_CREDENTIAL'); assert.deepEqual(after.result.published, published); assert.equal(after.result.diagnostic.reason, 'empty');
   assert.match(after.message, /became unusable after the push/); assert.doesNotMatch(after.message, /nothing was sent/);

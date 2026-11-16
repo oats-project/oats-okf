@@ -145,8 +145,10 @@ When it is set:
   `E_CREDENTIAL`, naming the path and both fixes (provision the file, or
   remove the setting). There is no fall-back to another credential. A
   consult read whose fetch fails for that reason still serves the cached
-  accepted commit, `stale` with that reason, like any failed fetch: a
-  secret that is not mounted yet does not stop the agents reading.
+  accepted commit, `stale` with that reason, like any failed fetch: once a
+  base is cached, a secret that is not mounted yet does not stop the agents
+  reading it (a first read, with nothing cached, fails with
+  `E_CREDENTIAL`).
 
 **It is host-only.** The value is a path on one machine. The kernel accepts
 it only from the deployment's own `oats-local.yaml` (a soul, a workspace file

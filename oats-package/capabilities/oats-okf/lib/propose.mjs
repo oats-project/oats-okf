@@ -597,10 +597,11 @@ export function runHelper(command, options) {
   try { return publication.execute(command, { ...options }); }
   catch (e) {
     const code = /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
-    // Before anything was sent, an unusable token file is the whole-fix
-    // refusal. After the push it is a publication error like any other: it
-    // keeps what was published, and never says "nothing was sent".
-    if (code === 'E_CREDENTIAL' && options['token-file'] && !e.published) credentialRefusal(options['token-file'], e.diagnostic?.reason, { unsent: true });
+    // Before this call's push, an unusable token file is the whole-fix
+    // refusal. After it, it is a publication error like any other and keeps
+    // what was published. Neither says "nothing was sent": another base's PR
+    // may be open by now, and the caller says what was pushed for this one.
+    if (code === 'E_CREDENTIAL' && options['token-file'] && !e.published) credentialRefusal(options['token-file'], e.diagnostic?.reason);
     const result = { ...(e.findings ? { findings: e.findings } : {}), ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}), ...(e.published ? { published: e.published } : {}) };
     failWith(code, code === 'E_CONTENT_REFUSED' ? 'the content screen refused the outgoing content (findings name locations only; nothing left this host)' : code === 'E_CONTENT_INPUT' ? 'the content screen could not read an input (an outgoing text or the host terms file)' : code === 'E_CREDENTIAL' && e.published ? 'the token in github-token-file became unusable after the push (its file was missing, empty or malformed when gh needed it)' : `the publication helper refused (${code})`, result);
   }
