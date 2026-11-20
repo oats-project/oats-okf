@@ -152,7 +152,8 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const srcAgents = fs.readFileSync(join(src, 'AGENTS.md'), 'utf8');
     assert.ok(srcAgents.includes('## Knowledge: OKF'), 'the okf inject is composed');
     assert.match(srcAgents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
-    assert.match(srcAgents, /oats okf propose --plan --slug <slug>/);
+    // oats.okf 6.3 (#164): the inject's flow has no --slug.
+    assert.match(srcAgents, /`oats okf propose --plan`/);
     assert.doesNotMatch(srcAgents, /harvester/i, 'no harvester in the composed instructions');
     const as = { instance: 'src', home: src };
     assert.deepEqual(ok(['okf', 'status'], { cwd: src, as }).result, { harvest: 'on', reason: 'default', publish: 'on' });

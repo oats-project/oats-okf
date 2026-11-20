@@ -1,5 +1,104 @@
 # Changelog
 
+## 6.3.0 — unreleased
+
+Lighter knowledge proposals (oats-project/oats-okf#164, decided by both
+sides on cut list r1). `oats okf propose` refuses only what protects against
+real harm: secrets and personal data leaving the host, a base that would be
+invalid, forged provenance, file safety, the soul's consent, credentials and
+one-attempt publication. What the knowledge maintainer judges at review
+anyway becomes a warning, which the maintainer resolves before merging.
+**What a deployment must change:** nothing. **Every old invocation still
+works, with the same result:** `--plan --slug`, a filled `proposal.md`,
+`--check`, then `--apply --slug --digest`.
+
+### Changed
+
+- **Mechanical refusals are warnings.** Each moved rule answers one `W_*`
+  string in `warnings[]` of the `--check` and `--apply` answers, naming the
+  rule it replaces (`W_SCOPE [was E_OWNER]: …`), and one row of a new
+  `## Check warnings` section in the PR body, after the proposer's text and
+  before the verdict candidates (left out when empty; `E_NOTE`,
+  `W_ID_MISSING` and `W_ATTRIBUTION` are never in it). A warning is exit 0.
+  The codes no longer raised in these cases:
+  - `E_OWNER` at `--check` → `W_SCOPE`: a version-1 path in a node the soul
+    does not own (cut-list item 1). `E_OWNER` at `--plan` (okf.json and the
+    base disagree) is unchanged.
+  - `E_SCOPE` → `W_SCOPE`: a version-1 path outside the owned nodes, the
+    base root `log.md` included (item 1); a version-2 change to `verdicts/`,
+    `subjects/workstream/`, an existing system or project subject, a
+    reserved name under `subjects/`, a delete, a supersession no claim of
+    the proposal makes, the root `index.md` by hand, or an old-node file
+    (item 2). Still `E_SCOPE`: `okf-base.json` (item 3); a non-Markdown file
+    (version 1 anywhere, version 2 under `claims/` or `subjects/`), a
+    hidden, executable, symlinked or out-of-root path (item 4); a generated
+    index that is not the regenerator's output.
+  - `E_SUBJECT` → `W_SUBJECT`: a version-1 claim no subject's
+    `legacy-nodes` absorbs, or a non-list `about:`, left as written (item 6).
+  - `E_VALIDATION` → `W_SUBJECT`: the validator's `about:` errors on the
+    proposal's own added or changed files (item 6). → `W_LINT`: every
+    `--strict` warning: a broken link, a link missing `.md`, an unreachable
+    concept, a missing title or description, a list where a title or
+    description belongs (item 7), on plain bases too. Validator errors still
+    refuse `E_VALIDATION` (item 5).
+  - `E_VERDICT` → `W_VERDICT`: a claim carrying a rejected id without
+    `reconsiders:` (item 8); it is still listed in the PR body's verdict
+    candidates. `oats okf verdicts --check` still refuses `E_VERDICT`.
+  - `E_PROPOSAL_FORMAT` → `W_PROPOSAL`: `proposal.md` missing or left as the
+    skeleton, without a title, with a missing, empty or repeated `## What`,
+    `## Why` or `## Evidence`, or a title over 200 characters (cut) (item 9);
+    an unrecognized or unsafe backing-note reference, dropped from the
+    evidence and never in the provenance block, and more than 100 notes,
+    the first 100 kept (item 11). Still `E_PROPOSAL_FORMAT`: a provenance
+    fence in `proposal.md` (item 10), an unreadable, symlinked or non-UTF-8
+    `proposal.md`, notes over 16 MiB, `plan.json` and the clone checks.
+  Items 15–18 (the content screen, the opt-out and home integrity,
+  credentials, one attempt per proposal) are unchanged.
+- **The PR text is built from the claims** when `proposal.md` is missing or
+  the skeleton: the title is the first changed concept's `title` (by path,
+  with ` (and N more)`, cut to 200; `knowledge proposal` when none has one),
+  and `## What` has one `- <path>: <title> — <description>` line per added
+  or changed concept. Without a title, only the title is built and the
+  proposer's sections are kept; a missing What gets the built list. The
+  commit subject and the digest use the resulting claim line; the digest
+  (version 2, unchanged) still binds the proposal bytes and the generated
+  body. The rows, the built title and the What list show a control,
+  line-separator or bidirectional character as a `\uXXXX` escape.
+- **`--slug` is optional** (item 13). `--plan` without it makes
+  `p-<HHMMSS UTC>-<4 hex>`; `--check` and `--apply` without it use the one
+  proposal directory that has no `publish/` (`E_USAGE` when there is none,
+  or more than one, naming their slugs). A given `--slug` behaves exactly as
+  before.
+- **`--digest` is optional** (item 14, Pepe's side's version). `--check`
+  records the digest it printed in `checked.json` in the proposal directory
+  (atomic, mode 0600, never read through a symlink). A bare `--apply` with no
+  record runs the check, prints it, records it and stops; with a record
+  matching the freshly computed digest it publishes; with a stale one it
+  refuses `E_DIGEST` and leaves the record as it is. `checked.json` records
+  that a check printed this digest; it is not authentication against other
+  processes of the same user, any more than the digest is. `--apply
+  --digest` behaves exactly as before; a malformed `--digest` is `E_USAGE`.
+- **Additive JSON:** `--plan` answers `slug`; `--apply` answers
+  `published` (`false` for a bare `--apply` that only checked, `true` for a
+  publication); `warnings[]` carries the `W_*` rows. Every other field is
+  unchanged. The provenance block (v3) is unchanged, and so is the
+  maintenance parser.
+- **Skills:** `okf-propose` teaches plan, write, `--apply`, read the diff,
+  `--apply`, with the slug and `proposal.md` optional and "when in doubt,
+  propose: the maintainer judges"; it lists the `W_*` codes. `okf-authoring`
+  (both copies) makes the index and log entries, the links and the title and
+  description good practice the maintainer completes, and drops the
+  per-concept `Evidence:` line (item 12); `knowledge-theory` (both copies)
+  and `okf-instance-knowledge` follow. The oats.okf inject says the new flow,
+  with no `--digest`. `knowledge-review` (item 20, with Juan's side's
+  conditions) resolves every `## Check warnings` row before merging (fixed,
+  moved, or accepted with a reason, recorded in the verdict's
+  `"warnings": [{"row", "resolution", "reason"}]` and its prose), never
+  merges a proposal's file under `verdicts/` or a `subjects/workstream/`
+  change without a person's cited acceptance, needs a stated reason for a
+  delete or a supersession, and defaults to amend+merge for tolerated
+  items.
+
 ## 6.2.0 — 2026-11-16
 
 Requires OATS >=0.69.2, unchanged. Knowledge writes from a container: an
