@@ -315,8 +315,12 @@ export function screenedPush(o, head, expected, branch) {
   if (actual !== head) uncertain('E_PUSH_UNCERTAIN', { ...output.diagnostic, phase: actual === null ? 'readback-absent' : 'readback-other' });
   return head;
 }
+// owner/repo as GitHub spells them; a `.` or `..` segment is no repository
+// and would make `repos/<name>` another API path.
+const NODE = /^[A-Za-z0-9_=-]{1,128}$/;
+const repositoryName = name => typeof name === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(name) && !name.split('/').some(x => x === '.' || x === '..');
 function github(o) {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(o.github || '')) fail('E_GITHUB');
+  if (!repositoryName(o.github)) fail('E_GITHUB');
   if (o.pr !== undefined && !/^[1-9][0-9]*$/.test(o.pr)) fail('E_PR');
 }
 function gh(o, args, input) { github(o); return run('gh', args, { input }); }
@@ -335,16 +339,35 @@ function gh(o, args, input) { github(o); return run('gh', args, { input }); }
 // The REST field, not GraphQL's viewerPermission, which is null for a GitHub
 // App. A bounded check: it cannot tell whether a narrowly scoped token may
 // open a PR. The reason is a fixed constant; gh's output is never forwarded.
+// The same read gives the repository's canonical owner/repo (`full_name`)
+// and its node id: GitHub answers a renamed or transferred repository's old
+// name through a redirect to the repository's id, which a GET follows. The
+// canonical name is a read, never a grant: where it differs from the name
+// given, it is read back by itself and must answer with the same node id, so
+// it names the repository the given name led to; any other answer refuses
+// E_GH before anything is written. Every later gh call names the canonical
+// repository, so no write goes through a redirect, and a PR URL GitHub
+// prints compares with it. → the canonical owner/repo.
 export function publishPreflight(o) {
   github(o);
   const unavailable = reason => { throw Object.assign(new Error('E_GH_UNAVAILABLE'), { code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason } }); };
   const ghEnv = env({ gh: true });
-  const r = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${o.github}`, '--jq', '.permissions.push'], { env: ghEnv, timeout: 60000, maxBuffer: MAX });
+  const r = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${o.github}`, '--jq', '.permissions.push, .full_name, .node_id'], { env: ghEnv, timeout: 60000, maxBuffer: MAX });
   if (r.error?.code === 'ENOENT') unavailable('gh-absent');
   if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
-  let push;
-  try { push = text(r.stdout).trim(); } catch { unavailable('gh-failed'); }
-  if (push === 'true') return;
+  let push, canonical, node;
+  try { [push, canonical, node] = text(r.stdout).replace(/\n$/, '').split('\n'); } catch { unavailable('gh-failed'); }
+  push = push?.trim();
+  // An answer that names no repository in GitHub's own grammar establishes
+  // nothing: the publication would not know where its PR is.
+  if (!repositoryName(canonical) || !NODE.test(node ?? '')) unavailable('gh-failed');
+  if (canonical !== o.github) {
+    const again = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${canonical}`, '--jq', '.full_name, .node_id'], { env: ghEnv, timeout: 60000, maxBuffer: MAX });
+    let same = false;
+    try { same = !again.error && !again.signal && again.status === 0 && text(again.stdout) === `${canonical}\n${node}\n`; } catch { /* not the same answer */ }
+    if (!same) fail('E_GH');
+  }
+  if (push === 'true') return canonical;
   // A GitHub App installation token is not a user: for it GitHub reports the
   // repository's `permissions` all false, or leaves them out, whatever the
   // installation was granted, so the answer above says nothing about it.
@@ -355,8 +378,9 @@ export function publishPreflight(o) {
   let installation = false;
   try { installation = !listed.error && !listed.signal && listed.status === 0 && /^\d+$/.test(text(listed.stdout).trim()); } catch { /* not an installation's answer */ }
   if (!installation) unavailable(push === 'false' ? 'no-write-permission' : 'gh-failed');
-  const answer = acceptsPush(o);
+  const answer = acceptsPush({ ...o, github: canonical });
   if (answer !== 'accepted') unavailable(answer === 'refused' ? 'installation-cannot-push' : 'installation-check-failed');
+  return canonical;
 }
 // Whether GitHub accepts a push to the repository from GH'S credential, the
 // one the installation answer was about. It asks GitHub for the push
@@ -709,7 +733,8 @@ export function execute(command, o) {
     const body = readText(o['body-file'], 'PR body', { terms: o.terms });
     const p = provenance(text(body)); if (p.version !== kind.version) fail('E_PROVENANCE');
     // Before the push: a host that cannot open the PR publishes nothing.
-    publishPreflight(o);
+    // From here every gh call names the canonical repository (above).
+    const repository = publishPreflight(o);
     let head, recovered = 0;
     for (;;) {
       // Every E_BASE_MOVED from screenedPush is decided before its push.
@@ -719,18 +744,20 @@ export function execute(command, o) {
       recoverBase(o, ++recovered);
     }
     // The push is confirmed: every failure from here names what it published.
+    // Made after the loop: a recovery moves o's base and head.
+    const at = { ...o, github: repository };
     try {
-      gh(o, ['label', 'create', label, '--repo', o.github, '--force', '--color', '0E8A16', '--description', kind.description]);
+      gh(at, ['label', 'create', label, '--repo', repository, '--force', '--color', '0E8A16', '--description', kind.description]);
       try {
         verifyBase(o);
         if (tip(o, ref(o.branch)) !== head) fail('E_HEAD_MOVED');
       } catch { fail('E_PR_UNCERTAIN'); }
-      const url = text(gh(o, ['pr', 'create', '--repo', o.github, '--base', o['base-branch'], '--head', o.branch,
+      const url = text(gh(at, ['pr', 'create', '--repo', repository, '--base', o['base-branch'], '--head', o.branch,
         '--label', label, '--title', 'OKF knowledge proposal', '--body-file', '-'], body)).trim();
-      if (!url.startsWith(`https://github.com/${o.github}/pull/`) || !/\/pull\/[1-9][0-9]*$/.test(url)) fail('E_PR_UNCERTAIN');
-      confirmPr({ ...o, pr: url.split('/').at(-1) }, 'OPEN', o.branch);
-      return { head, base: o.base, recovered, branch: o.branch, url, status: 'created' };
-    } catch (error) { throw Object.assign(error, { published: { branch: o.branch, head } }); }
+      if (!url.startsWith(`https://github.com/${repository}/pull/`) || !/\/pull\/[1-9][0-9]*$/.test(url)) fail('E_PR_UNCERTAIN');
+      confirmPr({ ...at, pr: url.split('/').at(-1) }, 'OPEN', o.branch);
+      return { head, base: o.base, recovered, branch: o.branch, url, repository, status: 'created' };
+    } catch (error) { throw Object.assign(error, { published: { branch: o.branch, head, repository } }); }
   }
   remoteGuard(o);
   const closing = command === 'close' || command === 'close-unsafe';

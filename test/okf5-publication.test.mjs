@@ -75,8 +75,13 @@ try {
   } else if (a[0] === 'api' && String(a[3]).startsWith('installation/')) {
     // Every call of the preflight names github.com: one host, one credential.
     assert.deepEqual(a, ['api', '--hostname', 'github.com', 'installation/repositories?per_page=1', '--jq', '.total_count']); kind = 'installation';
+  } else if (a[0] === 'api' && a[5] === '.full_name, .node_id') {
+    // The read-back of a canonical name that differs from the one given.
+    assert.deepEqual(a, ['api', '--hostname', 'github.com', 'repos/' + (s.fullName ?? repo), '--jq', '.full_name, .node_id']); kind = 'identity';
   } else if (a[0] === 'api') {
-    assert.deepEqual(a, ['api', '--hostname', 'github.com', 'repos/' + repo, '--jq', '.permissions.push']); kind = 'preflight';
+    // s.alias: the name a renamed or transferred repository had (the bindings'),
+    // which GitHub still answers through a redirect; every write names repo.
+    assert.deepEqual(a, ['api', '--hostname', 'github.com', 'repos/' + (s.alias ?? repo), '--jq', '.permissions.push, .full_name, .node_id']); kind = 'preflight';
   } else if (a[0] === 'pr' && a[1] === 'view') {
     assert.deepEqual(a, ['pr', 'view', pr, '--repo', repo, '--json', 'state,headRefOid,headRefName,baseRefName,isCrossRepository,title,body']); kind = 'view';
   } else if (a[0] === 'pr' && a[1] === 'create') {
@@ -103,7 +108,7 @@ try {
   process.exit(97);
 }
 const input = a.includes('--body-file') ? fs.readFileSync(0, 'utf8') : null;
-const entry = { kind, argv: a, input, write: kind !== 'view' && kind !== 'preflight' && kind !== 'installation' && kind !== 'token', effect: false };
+const entry = { kind, argv: a, input, write: !['view', 'preflight', 'identity', 'installation', 'token'].includes(kind), effect: false };
 // The credential gh was handed in its own environment (the token-file mode); the fixture's own environment holds none.
 if (process.env.GH_TOKEN !== undefined) entry.ghToken = process.env.GH_TOKEN;
 let response = '';
@@ -126,7 +131,11 @@ if (kind === 'installation' && s.installation === undefined) {
 } else if (kind === 'token') {
   response = s.token ?? 'fixture-installation-token';
 } else if (kind === 'preflight') {
-  response = s.preflightText ?? String(s.push ?? true);
+  // What gh prints for the three fields, one per line; preflightText stands
+  // for the first line only, preflightRaw for the whole answer.
+  response = s.preflightRaw ?? [s.preflightText ?? String(s.push ?? true), s.fullName ?? repo, s.nodeId ?? 'R_fixtureNode'].join('\n');
+} else if (kind === 'identity') {
+  response = s.readback ?? [s.fullName ?? repo, s.nodeId ?? 'R_fixtureNode'].join('\n');
 } else if (kind === 'view') {
   response = JSON.stringify({ state: s.state, headRefOid: s.overrideHead || head(), headRefName: s.headRefName,
     baseRefName: s.baseRefName, isCrossRepository: s.isCrossRepository, title: s.title, body: s.body });
@@ -568,7 +577,7 @@ for (const mode of ['rename', 'empty-file-deletion']) test(`amend-legacy refuses
 // Content screening covers every introduced commit, not only the final tree.
 test('clean create publishes the supplied OID, screened stdin body and fixed title', t => {
   const f = fixture(t), head = f.change(), out = success(f.run('create', head));
-  assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, status: 'created' });
+  assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, repository: GITHUB, status: 'created' });
   assert.equal(f.git(f.remote, 'rev-parse', REF), head); assert.equal(f.git(f.remote, 'rev-parse', 'main'), f.base);
   const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['preflight', 'label', 'create', 'view']); calls.shift();
   assert.equal(calls[1].input, fs.readFileSync(f.bodyFile, 'utf8'));
@@ -579,7 +588,7 @@ test('create publishes an okf-proposal/ branch with a v3 body under the okf-prop
   const f = fixture(t), head = f.change();
   fs.writeFileSync(f.bodyFile, body(proposal3()));
   const out = success(f.run('create', head, { branch: PROPOSAL_BRANCH }));
-  assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: PROPOSAL_BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, status: 'created' });
+  assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: PROPOSAL_BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, repository: GITHUB, status: 'created' });
   assert.equal(f.git(f.remote, 'rev-parse', `refs/heads/${PROPOSAL_BRANCH}`), head);
   const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ['preflight', 'label', 'create', 'view']); calls.shift();
   assert.equal(calls[0].argv[2], 'okf-proposal');
@@ -1259,7 +1268,61 @@ test('create reports E_PR_UNCERTAIN and stops after the branch moves at the gh l
   assert.ok(f.calls().some(c => c.kind === 'label' && c.effect), 'push and label may already have happened');
   assert.deepEqual(f.calls().filter(c => c.kind === 'create'), [], 'a detected label-boundary move must stop before PR creation');
   refusal(r, 'E_PR_UNCERTAIN');
-  assert.deepEqual(r.out.published, { branch: BRANCH, head }, 'a failure after the push names what this run published');
+  assert.deepEqual(r.out.published, { branch: BRANCH, head, repository: GITHUB }, 'a failure after the push names what this run published, and where');
+});
+
+// #123: after the knowledge repository is renamed or transferred, the
+// bindings still name the old path, which GitHub answers through a redirect.
+// The preflight's read names the canonical repository; it is read back by
+// itself for the same node id before anything is written, and every write
+// names it. The fake refuses a label or PR write under any other name.
+const MOVED_FROM = 'old-owner/fixture-knowledge';
+test('create against a renamed or transferred repository opens the PR under the canonical name and confirms it', t => {
+  const f = fixture(t), head = f.change(); f.patchGh({ alias: MOVED_FROM });
+  const out = success(f.run('create', head, { github: MOVED_FROM }));
+  assert.deepEqual(out, { ok: true, head, base: f.base, recovered: 0, branch: BRANCH, url: `https://github.com/${GITHUB}/pull/${PR}`, repository: GITHUB, status: 'created' });
+  assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'identity', 'label', 'create', 'view'], 'confirmed by its read-back, not assumed');
+  for (const c of f.calls().filter(c => c.write)) assert.equal(c.argv[c.argv.indexOf('--repo') + 1], GITHUB, 'no write names the old path');
+  assert.equal(f.git(f.remote, 'rev-parse', REF), head);
+});
+test('a case-only difference from GitHub\'s spelling is read back and publishes', t => {
+  const f = fixture(t), head = f.change(); f.patchGh({ alias: 'Fixture-Owner/Fixture-Knowledge' });
+  assert.equal(success(f.run('create', head, { github: 'Fixture-Owner/Fixture-Knowledge' })).repository, GITHUB);
+});
+for (const [what, patch] of [
+  ['answers with another node id', { readback: `${GITHUB}\nR_anotherNode` }],
+  ['answers under yet another name', { readback: `someone/fixture-knowledge\nR_fixtureNode` }],
+  ['fails', { fail: 'identity', failureText: DIAGNOSTIC_STDERR.join('\n') }],
+]) test(`create refuses E_GH before any push or gh write when the canonical name's read-back ${what}`, t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ alias: MOVED_FROM, ...patch });
+  const r = f.run('create', head, { github: MOVED_FROM }); refusal(r, 'E_GH');
+  assert.deepEqual(r.out, { ok: false, code: 'E_GH' }, 'nothing was published, so nothing is named');
+  unchanged(f, before); assert.deepEqual(f.calls().filter(c => c.write), []);
+  refusal(f.run('preflight', undefined, { github: MOVED_FROM }), 'E_GH');
+});
+for (const raw of ['true', 'true\n\nR_fixtureNode', `true\n${GITHUB}`, `true\n${GITHUB}\nnot a node id`, `true\n../x\nR_fixtureNode`, `true\nowner/..\nR_fixtureNode`]) {
+  test(`create refuses E_GH_UNAVAILABLE (gh-failed) before any push when the preflight names no repository (${JSON.stringify(raw)})`, t => {
+    const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ preflightRaw: raw });
+    const r = f.run('create', head); refusal(r, 'E_GH_UNAVAILABLE');
+    assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'gh-failed' } });
+    unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
+  });
+}
+test('a `.` or `..` segment in --github is no repository: E_GITHUB before any gh call', t => {
+  const f = fixture(t), head = f.change(), before = f.snapshot();
+  for (const github of ['../fixture-knowledge', 'fixture-owner/..', './x']) refusal(f.run('create', head, { github }), 'E_GITHUB');
+  unchanged(f, before); assert.deepEqual(f.calls(), []);
+});
+test('a failure after the push on a moved repository names the canonical repository it published to', t => {
+  const f = fixture(t), head = f.change(); f.patchGh({ alias: MOVED_FROM, fail: 'create', failureText: DIAGNOSTIC_STDERR.join('\n') });
+  const r = f.run('create', head, { github: MOVED_FROM }); refusal(r, 'E_GH');
+  assert.deepEqual(r.out, { ok: false, code: 'E_GH', published: { branch: BRANCH, head, repository: GITHUB } });
+});
+test('an installation token on a moved repository is asked about the canonical repository\'s push advertisement', t => {
+  const f = fixture(t), head = f.change(); f.patchGh({ alias: MOVED_FROM, push: false, installation: 1, token: 'the-token-gh-holds' });
+  const r = f.answered('create', head, 'accepted', { github: MOVED_FROM });
+  assert.equal(r.out.ok, true); assert.equal(r.out.repository, GITHUB);
+  assert.deepEqual(r.asked.map(a => a.url), [`https://github.com/${GITHUB}.git/info/refs?service=git-receive-pack`], 'never through the old name\'s redirect');
 });
 
 // #148: the gh precondition is decided before the push. A refusal publishes
@@ -1447,7 +1510,7 @@ for (const kind of ['label', 'create']) test(`create names the pushed branch whe
   const f = fixture(t), head = f.change();
   f.patchGh({ fail: kind, failureText: DIAGNOSTIC_STDERR.join('\n') });
   const r = f.run('create', head); refusal(r, 'E_GH');
-  assert.deepEqual(r.out, { ok: false, code: 'E_GH', published: { branch: BRANCH, head } });
+  assert.deepEqual(r.out, { ok: false, code: 'E_GH', published: { branch: BRANCH, head, repository: GITHUB } });
   assert.equal(f.git(f.remote, 'rev-parse', REF), head, 'the named branch is on the remote');
 });
 

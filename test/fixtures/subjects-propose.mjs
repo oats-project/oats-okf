@@ -22,7 +22,17 @@ const s = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { 
 const input = a.includes('--body-file') && a[a.indexOf('--body-file') + 1] === '-' ? fs.readFileSync(0, 'utf8') : null;
 const save = () => fs.writeFileSync(state, JSON.stringify(s));
 if (a[0] === 'pr' && a[1] === 'list') { console.log('[]'); process.exit(0); }
+// The preflight's read of repos/<name>: push permission, canonical name and
+// node id, one per line, as gh prints them; FIXTURE_GH_CANONICAL stands for a
+// repository renamed or transferred from the name asked, and a differing
+// name is read back by itself (FIXTURE_GH_READBACK: another answer).
+if (a[0] === 'api' && String(a[3]).startsWith('repos/')) {
+  const name = process.env.FIXTURE_GH_CANONICAL ?? a[3].slice('repos/'.length);
+  console.log(a[5] === '.full_name, .node_id' ? (process.env.FIXTURE_GH_READBACK ?? name + '\nR_kb') : [process.env.FIXTURE_GH_PUSH ?? 'true', name, 'R_kb'].join('\n')); process.exit(0);
+}
 if (a[0] === 'api') { console.log(process.env.FIXTURE_GH_PUSH ?? 'true'); process.exit(0); }
+// Every write and read-back names the canonical repository, never a redirect.
+if (['label', 'pr'].includes(a[0]) && !(a[0] === 'pr' && a[1] === 'list') && a[a.indexOf('--repo') + 1] !== (process.env.FIXTURE_GH_CANONICAL ?? 'acme/kb')) { console.error('fixture gh: not the canonical repository'); process.exit(97); }
 if (a[0] === 'label' && a[1] === 'create') process.exit(0);
 if (a[0] === 'pr' && a[1] === 'create') {
   s.prs.push({ head: a[a.indexOf('--head') + 1], label: a[a.indexOf('--label') + 1], title: a[a.indexOf('--title') + 1], body: input }); save();

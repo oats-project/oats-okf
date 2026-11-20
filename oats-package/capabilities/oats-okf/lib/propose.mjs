@@ -753,6 +753,9 @@ export function checkPublish(alias, base) {
   catch (e) {
     if (e?.code === 'E_CREDENTIAL' && file !== undefined) credentialRefusal(file, e.diagnostic?.reason, { unsent: true });
     if (e?.code === 'E_HOST_CREDENTIAL') hostRefusal(e.diagnostic);
+    // The helper's E_GH here: GitHub named another repository for the bound
+    // one and that name did not read back as the same repository.
+    if (e?.code === 'E_GH') failWith('E_GH', `base ${alias} (${repository}): GitHub answers this repository under another name, and that name did not read back as the same repository, so nothing is written to it; nothing was pushed. Check where ${repository} points on GitHub and correct pr.repository (and repository) in the bindings file`);
     if (e?.code !== 'E_GH_UNAVAILABLE') failWith(/^E_[A-Z_]+$/.test(e?.code || '') ? e.code : 'E_PUBLICATION', `the publication helper refused before anything was pushed (base ${alias})`);
     const reason = e.diagnostic?.reason;
     const fix = (file === undefined ? GH_FIX : TOKEN_FIX)[reason] ?? 'gh is not usable';
@@ -763,11 +766,23 @@ export function checkPublish(alias, base) {
 /** How a publication that stopped after a step it cannot undo is finished or
  *  removed, for whoever the instance reports to (the instance never does it). */
 function aftermath(code, r, branch, bodyFile, pushed, late) {
-  const repository = r.owned.base.pr.repository, q = quote;
+  // After a push, the helper names the repository it published to: GitHub's
+  // canonical name, which a renamed or transferred base no longer shares
+  // with the bindings.
+  const repository = pushed?.repository ?? r.owned.base.pr.repository, q = quote;
   if (late) return `; gh stopped answering after the proposal was marked as attempted (${late}): nothing was pushed for base ${r.alias}`;
-  if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: \`gh pr list --repo ${q(repository)} --head ${q(pushed.branch)} --state all\` shows whether a PR exists; to finish, \`gh pr create --repo ${q(repository)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(pushed.branch)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\`; to remove it, \`git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}\``;
+  if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: \`gh pr list --repo ${q(repository)} --head ${q(pushed.branch)} --state all\` shows whether a PR exists; to finish, \`gh pr create --repo ${q(repository)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(pushed.branch)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\` (its label starts the one review, through the proposal-review trigger: start no other); to remove it, \`git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}\``;
   if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not: \`git -C ${q(r.clone)} ls-remote origin ${q(`refs/heads/${branch}`)}\` shows whether it does`;
   return ['E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : '';
+}
+/** W_REPOSITORY_MOVED: the bindings name a repository GitHub answers under
+ *  another name (renamed or transferred), which publication used instead,
+ *  after reading back that it is the same repository. A difference of case
+ *  only is GitHub's own spelling of the same name, not a move. */
+function moved(r, repository, file) {
+  const bound = r.owned.base.pr.repository;
+  if (typeof repository !== 'string' || repository.toLowerCase() === bound.toLowerCase()) return null;
+  return `W_REPOSITORY_MOVED: base ${r.alias}: the bindings name ${bound}, which GitHub now answers as ${repository} (renamed or transferred), and publication used that name; edit ${file}: set pr.repository to ${repository}, and repository too if its URL names ${bound}`;
 }
 
 /** Everything --check verifies and --apply re-verifies. Writes only the
@@ -1030,6 +1045,8 @@ export function apply(source, slug, expected) {
       const created = runHelper('create', { ...tokenOption(), repo: r.clone, remote: r.owned.base.repository, github: r.owned.base.pr.repository, base: r.accepted,
         'base-branch': r.owned.base.acceptedBranch, head: committed.head, branch, 'body-file': bodyFile, 'guard-file': baseFile(r.owned.base, 'okf-base.json'), ...terms });
       const row = { alias: r.alias, url: created.url, head: created.head, branch: created.branch, base: created.base, recovered: created.recovered };
+      const relocated = moved(r, created.repository, source.bindings.file);
+      if (relocated) p.warnings.push(relocated);
       // The PR is confirmed: a receipt that cannot be written is a warning,
       // never a reason to report the publication as failed or unknown.
       published.push(row);
@@ -1045,7 +1062,7 @@ export function apply(source, slug, expected) {
       const pushed = e.result?.published;
       const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}), ...(pushed ? { published: pushed } : {}) };
       try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
-      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_CREDENTIAL', 'E_HOST_CREDENTIAL'].includes(code) && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late)}`,
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_CREDENTIAL', 'E_HOST_CREDENTIAL'].includes(code) && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late)}${pushed && moved(r, pushed.repository, source.bindings.file) ? `; ${moved(r, pushed.repository, source.bindings.file)}` : ''}`,
         { published, failed: safe, proposal: dir });
     }
   }

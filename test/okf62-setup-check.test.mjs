@@ -202,7 +202,7 @@ test('hostRoutes reads the user\'s netrc and Git configuration with real git: ki
 
 test('the command: text by default, one JSON document with --json, exit 1 when not ready', t => {
   const f = fixture(t), ghbin = join(f.dir, 'ghbin'); fs.mkdirSync(ghbin);
-  fs.writeFileSync(join(ghbin, 'gh'), `#!${process.execPath}\nconst a = process.argv.slice(2);\nif (a[0] === '--version') process.exit(0);\nif (a.join(' ') === 'api --hostname github.com repos/acme/kb --jq .permissions.push') { console.log('false'); process.exit(0); }\nif (a[0] === 'label') { console.log('[]'); process.exit(0); }\nprocess.exit(1);\n`, { mode: 0o755 });
+  fs.writeFileSync(join(ghbin, 'gh'), `#!${process.execPath}\nconst a = process.argv.slice(2);\nif (a[0] === '--version') process.exit(0);\nif (a.join(' ') === 'api --hostname github.com repos/acme/kb --jq .permissions.push, .full_name, .node_id') { console.log('false\\nacme/kb\\nR_kb'); process.exit(0); }\nif (a[0] === 'label') { console.log('[]'); process.exit(0); }\nprocess.exit(1);\n`, { mode: 0o755 });
   const run = (...args) => spawnSync(process.execPath, [CLI, 'setup', '--check', ...args], { cwd: f.dir, encoding: 'utf8', timeout: 120000,
     env: { HOME: f.dir, PATH: `${ghbin}:${process.env.PATH}`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', OATS_SOUL: f.soul, OATS_SETTINGS: JSON.stringify(f.settings) } });
   const text = run();

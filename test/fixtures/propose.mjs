@@ -31,7 +31,17 @@ if (process.env.FIXTURE_GH_FAIL === a.slice(0, 2).join(' ')) { console.error('fi
 if (a[0] === 'pr' && a[1] === 'list') { console.log(JSON.stringify(s.open || [])); process.exit(0); }
 if (a[0] === 'api' && process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT
   && fs.readFileSync(process.env.FIXTURE_GH_LOG, 'utf8').trim().split('\n').filter(l => JSON.parse(l).argv[0] === 'api').length === Number(process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT)) { console.error('fixture gh failure'); process.exit(9); }
+// The preflight's read of repos/<name>: push permission, canonical name and
+// node id, one per line, as gh prints them; FIXTURE_GH_CANONICAL stands for a
+// repository renamed or transferred from the name asked, and a differing
+// name is read back by itself (FIXTURE_GH_READBACK: another answer).
+if (a[0] === 'api' && String(a[3]).startsWith('repos/')) {
+  const name = process.env.FIXTURE_GH_CANONICAL ?? a[3].slice('repos/'.length);
+  console.log(a[5] === '.full_name, .node_id' ? (process.env.FIXTURE_GH_READBACK ?? name + '\nR_kb') : [process.env.FIXTURE_GH_PUSH ?? 'true', name, 'R_kb'].join('\n')); process.exit(0);
+}
 if (a[0] === 'api') { console.log(process.env.FIXTURE_GH_PUSH ?? 'true'); process.exit(0); }
+// Every write and read-back names the canonical repository, never a redirect.
+if (['label', 'pr'].includes(a[0]) && !(a[0] === 'pr' && a[1] === 'list') && a[a.indexOf('--repo') + 1] !== (process.env.FIXTURE_GH_CANONICAL ?? 'acme/kb')) { console.error('fixture gh: not the canonical repository'); process.exit(97); }
 if (a[0] === 'label' && a[1] === 'create') process.exit(0);
 if (a[0] === 'pr' && a[1] === 'create') {
   const head = a[a.indexOf('--head') + 1], label = a[a.indexOf('--label') + 1];
