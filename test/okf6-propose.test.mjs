@@ -101,14 +101,24 @@ test('check validates, scopes and screens the edits, then prints the complete ou
 
 for (const [name, path, code, pattern] of [
   ['okf-base.json', 'okf-base.json', 'E_SCOPE', /outside the write surface/],
-  ['the base root log.md', 'log.md', 'E_SCOPE', /outside the write surface/],
   ['a hidden file', 'expert/.draft.md', 'E_SCOPE', /hidden/],
   ['a non-Markdown file', 'expert/data.json', 'E_SCOPE', /not a Markdown concept/],
-  ['an unowned node', 'peer/claim.md', 'E_OWNER', /node kb\/peer, which this soul does not own/],
 ]) test(`check refuses ${name} (${code}) and pushes nothing`, t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])), clone = edit(f, plan);
   write(join(clone, path), path.endsWith('.json') && path !== 'okf-base.json' ? '{}\n' : path === 'okf-base.json' ? fs.readFileSync(join(clone, 'okf-base.json'), 'utf8').replace('"other"', '"source"') : '---\ntype: Note\n---\nx\n');
   refused(f.run(['--check', '--slug', 'x']), code, pattern);
+  assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
+});
+// oats.okf 6.3 (#164, cut-list item 1): these were refusals (E_SCOPE, E_OWNER);
+// now a W_SCOPE row for the maintainer, and the check still pushes nothing.
+for (const [name, path, code, pattern] of [
+  ['the base root log.md', 'log.md', 'E_SCOPE', /^W_SCOPE \[was E_SCOPE\]: log\.md is outside the write surface/],
+  ['an unowned node', 'peer/claim.md', 'E_OWNER', /^W_SCOPE \[was E_OWNER\]: peer\/claim\.md is in node kb\/peer, which this soul does not own; the maintainer chooses its home$/],
+]) test(`check warns on ${name} (was ${code}) and pushes nothing`, t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])), clone = edit(f, plan);
+  // A log.md is a reserved file: it carries no type (a validator error, still refused).
+  write(join(clone, path), path === 'log.md' ? '# Log\n\n## 2026-11-20\n\n* **Update**: x\n' : '---\ntype: Note\n---\nx\n');
+  assert.ok(ok(f.run(['--check', '--slug', 'x'])).warnings.some(w => pattern.test(w)));
   assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
 });
 
@@ -117,13 +127,15 @@ test('check refuses an executable bit, a committed edit outside the surface and 
   fs.chmodSync(join(clone, 'expert/retry-budget.md'), 0o755);
   refused(f.run(['--check', '--slug', 'x']), 'E_SCOPE', /non-executable/);
   fs.chmodSync(join(clone, 'expert/retry-budget.md'), 0o644);
-  // An unreachable concept fails okf-validate --strict.
+  // An unreachable concept fails okf-validate --strict: 6.3 (#164, item 7), a W_LINT row.
   write(join(clone, 'expert/orphan.md'), '---\ntype: Note\ntitle: Orphan\ndescription: Not in any index.\n---\nx\n');
-  refused(f.run(['--check', '--slug', 'x']), 'E_VALIDATION');
+  assert.ok(ok(f.run(['--check', '--slug', 'x'])).warnings.includes('W_LINT [was E_VALIDATION]: expert/orphan.md: unreachable from any index.md; the maintainer fixes it at review'));
   fs.rmSync(join(clone, 'expert/orphan.md'));
-  // Committing in the clone does not smuggle anything past the scope check.
+  // Committing in the clone does not smuggle anything past the checks. 6.3
+  // (#164, item 1): the write surface only warns, but a file outside every
+  // node makes the base invalid (item 5), so it still refuses, by the validator.
   write(join(clone, 'README.md'), 'hello\n'); f.git(clone, 'add', '-A'); f.git(clone, 'commit', '-qm', 'local');
-  refused(f.run(['--check', '--slug', 'x']), 'E_SCOPE', /README\.md/);
+  refused(f.run(['--check', '--slug', 'x']), 'E_VALIDATION', /file outside node knowledge: README\.md/);
 });
 
 test('check refuses a secret (E_CONTENT_REFUSED) by location only, in a concept or in proposal.md', t => {
@@ -147,21 +159,27 @@ test('a host term (setting screen-terms-file) refuses as host-term, case-insensi
   refused(f.run(['--check', '--slug', 'x']), 'E_CONFIG', /screen-terms-file/);
 });
 
-test('check: a malformed proposal or note line is E_PROPOSAL_FORMAT; a missing note is dropped from evidence with a warning', t => {
+// oats.okf 6.3 (#164, cut-list items 9 and 11): a format problem in
+// proposal.md is a W_PROPOSAL row and the proposal checks; only a provenance
+// fence still refuses (item 10).
+test('check: a provenance fence in proposal.md is E_PROPOSAL_FORMAT; any other malformed proposal or note line is W_PROPOSAL; a missing note is dropped from evidence with a warning', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x']));
   edit(f, plan, { proposal: SKELETON });
-  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /must start with/);
+  assert.ok(ok(f.run(['--check', '--slug', 'x'])).warnings.includes('W_PROPOSAL [was E_PROPOSAL_FORMAT]: proposal.md was not filled; the PR text was built from the claims'));
   for (const [proposal, pattern] of [
     [PROPOSAL().replace('## Why\nA future instance would otherwise size budgets per connection.\n', '## Why\n<!-- nothing -->\n'), /`## Why` section is empty/],
-    [PROPOSAL().replace('## Evidence', '## Evidence\nx\n## Evidence'), /exactly one `## Evidence`/],
-    [PROPOSAL(['notes/.a.md']), /is not a notes\/<path>\.md/],
-    [PROPOSAL().replace('Observed in', 'Observed (notes/a b.md) in'), /unrecognized backing-note reference/],
-    [PROPOSAL(['notes/../STATE.md']), /is not a notes/],
-    [PROPOSAL() + '\n```okf-proposal\n{}\n```\n', /must not carry a provenance block/],
+    [PROPOSAL().replace('## Evidence', '## Evidence\nx\n## Evidence'), /`## Evidence` section is given more than once/],
+    [PROPOSAL(['notes/.a.md']), /is not a notes\/<path>\.md.*: dropped from evidence$/],
+    [PROPOSAL().replace('Observed in', 'Observed (notes/a b.md) in'), /unrecognized backing-note reference on line 10: dropped from evidence$/],
+    [PROPOSAL(['notes/../STATE.md']), /is not a notes.*: dropped from evidence$/],
   ]) {
     fs.writeFileSync(join(plan.proposal, 'proposal.md'), proposal);
-    refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', pattern);
+    const r = ok(f.run(['--check', '--slug', 'x']));
+    assert.ok(r.warnings.some(w => w.startsWith('W_PROPOSAL [was E_PROPOSAL_FORMAT]: ') && pattern.test(w)), JSON.stringify(r.warnings));
+    assert.ok(parseProvenance(r.prBody).value.evidence.every(e => e.note === 'notes/retry.md'), 'a dropped reference is not evidence');
   }
+  fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL() + '\n```okf-proposal\n{}\n```\n');
+  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /must not carry a provenance block/);
   fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL(['notes/retry.md', 'notes/missing.md']));
   fs.symlinkSync(join(f.home, 'notes/retry.md'), join(f.home, 'notes/linked.md'));
   fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL(['notes/retry.md', 'notes/missing.md', 'notes/linked.md']));
@@ -175,12 +193,17 @@ test('check: a malformed proposal or note line is E_PROPOSAL_FORMAT; a missing n
 test('the 5.8 note-locator rules carry over: list entries and explicit references', () => {
   assert.deepEqual(backingNotes('## Backing notes\n- notes/a.md\n- `notes/b c.md`\n\nSee notes/d.md, and [x](notes/e.md).\n').sort(), ['notes/a.md', 'notes/b c.md', 'notes/d.md', 'notes/e.md']);
   assert.throws(() => backingNotes('see `notes/unclosed.md\n'), { code: 'E_PROPOSAL_FORMAT' });
+  // 6.3 (#164, item 11): with onUnrecognized the reference is dropped and its line reported; the rest is read.
+  const lines = [];
+  assert.deepEqual(backingNotes('- notes/a.md\nsee `notes/unclosed.md\nsee notes/b.md, x/notes/c.md\n', { onUnrecognized: n => lines.push(n) }), ['notes/a.md', 'notes/b.md']);
+  assert.deepEqual(lines, [2, 3]);
 });
 
 test('apply refuses a stale digest (E_DIGEST); a good digest pushes one okf-proposal branch and opens a labelled PR with a v3 block', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'retry-budget'])), clone = edit(f, plan);
   const checked = ok(f.run(['--check', '--slug', 'retry-budget']));
-  refused(f.run(['--apply', '--slug', 'retry-budget']), 'E_USAGE', /--digest/);
+  // 6.3 (#164, item 14): --digest is optional (a bare --apply publishes what the last --check printed); a malformed one is still E_USAGE.
+  refused(f.run(['--apply', '--slug', 'retry-budget', '--digest', 'abc']), 'E_USAGE', /--digest/);
   // Anything changed after the check: refused, nothing pushed, no attempt recorded.
   fs.appendFileSync(join(clone, 'expert/retry-budget.md'), 'An unread line.\n');
   refused(f.run(['--apply', '--slug', 'retry-budget', '--digest', checked.digest]), 'E_DIGEST');
@@ -770,11 +793,15 @@ for (const filename of ['notes/decision.md (v2).md', 'notes/decision.md(v2).md']
   assert.ok(pr.url);
 });
 
+// 6.3 (#164, cut-list item 11): such a note is dropped from the evidence with
+// a W_PROPOSAL row (it was E_PROPOSAL_FORMAT) and never reaches the provenance block.
 test('note paths: no hidden, parent, empty, backslash or control-character segment, in propose and in the parser', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x']));
   for (const note of ['notes/.hidden.md', 'notes/a\\b.md', 'notes//a.md', 'notes/a\tb.md']) {
     edit(f, plan, { proposal: PROPOSAL([]).replace('## Backing notes\n', `## Backing notes\n- \`${note}\`\n`) });
-    refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT');
+    const r = ok(f.run(['--check', '--slug', 'x']));
+    assert.ok(r.warnings.some(w => /^W_PROPOSAL \[was E_PROPOSAL_FORMAT\]: backing note .* is not a notes\/<path>\.md .*: dropped from evidence$/.test(w)), JSON.stringify(r.warnings));
+    assert.deepEqual(parseProvenance(r.prBody).value.evidence, [], note);
   }
   const fence = evidence => `x\n\n\`\`\`okf-proposal\n${JSON.stringify({ version: 3, source: { soul: 's', owner: 'o', instance: 'i', incarnation: CREATED, ownedNodes: [], readNodes: [], bases: [] }, evidence, tasks: { provider: null, refs: [] }, proposer: { form: 'live', instance: 'i', alias: null } })}\n\`\`\`\n`;
   assert.equal(parseProvenance(fence([{ note: 'notes/decision.md (v2).md' }])).valid, true);

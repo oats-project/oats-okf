@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { REJECTED, VALIDATE } from './fixtures/bridged-base.mjs';
+import { REJECTED, VALIDATE, VERDICT } from './fixtures/bridged-base.mjs';
 import { OLD_UNSTAMPED, V2, fixture, ok, refused, CLAIM, edit, write } from './fixtures/subjects-propose.mjs';
 // oats.okf 6.0, the subject layout in `oats okf propose` (spec
 // docs/design/2026-11-10-subject-layer-in-oats-okf.md §3): on a bridged base a
@@ -32,15 +32,19 @@ test('version 1 on a bridged base: the plan shows the generated indexes; check a
   assert.match(f.git(f.dir, '--git-dir', f.origin, 'show', `${pr.head}:subjects/system/okf/index.md`), /\(\/expert\/pin\.md\)/);
 });
 
-test('version 1 on a bridged base: E_SUBJECT when no subject absorbs the owned node; E_OWNER for another node, as before', t => {
+// oats.okf 6.3 (#164, cut-list items 1 and 6): both were refusals (E_OWNER,
+// E_SUBJECT); now a W_SCOPE and a W_SUBJECT row, and the claim is left as written.
+test('version 1 on a bridged base: W_SUBJECT when no subject absorbs the owned node; W_SCOPE for another node', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'pin']));
   const clone = edit(plan, 'peer/pin.md', CLAIM('\nabout: [workstream/knowledge]'));
-  refused(f.run(['--check', '--slug', 'pin']), 'E_OWNER', /peer\/pin\.md.*node kb\/peer, which this soul does not own/);
+  assert.ok(ok(f.run(['--check', '--slug', 'pin'])).warnings.some(w => /^W_SCOPE \[was E_OWNER\]: peer\/pin\.md is in node kb\/peer, which this soul does not own/.test(w)));
   fs.rmSync(join(clone, 'peer/pin.md'));
   write(join(clone, 'expert/pin.md'), CLAIM());
   const subject = join(clone, 'subjects/system/okf.md');
   fs.writeFileSync(subject, fs.readFileSync(subject, 'utf8').replace('legacy-nodes: [expert]', 'legacy-nodes: []'));
-  refused(f.run(['--check', '--slug', 'pin']), 'E_SUBJECT', /no subject on this base names node expert in its legacy-nodes/);
+  const checked = ok(f.run(['--check', '--slug', 'pin']));
+  assert.ok(checked.warnings.some(w => /^W_SUBJECT \[was E_SUBJECT\]: expert\/pin\.md: no subject on this base names node expert in its legacy-nodes/.test(w)), JSON.stringify(checked.warnings));
+  assert.doesNotMatch(checked.bases[0].diff, /\+about:/, 'about: is left as written');
 });
 
 test('version 2: plan shows the subject write surface; a claim under claims/ (no id) checks and applies with provenance v3 subjects', t => {
@@ -100,9 +104,11 @@ test('an old-node concept merged without id (#140): check warns W_ID_MISSING for
   assert.doesNotMatch(error.message, /missing 'id'/);
 });
 
-test('version 2: E_SCOPE for verdicts/, a workstream subject, an old-node file and a supersession no claim makes', t => {
+// oats.okf 6.3 (#164, cut-list item 2): each was E_SCOPE; now a W_SCOPE row naming the path and the rule.
+test('version 2: W_SCOPE for verdicts/, a workstream subject, an old-node file and a supersession no claim makes', t => {
   for (const [path, text, rule] of [
-    ['verdicts/dec-000000000099.md', '---\ntype: Verdict\n---\n', /verdicts\/dec-000000000099\.md: only the knowledge maintainer writes verdicts\//],
+    // 6.3: a valid verdict file, as the check now goes on to validate the base (it refused before validating).
+    ['verdicts/dec-000000000099.md', VERDICT('dec-000000000099'), /verdicts\/dec-000000000099\.md: only the knowledge maintainer writes verdicts\//],
     ['subjects/workstream/new.md', '---\ntype: Workstream\ntitle: New\ndescription: x\n---\n', /subjects\/workstream\/new\.md: workstreams change only on a person's cited acceptance/],
     ['peer/lesson.md', null, /peer\/lesson\.md: outside the write surface/],
     ['peer/lesson.md', 'status', /peer\/lesson\.md: status: superseded only on a concept a claim of this proposal supersedes/],
@@ -111,14 +117,16 @@ test('version 2: E_SCOPE for verdicts/, a workstream subject, an old-node file a
     const clone = edit(plan, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]'));
     if (text === 'status') fs.writeFileSync(join(clone, path), fs.readFileSync(join(clone, path), 'utf8').replace('id: ins-000000000002', 'id: ins-000000000002\nstatus: superseded'));
     else if (text) write(join(clone, path), text); else fs.appendFileSync(join(clone, path), 'An edit.\n');
-    refused(f.run(['--check', '--slug', 'pin']), 'E_SCOPE', rule);
+    const warnings = ok(f.run(['--check', '--slug', 'pin'])).warnings;
+    assert.ok(warnings.some(w => w.startsWith('W_SCOPE [was E_SCOPE]: ') && rule.test(w)), JSON.stringify(warnings));
   }
 });
 
-test('version 2: a rejected id without reconsiders refuses E_VERDICT; a title-hash hit goes into the PR body as a candidate', t => {
+// oats.okf 6.3 (#164, cut-list item 8): the rejected id was E_VERDICT; now a W_VERDICT row.
+test('version 2: a rejected id without reconsiders is a W_VERDICT row; a title-hash hit goes into the PR body as a candidate', t => {
   const f = fixture(t, { decl: V2 }), plan = ok(f.run(['--plan', '--slug', 'pin']));
   const clone = edit(plan, 'claims/decisions/again.md', `---\ntype: Decision\ntitle: Something\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n\n# x\n`);
-  refused(f.run(['--check', '--slug', 'pin']), 'E_VERDICT', new RegExp(`claims/decisions/again\\.md: claim id ${REJECTED.id} was rejected`));
+  assert.ok(ok(f.run(['--check', '--slug', 'pin'])).warnings.some(w => new RegExp(`^W_VERDICT \\[was E_VERDICT\\]: claims/decisions/again\\.md: claim id ${REJECTED.id} was rejected`).test(w)));
   write(join(clone, 'claims/decisions/again.md'), `---\ntype: Decision\ntitle: ${REJECTED.title}\ndescription: x\nabout: [system/okf]\n---\n\n# x\n`);
   const checked = ok(f.run(['--check', '--slug', 'pin']));
   assert.match(checked.prBody, /## Verdict candidates\n\n- `claims\/decisions\/again\.md`: title-hash candidate `dec-0000000000aa` \(rejected, Decision\) "Keep a harvester per proposal"/);
