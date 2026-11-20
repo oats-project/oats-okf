@@ -749,7 +749,8 @@ const TOKEN_FIX = {
  *  E_HOST_CREDENTIAL when the host can answer GitHub in the file's place. */
 export function checkPublish(alias, base) {
   const repository = base.pr.repository, file = tokenFile();
-  try { publication.execute('preflight', { github: repository, ...tokenOption() }); }
+  // → the repository's canonical owner/repo, which the helper read back.
+  try { return publication.execute('preflight', { github: repository, ...tokenOption() }).repository; }
   catch (e) {
     if (e?.code === 'E_CREDENTIAL' && file !== undefined) credentialRefusal(file, e.diagnostic?.reason, { unsent: true });
     if (e?.code === 'E_HOST_CREDENTIAL') hostRefusal(e.diagnostic);
@@ -764,20 +765,25 @@ export function checkPublish(alias, base) {
   }
 }
 /** How a publication that stopped after a step it cannot undo is finished or
- *  removed, for whoever the instance reports to (the instance never does it). */
-function aftermath(code, r, branch, bodyFile, pushed, late) {
+ *  removed, for whoever the instance reports to (the instance never does it).
+ *  `known`: the canonical repository the pre-push gate read back. */
+function aftermath(code, r, branch, bodyFile, pushed, late, known) {
   // After a push, the helper names the repository it published to: GitHub's
   // canonical name, which a renamed or transferred base no longer shares
-  // with the bindings.
-  const repository = pushed?.repository ?? r.owned.base.pr.repository, q = quote;
+  // with the bindings. Before a confirmed push, the gate's read names it.
+  const repository = pushed?.repository ?? known ?? r.owned.base.pr.repository, q = quote;
   if (late) return `; gh stopped answering after the proposal was marked as attempted (${late}): nothing was pushed for base ${r.alias}`;
+  const list = name => `\`gh pr list --repo ${q(repository)} --head ${q(name)} --state all\``;
+  const finish = name => `\`gh pr create --repo ${q(repository)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(name)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\` (its label starts the one review, through the proposal-review trigger: start no other)`;
   // Removal goes to the repository the branch was published to, through gh,
   // by name, never through the clone's origin: that is the bindings' URL as
   // written, which after a rename or transfer may still name the old path
   // (whatever pr.repository says), stop redirecting or be reused.
-  const remove = pushed?.repository ? `gh api -X DELETE ${q(`repos/${pushed.repository}/git/refs/heads/${pushed.branch}`)}` : pushed ? `git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}` : '';
-  if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: \`gh pr list --repo ${q(repository)} --head ${q(pushed.branch)} --state all\` shows whether a PR exists; to finish, \`gh pr create --repo ${q(repository)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(pushed.branch)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\` (its label starts the one review, through the proposal-review trigger: start no other); to remove it, \`${remove}\``;
-  if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not: \`git -C ${q(r.clone)} ls-remote origin ${q(`refs/heads/${branch}`)}\` shows whether it does`;
+  const removeIn = (name, where) => `\`gh api -X DELETE ${q(`repos/${where}/git/refs/heads/${name}`)}\``;
+  const remove = pushed?.repository ? removeIn(pushed.branch, pushed.repository) : pushed ? `\`git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}\`` : '';
+  if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: ${list(pushed.branch)} shows whether a PR exists; to finish, ${finish(pushed.branch)}; to remove it, ${remove}`;
+  // The push's outcome is unknown: nothing here says the branch is there.
+  if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not. For whoever you report to: \`gh api ${q(`repos/${repository}/git/ref/heads/${branch}`)}\` shows whether it does, and its head, and ${list(branch)} whether a PR exists; only if the branch exists and no PR does, finish with ${finish(branch)}, or remove it with ${removeIn(branch, repository)}`;
   return ['E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : '';
 }
 /** W_REPOSITORY_MOVED: the bindings name a repository GitHub answers under
@@ -1009,9 +1015,11 @@ export function apply(source, slug, expected) {
   // The publish directory is the attempt marker: one attempt per proposal.
   // An attempted proposal refuses as such, before the gate below could call it untouched.
   if (present(publish)) attempted();
-  // Every gh precondition, for every base, before the attempt marker.
+  // Every gh precondition, for every base, before the attempt marker; each
+  // answers the base's canonical repository.
+  const known = {};
   for (const r of p.results.filter(x => x.changed.length)) {
-    try { checkPublish(r.alias, r.owned.base); }
+    try { known[r.alias] = checkPublish(r.alias, r.owned.base); }
     catch (e) {
       // Another --apply of this proposal may have begun while gh was asked:
       // then it is attempted, and never reported as untouched.
@@ -1065,9 +1073,12 @@ export function apply(source, slug, expected) {
       const late = e.code === 'E_GH_UNAVAILABLE' ? (e.result?.diagnostic?.reason ?? 'gh-failed') : null;
       const code = late ? 'E_GH' : /^E_[A-Z_]+$/.test(e.code || '') ? e.code : 'E_PUBLICATION';
       const pushed = e.result?.published;
+      // Where the branch is or may be: the published repository, or for an
+      // uncertain push the one the gate read back.
+      const target = pushed?.repository ?? (code === 'E_PUSH_UNCERTAIN' ? known[r.alias] : undefined);
       const safe = { ok: false, alias: r.alias, code, ...(e.result?.findings ? { findings: e.result.findings } : {}), ...(e.result?.diagnostic ? { diagnostic: e.result.diagnostic } : {}), ...(pushed ? { published: pushed } : {}) };
       try { atomic(report, JSON.stringify(safe, null, 2) + '\n'); } catch { /* the error below still reports */ }
-      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_CREDENTIAL', 'E_HOST_CREDENTIAL'].includes(code) && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late)}${pushed && moved(r, pushed.repository, source.bindings.file) ? `; ${moved(r, pushed.repository, source.bindings.file)}` : ''}`,
+      failWith(code, `publication of base ${r.alias} stopped (${code}); ${published.length ? `already opened: ${published.map(x => x.url).join(', ')}; ` : ''}the clone, the commit text, the PR body and the safe result are retained in the proposal directory. Do not retry: report it${['E_CREDENTIAL', 'E_HOST_CREDENTIAL'].includes(code) && !pushed ? `; nothing was pushed for base ${r.alias}: ${e.message}` : ''}${aftermath(code, r, branch, bodyFile, pushed, late, known[r.alias])}${target && moved(r, target, source.bindings.file) ? `; ${moved(r, target, source.bindings.file)}` : ''}`,
         { published, failed: safe, proposal: dir });
     }
   }

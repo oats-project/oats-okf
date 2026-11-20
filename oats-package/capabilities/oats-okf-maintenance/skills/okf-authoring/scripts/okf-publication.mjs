@@ -724,7 +724,7 @@ export function execute(command, o) {
     git(o.repo, ['update-ref', reference, head, o.head]);
     return { head, status: 'committed' };
   }
-  if (command === 'preflight') { publishPreflight(o); return { github: o.github, status: 'gh-available' }; }
+  if (command === 'preflight') { const repository = publishPreflight(o); return { github: o.github, repository, status: 'gh-available' }; }
   if (command === 'create') {
     github(o);
     // A canonical repository-relative path, as a base root is bound (any

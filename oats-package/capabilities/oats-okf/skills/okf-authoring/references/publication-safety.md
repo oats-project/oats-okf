@@ -214,7 +214,7 @@ confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
 Before its push, `create` makes read-only `gh` calls (first `gh api --hostname github.com
 repos/<repo> --jq '.permissions.push, .full_name, .node_id'`; the `preflight --github OWNER/REPO`
-command runs the check alone). The same read names the repository's
+command runs the check alone and answers the canonical `repository`). The same read names the repository's
 canonical `owner/repo` and node id. GitHub answers a renamed or transferred
 repository's old name through a redirect, so the canonical name can differ
 from `--github`. It is a read, not a grant: a different name is read back by

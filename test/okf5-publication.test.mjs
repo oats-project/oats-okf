@@ -1285,6 +1285,11 @@ test('create against a renamed or transferred repository opens the PR under the 
   for (const c of f.calls().filter(c => c.write)) assert.equal(c.argv[c.argv.indexOf('--repo') + 1], GITHUB, 'no write names the old path');
   assert.equal(f.git(f.remote, 'rev-parse', REF), head);
 });
+test('preflight on a renamed or transferred repository answers its canonical name, read back', t => {
+  const f = fixture(t); f.patchGh({ alias: MOVED_FROM });
+  assert.deepEqual(success(f.run('preflight', undefined, { github: MOVED_FROM })), { ok: true, github: MOVED_FROM, repository: GITHUB, status: 'gh-available' });
+  assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'identity']);
+});
 test('a case-only difference from GitHub\'s spelling is read back and publishes', t => {
   const f = fixture(t), head = f.change(); f.patchGh({ alias: 'Fixture-Owner/Fixture-Knowledge' });
   assert.equal(success(f.run('create', head, { github: 'Fixture-Owner/Fixture-Knowledge' })).repository, GITHUB);
@@ -1366,7 +1371,7 @@ for (const patch of [{ push: false, installation: 1 }, { preflightText: 'null', 
   test(`an installation token (${JSON.stringify(patch)}) passes the preflight when GitHub answers gh's token with the push advertisement, and create publishes`, t => {
     const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ ...patch, token: 'the-token-gh-holds' });
     const r = f.answered('preflight', undefined, 'accepted');
-    assert.deepEqual(r.out, { ok: true, github: GITHUB, status: 'gh-available' });
+    assert.deepEqual(r.out, { ok: true, github: GITHUB, repository: GITHUB, status: 'gh-available' });
     // The credential judged is gh's own, asked of GitHub over HTTPS: never Git's, never the base's remote.
     assert.deepEqual(r.asked, [{ url: ADVERTISEMENT_URL, token: 'the-token-gh-holds' }]);
     unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight', 'installation', 'token'], 'nothing was written');
@@ -1430,11 +1435,11 @@ s.listen(0, '127.0.0.1', () => console.log(s.address().port));`], { stdio: ['ign
 test('with a token file the preflight judges that token: gh holds it in its own environment, and the installation route sends it without asking gh', t => {
   const f = fixture(t), before = f.snapshot(), file = f.artifact('proposer-token', 'the-file-token\n');
   const user = f.answered('preflight', undefined, 'accepted', { 'token-file': file });
-  assert.deepEqual(user.out, { ok: true, github: GITHUB, status: 'gh-available' }); assert.deepEqual(user.asked, []);
+  assert.deepEqual(user.out, { ok: true, github: GITHUB, repository: GITHUB, status: 'gh-available' }); assert.deepEqual(user.asked, []);
   assert.deepEqual(f.calls().map(c => [c.kind, c.ghToken]), [['preflight', 'the-file-token']]);
   f.patchGh({ push: false, installation: 1, token: 'the-login-gh-holds' });
   const app = f.answered('preflight', undefined, 'accepted', { 'token-file': file });
-  assert.deepEqual(app.out, { ok: true, github: GITHUB, status: 'gh-available' });
+  assert.deepEqual(app.out, { ok: true, github: GITHUB, repository: GITHUB, status: 'gh-available' });
   assert.deepEqual(app.asked, [{ url: ADVERTISEMENT_URL, token: 'the-file-token' }], "never gh's stored login");
   assert.deepEqual(f.calls().slice(1).map(c => [c.kind, c.ghToken]), [['preflight', 'the-file-token'], ['installation', 'the-file-token']], 'gh auth token is not asked');
   assert.deepEqual(f.answered('preflight', undefined, 'refused', { 'token-file': file }).out, unavailable('installation-cannot-push'));
@@ -1494,7 +1499,7 @@ test('create refuses E_GH_UNAVAILABLE (gh-absent) on a host without gh, before a
 
 test('preflight passes only when GitHub says the credential may push, read-only', t => {
   const f = fixture(t), before = f.snapshot();
-  assert.deepEqual(success(f.run('preflight')), { ok: true, github: GITHUB, status: 'gh-available' });
+  assert.deepEqual(success(f.run('preflight')), { ok: true, github: GITHUB, repository: GITHUB, status: 'gh-available' });
   unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight']);
 });
 
