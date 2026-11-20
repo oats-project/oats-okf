@@ -254,6 +254,17 @@ test('apply on a renamed or transferred base opens and confirms the PR under the
   assert.ok(warning?.includes('the bindings name old-org/kb, which GitHub now answers as acme/kb'), String(warning));
   assert.ok(warning.includes(`edit ${f.bindingsFile}: set pr.repository to acme/kb`));
 });
+test('with half-corrected bindings (pr.repository updated, repository still the old URL), removal still names the repository the branch is on', t => {
+  // pr.repository already acme/kb; the clone's origin is the bindings' URL,
+  // which on a real host would still name old-org/kb.
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH');
+  const pushed = e.result.failed.published; assert.equal(pushed.repository, 'acme/kb');
+  assert.ok(e.message.includes(`gh api -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'`));
+  assert.ok(!e.message.includes('push origin --delete'), 'never through origin');
+  assert.ok(!e.message.includes('W_REPOSITORY_MOVED'), 'pr.repository already names it');
+});
 test('apply on a base whose bindings differ from GitHub only in case does not warn', t => {
   const f = fixture(t), doc = JSON.parse(fs.readFileSync(f.bindingsFile, 'utf8')); doc.bases.kb.pr.repository = 'ACME/kb'; fs.writeFileSync(f.bindingsFile, JSON.stringify(doc));
   const plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
@@ -301,7 +312,7 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pushed.branch}`), pushed.head, 'the named branch is the one on the remote');
   // Every argument is shell-quoted: a home path with a space stays one argument.
   assert.ok(e.message.includes(`gh pr create --repo 'acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal --title 'OKF knowledge proposal' --body-file '${join(plan.proposal, 'publish', 'kb-pr.md')}'`), 'how to finish');
-  assert.ok(e.message.includes(`git -C '${join(plan.proposal, 'work', 'kb')}' push origin --delete '${pushed.branch}'`), 'how to remove');
+  assert.ok(e.message.includes(`to remove it, \`gh api -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove: in the repository the branch was published to, never through the clone\'s origin');
   assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed);
   for (const p of ['work/kb', 'outgoing/kb-commit.txt', 'outgoing/kb-pr.md', 'publish/kb-result.json']) assert.ok(fs.existsSync(join(plan.proposal, p)), p);
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');

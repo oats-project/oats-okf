@@ -771,10 +771,11 @@ function aftermath(code, r, branch, bodyFile, pushed, late) {
   // with the bindings.
   const repository = pushed?.repository ?? r.owned.base.pr.repository, q = quote;
   if (late) return `; gh stopped answering after the proposal was marked as attempted (${late}): nothing was pushed for base ${r.alias}`;
-  // The clone's origin is the bindings' URL: on a moved base it names the old
-  // path, which may stop redirecting or be reused, so removal there goes to
-  // the repository the branch was published to, through gh, by name.
-  const remove = pushed && moved(r, pushed.repository) ? `gh api -X DELETE ${q(`repos/${repository}/git/refs/heads/${pushed.branch}`)}` : pushed ? `git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}` : '';
+  // Removal goes to the repository the branch was published to, through gh,
+  // by name, never through the clone's origin: that is the bindings' URL as
+  // written, which after a rename or transfer may still name the old path
+  // (whatever pr.repository says), stop redirecting or be reused.
+  const remove = pushed?.repository ? `gh api -X DELETE ${q(`repos/${pushed.repository}/git/refs/heads/${pushed.branch}`)}` : pushed ? `git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}` : '';
   if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: \`gh pr list --repo ${q(repository)} --head ${q(pushed.branch)} --state all\` shows whether a PR exists; to finish, \`gh pr create --repo ${q(repository)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(pushed.branch)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\` (its label starts the one review, through the proposal-review trigger: start no other); to remove it, \`${remove}\``;
   if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not: \`git -C ${q(r.clone)} ls-remote origin ${q(`refs/heads/${branch}`)}\` shows whether it does`;
   return ['E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : '';
@@ -783,7 +784,7 @@ function aftermath(code, r, branch, bodyFile, pushed, late) {
  *  another name (renamed or transferred), which publication used instead,
  *  after reading back that it is the same repository. A difference of case
  *  only is GitHub's own spelling of the same name, not a move. */
-function moved(r, repository, file = 'the bindings file') {
+function moved(r, repository, file) {
   const bound = r.owned.base.pr.repository;
   if (typeof repository !== 'string' || repository.toLowerCase() === bound.toLowerCase()) return null;
   return `W_REPOSITORY_MOVED: base ${r.alias}: the bindings name ${bound}, which GitHub now answers as ${repository} (renamed or transferred), and publication used that name; edit ${file}: set pr.repository to ${repository}, and repository too if its URL names ${bound}`;
