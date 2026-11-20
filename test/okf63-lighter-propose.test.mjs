@@ -76,6 +76,7 @@ test('a malformed checked.json is no record: a bare --apply checks again, record
   for (const bad of [
     '{"version": 1, "digest": "' + digest + '", "checkedAt": "not-an-ISO-date"}',
     '{"version": 1, "digest": "' + digest + '", "checkedAt": "2026-02-30T00:00:00.000Z"}',
+    '{"version": 1, "digest": "' + digest + '", "checkedAt": "2026-13-20T00:00:00.000Z"}',
     '{"version": 1, "digest": "' + digest + '", "checkedAt": 1}',
     '{"version": 1, "digest": "' + digest + '"}',
     '{"version": 1, "checkedAt": "2026-11-20T00:00:00.000Z"}',

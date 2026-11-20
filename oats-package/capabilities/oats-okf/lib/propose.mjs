@@ -286,7 +286,7 @@ function readChecked(dir) {
   return object(value) && value.version === 1 && typeof value.digest === 'string' && /^[0-9a-f]{64}$/.test(value.digest) && isoInstant(value.checkedAt) ? value.digest : null;
 }
 /** The instant recordCheck writes (Date#toISOString), and nothing else. */
-const isoInstant = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v) && new Date(v).toISOString() === v;
+const isoInstant = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString() === v;
 const recordCheck = (dir, digest) => atomic(join(dir, CHECKED), JSON.stringify({ version: 1, digest, checkedAt: new Date().toISOString() }, null, 2) + '\n');
 function readPlan(dir) {
   const plan = parseJson(readWithin(dir, join(dir, 'plan.json'), 'E_PROPOSAL_FORMAT'), 'plan.json');
