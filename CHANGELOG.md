@@ -1,14 +1,15 @@
 # Changelog
 
-## 6.3.0 — unreleased
+## 6.3.0 — 2026-11-20
 
-Lighter knowledge proposals (oats-project/oats-okf#164, decided by both
+Requires OATS >=0.69.2, unchanged. Lighter knowledge proposals (oats-project/oats-okf#164, decided by both
 sides on cut list r1). `oats okf propose` refuses only what protects against
 real harm: secrets and personal data leaving the host, a base that would be
 invalid, forged provenance, file safety, the soul's consent, credentials and
 one-attempt publication. What the knowledge maintainer judges at review
 anyway becomes a warning, which the maintainer resolves before merging.
-**What a deployment must change:** nothing. **Every old invocation still
+**What a deployment must change:** nothing. A knowledge maintainer now
+resolves every `## Check warnings` row before it merges a proposal. **Every old invocation still
 works, with the same result:** `--plan --slug`, a filled `proposal.md`,
 `--check`, then `--apply --slug --digest`.
 
