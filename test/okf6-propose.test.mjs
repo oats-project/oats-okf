@@ -2,116 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { initBase } from '../oats-package/capabilities/oats-okf/lib/migration.mjs';
-import { loadBindings } from '../oats-package/capabilities/oats-okf/lib/config.mjs';
 import { backingNotes, SKELETON, propose, publication, checkPublish, runHelper, provenance as provenanceBlock } from '../oats-package/capabilities/oats-okf/lib/propose.mjs';
 import { execute as shippedExecute } from '../oats-package/capabilities/oats-okf/skills/okf-authoring/scripts/okf-publication.mjs';
-import { isolatedGit } from './fixtures/isolated-git.mjs';
+import { CLI, write, json, sha, SECRET, CREATED, fixture, ok, refused, PROPOSAL, edit, remoteRefs } from './fixtures/propose.mjs';
 // oats.okf 6.0 (docs/design/2026-11-10-no-harvesters-propose-by-pr.md): the
 // instance proposes its own knowledge with `oats okf propose`. Real Git, a
 // local bare remote and the shipped publication helper; gh is an argv-checked
 // local adapter, so these tests do NOT prove GitHub delivery.
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
-const CLI = join(ROOT, 'oats-package/capabilities/oats-okf/bin/oats-okf.mjs');
 const { parseProvenance } = await import(new URL('../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs', import.meta.url));
-const write = (file, text) => { fs.mkdirSync(dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
-const json = (file, value) => write(file, JSON.stringify(value, null, 2) + '\n');
-const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-const SECRET = `ghp_${'A'.repeat(36)}`;
-const CREATED = '2026-11-10T08:00:00.000Z';
-
-const FAKE_GH = String.raw`const fs = require('node:fs');
-const { execFileSync } = require('node:child_process');
-const a = process.argv.slice(2), state = process.env.FIXTURE_GH_STATE;
-const s = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { prs: [] };
-const input = a.includes('--body-file') && a[a.indexOf('--body-file') + 1] === '-' ? fs.readFileSync(0, 'utf8') : null;
-fs.appendFileSync(process.env.FIXTURE_GH_LOG, JSON.stringify({ argv: a, input }) + '\n');
-const save = () => fs.writeFileSync(state, JSON.stringify(s));
-if (process.env.FIXTURE_GH_FAIL === a.slice(0, 2).join(' ')) { console.error('fixture gh failure'); process.exit(9); }
-if (a[0] === 'pr' && a[1] === 'list') { console.log(JSON.stringify(s.open || [])); process.exit(0); }
-if (a[0] === 'api' && process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT
-  && fs.readFileSync(process.env.FIXTURE_GH_LOG, 'utf8').trim().split('\n').filter(l => JSON.parse(l).argv[0] === 'api').length === Number(process.env.FIXTURE_GH_PREFLIGHT_FAIL_AT)) { console.error('fixture gh failure'); process.exit(9); }
-if (a[0] === 'api') { console.log(process.env.FIXTURE_GH_PUSH ?? 'true'); process.exit(0); }
-if (a[0] === 'label' && a[1] === 'create') process.exit(0);
-if (a[0] === 'pr' && a[1] === 'create') {
-  const head = a[a.indexOf('--head') + 1], label = a[a.indexOf('--label') + 1];
-  s.prs.push({ head, label, title: a[a.indexOf('--title') + 1], body: input }); save();
-  console.log('https://github.com/acme/kb/pull/' + s.prs.length); process.exit(0);
-}
-if (a[0] === 'pr' && a[1] === 'view') {
-  const pr = s.prs[Number(a[2]) - 1];
-  const oid = execFileSync('git', ['--git-dir', process.env.FIXTURE_REMOTE, 'rev-parse', 'refs/heads/' + pr.head], { encoding: 'utf8' }).trim();
-  console.log(JSON.stringify({ state: 'OPEN', headRefOid: oid, headRefName: pr.head, baseRefName: 'main', isCrossRepository: false, title: pr.title, body: pr.body }));
-  process.exit(0);
-}
-console.error('unsupported fixture gh call'); process.exit(97);
-`;
-
-/** A deployment: one Git base `kb` (nodes expert owned by `source`, peer by
- *  `other`) in a local bare remote, the soul `source` owning kb/expert and
- *  reading kb/peer, and its live instance home `src` with a spawn policy. */
-function fixture(t, { policy = { version: 1, harvest: 'on', reason: 'default' }, soulYaml = 'schemaVersion: 2\nname: source\nknowledge: oats.okf\n', record = {}, settings = {}, root = '.' } = {}) {
-  const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf6-propose-')));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const d = join(dir, 'deployment'), home = join(d, 'agents', 'source', 'instances', 'src'), soul = join(d, 'agents', 'source', 'souls', 'abc');
-  const origin = join(dir, 'origin.git'), user = join(dir, 'user'), bin = isolatedGit(dir, '/dev/null');
-  fs.mkdirSync(user, { recursive: true });
-  // The accepted base: provisioned in place by init, then committed and pushed.
-  const seed = join(dir, 'seed'), bindingsFile = join(d, 'okf-bindings.json'), stateDir = join(dir, 'state');
-  json(join(dir, 'nodes.json'), { expert: { path: 'expert', owner: 'source' }, peer: { path: 'peer', owner: 'other' } });
-  json(join(dir, 'seed-bindings.json'), { version: 1, stateDir: join(dir, 'seed-state'), bases: { kb: { id: 'kb-1', kind: 'directory', path: root === '.' ? seed : join(seed, root) } } });
-  initBase(loadBindings(join(dir, 'seed-bindings.json')), 'kb', join(dir, 'nodes.json'), undefined, { confirm: true });
-  const env = { HOME: user, PATH: `${bin}:${join(dir, 'ghbin')}:${dirname(process.execPath)}:/usr/bin:/bin`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LANG: 'C' };
-  const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8' }).trim();
-  git(seed, 'init', '-q', '-b', 'main'); git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'accepted');
-  git(dir, 'clone', '-q', '--bare', seed, origin);
-  json(bindingsFile, { version: 1, stateDir, bases: { kb: { id: 'kb-1', kind: 'git', repository: origin, root, acceptedBranch: 'main', pr: { repository: 'acme/kb' } } } });
-  write(join(soul, 'soul.yaml'), soulYaml);
-  json(join(soul, 'okf.json'), { version: 1, owner: 'source', owns: ['kb/expert'], reads: ['kb/peer'] });
-  json(join(home, 'instance.json'), { agent: 'source', kind: 'persistent', instance: 'src', home, soulDir: soul, createdAt: CREATED,
-    capabilities: [{ id: 'oats.okf', layer: 'knowledge' }, { id: 'oats.aweb', layer: 'messaging' }], ...record });
-  if (policy) json(join(home, 'okf-harvest-policy.json'), policy);
-  write(join(home, 'notes', 'retry.md'), '---\ntype: Decision\n---\nRetry budget is per request.\n');
-  fs.mkdirSync(join(dir, 'ghbin'));
-  fs.writeFileSync(join(dir, 'ghbin', 'gh'), `#!${process.execPath}\n${FAKE_GH}`, { mode: 0o755 });
-  const ghLog = join(dir, 'gh.jsonl'), ghState = join(dir, 'gh-state.json');
-  const f = { dir, d, home, soul, origin, seed, env, git, ghLog, ghState, bindingsFile,
-    settings: { 'bindings-file': bindingsFile, ...settings },
-    calls: () => fs.existsSync(ghLog) ? fs.readFileSync(ghLog, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : [],
-    prs: () => fs.existsSync(ghState) ? JSON.parse(fs.readFileSync(ghState, 'utf8')).prs : [],
-  };
-  f.run = (args, { extra = {}, drop = [], cwd = home, as = 'instance' } = {}) => {
-    const e = { ...env, OATS_SOUL: soul, OATS_SETTINGS: JSON.stringify(f.settings), OATS_TEAM_SCOPE: d,
-      FIXTURE_GH_LOG: ghLog, FIXTURE_GH_STATE: ghState, FIXTURE_REMOTE: origin,
-      ...(as === 'instance' ? { OATS_INSTANCE_HOME: home, OATS_INSTANCE: 'src' } : {}), ...extra };
-    for (const k of drop) delete e[k];
-    const r = spawnSync(process.execPath, [CLI, 'propose', ...args, '--json'], { cwd, env: e, encoding: 'utf8', timeout: 120000 });
-    let out = null; try { out = JSON.parse(r.stdout); } catch { /* reported below */ }
-    assert.ok(out, `propose answered JSON: ${r.stdout}${r.stderr}`);
-    return { status: r.status, out, stderr: r.stderr };
-  };
-  return f;
-}
-const ok = r => { assert.equal(r.status, 0, JSON.stringify(r.out)); assert.equal(r.out.ok, true); return r.out.result; };
-const refused = (r, code, pattern) => {
-  assert.equal(r.status, 1, JSON.stringify(r.out)); assert.equal(r.out.ok, false);
-  assert.equal(r.out.error.code, code, JSON.stringify(r.out.error)); if (pattern) assert.match(r.out.error.message, pattern);
-  return r.out.error;
-};
-const PROPOSAL = (notes = ['notes/retry.md']) => `# OKF proposal: retry budget is per request\n\n## What\nA decision in kb/expert: retries are budgeted per request.\n\n## Why\nA future instance would otherwise size budgets per connection.\n\n## Evidence\nObserved in the load test of the retry work.\n\n## Backing notes\n${notes.map(n => `- ${n}`).join('\n')}\n`;
-/** Write one concept into the clone, reachable from the node index, and fill proposal.md. */
-function edit(f, plan, { concept = 'Retry budget is per request, not per connection.\n', path = 'expert/retry-budget.md', proposal = PROPOSAL(), root = '.' } = {}) {
-  const clone = root === '.' ? plan.bases[0].clone : join(plan.bases[0].clone, root);
-  write(join(clone, path), `---\ntype: Decision\ntitle: Retry budget is per request\ndescription: Retries are budgeted per request.\n---\n\n${concept}`);
-  if (path.startsWith('expert/')) fs.appendFileSync(join(clone, 'expert', 'index.md'), `\n* [Retry budget is per request](${path.slice('expert/'.length)}) - Retries are budgeted per request.\n`);
-  fs.writeFileSync(join(plan.proposal, 'proposal.md'), proposal);
-  return clone;
-}
-const remoteRefs = f => f.git(f.dir, '--git-dir', f.origin, 'for-each-ref', '--format=%(refname)').split('\n').filter(Boolean);
 
 test('plan clones every owned base at the accepted branch, writes the skeleton and prints the write surface and open proposals', t => {
   const f = fixture(t);
@@ -199,14 +101,24 @@ test('check validates, scopes and screens the edits, then prints the complete ou
 
 for (const [name, path, code, pattern] of [
   ['okf-base.json', 'okf-base.json', 'E_SCOPE', /outside the write surface/],
-  ['the base root log.md', 'log.md', 'E_SCOPE', /outside the write surface/],
   ['a hidden file', 'expert/.draft.md', 'E_SCOPE', /hidden/],
   ['a non-Markdown file', 'expert/data.json', 'E_SCOPE', /not a Markdown concept/],
-  ['an unowned node', 'peer/claim.md', 'E_OWNER', /node kb\/peer, which this soul does not own/],
 ]) test(`check refuses ${name} (${code}) and pushes nothing`, t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])), clone = edit(f, plan);
   write(join(clone, path), path.endsWith('.json') && path !== 'okf-base.json' ? '{}\n' : path === 'okf-base.json' ? fs.readFileSync(join(clone, 'okf-base.json'), 'utf8').replace('"other"', '"source"') : '---\ntype: Note\n---\nx\n');
   refused(f.run(['--check', '--slug', 'x']), code, pattern);
+  assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
+});
+// oats.okf 6.3 (#164, cut-list item 1): these were refusals (E_SCOPE, E_OWNER);
+// now a W_SCOPE row for the maintainer, and the check still pushes nothing.
+for (const [name, path, code, pattern] of [
+  ['the base root log.md', 'log.md', 'E_SCOPE', /^W_SCOPE \[was E_SCOPE\]: log\.md is outside the write surface/],
+  ['an unowned node', 'peer/claim.md', 'E_OWNER', /^W_SCOPE \[was E_OWNER\]: peer\/claim\.md is in node kb\/peer, which this soul does not own; the maintainer chooses its home$/],
+]) test(`check warns on ${name} (was ${code}) and pushes nothing`, t => {
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])), clone = edit(f, plan);
+  // A log.md is a reserved file: it carries no type (a validator error, still refused).
+  write(join(clone, path), path === 'log.md' ? '# Log\n\n## 2026-11-20\n\n* **Update**: x\n' : '---\ntype: Note\n---\nx\n');
+  assert.ok(ok(f.run(['--check', '--slug', 'x'])).warnings.some(w => pattern.test(w)));
   assert.deepEqual(remoteRefs(f), ['refs/heads/main']);
 });
 
@@ -215,13 +127,15 @@ test('check refuses an executable bit, a committed edit outside the surface and 
   fs.chmodSync(join(clone, 'expert/retry-budget.md'), 0o755);
   refused(f.run(['--check', '--slug', 'x']), 'E_SCOPE', /non-executable/);
   fs.chmodSync(join(clone, 'expert/retry-budget.md'), 0o644);
-  // An unreachable concept fails okf-validate --strict.
+  // An unreachable concept fails okf-validate --strict: 6.3 (#164, item 7), a W_LINT row.
   write(join(clone, 'expert/orphan.md'), '---\ntype: Note\ntitle: Orphan\ndescription: Not in any index.\n---\nx\n');
-  refused(f.run(['--check', '--slug', 'x']), 'E_VALIDATION');
+  assert.ok(ok(f.run(['--check', '--slug', 'x'])).warnings.includes('W_LINT [was E_VALIDATION]: expert/orphan.md: unreachable from any index.md; the maintainer fixes it at review'));
   fs.rmSync(join(clone, 'expert/orphan.md'));
-  // Committing in the clone does not smuggle anything past the scope check.
+  // Committing in the clone does not smuggle anything past the checks. 6.3
+  // (#164, item 1): the write surface only warns, but a file outside every
+  // node makes the base invalid (item 5), so it still refuses, by the validator.
   write(join(clone, 'README.md'), 'hello\n'); f.git(clone, 'add', '-A'); f.git(clone, 'commit', '-qm', 'local');
-  refused(f.run(['--check', '--slug', 'x']), 'E_SCOPE', /README\.md/);
+  refused(f.run(['--check', '--slug', 'x']), 'E_VALIDATION', /file outside node knowledge: README\.md/);
 });
 
 test('check refuses a secret (E_CONTENT_REFUSED) by location only, in a concept or in proposal.md', t => {
@@ -245,21 +159,27 @@ test('a host term (setting screen-terms-file) refuses as host-term, case-insensi
   refused(f.run(['--check', '--slug', 'x']), 'E_CONFIG', /screen-terms-file/);
 });
 
-test('check: a malformed proposal or note line is E_PROPOSAL_FORMAT; a missing note is dropped from evidence with a warning', t => {
+// oats.okf 6.3 (#164, cut-list items 9 and 11): a format problem in
+// proposal.md is a W_PROPOSAL row and the proposal checks; only a provenance
+// fence still refuses (item 10).
+test('check: a provenance fence in proposal.md is E_PROPOSAL_FORMAT; any other malformed proposal or note line is W_PROPOSAL; a missing note is dropped from evidence with a warning', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x']));
   edit(f, plan, { proposal: SKELETON });
-  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /must start with/);
+  assert.ok(ok(f.run(['--check', '--slug', 'x'])).warnings.includes('W_PROPOSAL [was E_PROPOSAL_FORMAT]: proposal.md was not filled; the PR text was built from the claims'));
   for (const [proposal, pattern] of [
     [PROPOSAL().replace('## Why\nA future instance would otherwise size budgets per connection.\n', '## Why\n<!-- nothing -->\n'), /`## Why` section is empty/],
-    [PROPOSAL().replace('## Evidence', '## Evidence\nx\n## Evidence'), /exactly one `## Evidence`/],
-    [PROPOSAL(['notes/.a.md']), /is not a notes\/<path>\.md/],
-    [PROPOSAL().replace('Observed in', 'Observed (notes/a b.md) in'), /unrecognized backing-note reference/],
-    [PROPOSAL(['notes/../STATE.md']), /is not a notes/],
-    [PROPOSAL() + '\n```okf-proposal\n{}\n```\n', /must not carry a provenance block/],
+    [PROPOSAL().replace('## Evidence', '## Evidence\nx\n## Evidence'), /`## Evidence` section is given more than once/],
+    [PROPOSAL(['notes/.a.md']), /is not a notes\/<path>\.md.*: dropped from evidence$/],
+    [PROPOSAL().replace('Observed in', 'Observed (notes/a b.md) in'), /unrecognized backing-note reference on line 10: dropped from evidence$/],
+    [PROPOSAL(['notes/../STATE.md']), /is not a notes.*: dropped from evidence$/],
   ]) {
     fs.writeFileSync(join(plan.proposal, 'proposal.md'), proposal);
-    refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', pattern);
+    const r = ok(f.run(['--check', '--slug', 'x']));
+    assert.ok(r.warnings.some(w => w.startsWith('W_PROPOSAL [was E_PROPOSAL_FORMAT]: ') && pattern.test(w)), JSON.stringify(r.warnings));
+    assert.ok(parseProvenance(r.prBody).value.evidence.every(e => e.note === 'notes/retry.md'), 'a dropped reference is not evidence');
   }
+  fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL() + '\n```okf-proposal\n{}\n```\n');
+  refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT', /must not carry a provenance block/);
   fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL(['notes/retry.md', 'notes/missing.md']));
   fs.symlinkSync(join(f.home, 'notes/retry.md'), join(f.home, 'notes/linked.md'));
   fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL(['notes/retry.md', 'notes/missing.md', 'notes/linked.md']));
@@ -273,12 +193,17 @@ test('check: a malformed proposal or note line is E_PROPOSAL_FORMAT; a missing n
 test('the 5.8 note-locator rules carry over: list entries and explicit references', () => {
   assert.deepEqual(backingNotes('## Backing notes\n- notes/a.md\n- `notes/b c.md`\n\nSee notes/d.md, and [x](notes/e.md).\n').sort(), ['notes/a.md', 'notes/b c.md', 'notes/d.md', 'notes/e.md']);
   assert.throws(() => backingNotes('see `notes/unclosed.md\n'), { code: 'E_PROPOSAL_FORMAT' });
+  // 6.3 (#164, item 11): with onUnrecognized the reference is dropped and its line reported; the rest is read.
+  const lines = [];
+  assert.deepEqual(backingNotes('- notes/a.md\nsee `notes/unclosed.md\nsee notes/b.md, x/notes/c.md\n', { onUnrecognized: n => lines.push(n) }), ['notes/a.md', 'notes/b.md']);
+  assert.deepEqual(lines, [2, 3]);
 });
 
 test('apply refuses a stale digest (E_DIGEST); a good digest pushes one okf-proposal branch and opens a labelled PR with a v3 block', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'retry-budget'])), clone = edit(f, plan);
   const checked = ok(f.run(['--check', '--slug', 'retry-budget']));
-  refused(f.run(['--apply', '--slug', 'retry-budget']), 'E_USAGE', /--digest/);
+  // 6.3 (#164, item 14): --digest is optional (a bare --apply publishes what the last --check printed); a malformed one is still E_USAGE.
+  refused(f.run(['--apply', '--slug', 'retry-budget', '--digest', 'abc']), 'E_USAGE', /--digest/);
   // Anything changed after the check: refused, nothing pushed, no attempt recorded.
   fs.appendFileSync(join(clone, 'expert/retry-budget.md'), 'An unread line.\n');
   refused(f.run(['--apply', '--slug', 'retry-budget', '--digest', checked.digest]), 'E_DIGEST');
@@ -868,11 +793,15 @@ for (const filename of ['notes/decision.md (v2).md', 'notes/decision.md(v2).md']
   assert.ok(pr.url);
 });
 
+// 6.3 (#164, cut-list item 11): such a note is dropped from the evidence with
+// a W_PROPOSAL row (it was E_PROPOSAL_FORMAT) and never reaches the provenance block.
 test('note paths: no hidden, parent, empty, backslash or control-character segment, in propose and in the parser', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x']));
   for (const note of ['notes/.hidden.md', 'notes/a\\b.md', 'notes//a.md', 'notes/a\tb.md']) {
     edit(f, plan, { proposal: PROPOSAL([]).replace('## Backing notes\n', `## Backing notes\n- \`${note}\`\n`) });
-    refused(f.run(['--check', '--slug', 'x']), 'E_PROPOSAL_FORMAT');
+    const r = ok(f.run(['--check', '--slug', 'x']));
+    assert.ok(r.warnings.some(w => /^W_PROPOSAL \[was E_PROPOSAL_FORMAT\]: backing note .* is not a notes\/<path>\.md .*: dropped from evidence$/.test(w)), JSON.stringify(r.warnings));
+    assert.deepEqual(parseProvenance(r.prBody).value.evidence, [], note);
   }
   const fence = evidence => `x\n\n\`\`\`okf-proposal\n${JSON.stringify({ version: 3, source: { soul: 's', owner: 'o', instance: 'i', incarnation: CREATED, ownedNodes: [], readNodes: [], bases: [] }, evidence, tasks: { provider: null, refs: [] }, proposer: { form: 'live', instance: 'i', alias: null } })}\n\`\`\`\n`;
   assert.equal(parseProvenance(fence([{ note: 'notes/decision.md (v2).md' }])).valid, true);

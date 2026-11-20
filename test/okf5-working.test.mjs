@@ -164,7 +164,9 @@ test('the shared IMPORTANT block requires the proposing skill and explicitly exe
   assert.match(inject,/Reading the okf-propose skill is compulsory/);
   assert.match(inject,/Run `oats okf status` from instance home/);
   assert.match(inject,/knowledge: \{ harvest: off \}` \(or `publish: off`\) has no duty to propose/);
-  for(const step of ['oats okf propose --plan --slug <slug>','`--check` prints the complete outgoing diff','`--apply --digest <digest>` opens the PR','The knowledge maintainer gates every merge','Never retry a publication error']) assert.ok(inject.includes(step),step);
+  // oats.okf 6.3 (#164, cut-list items 13 and 14): the inject teaches the two-command flow, no --slug or --digest.
+  for(const step of ['`oats okf propose --plan` clones the knowledge base','`--apply` prints the complete outgoing diff and stops','`--apply` again opens the PR','the knowledge maintainer gates every merge','Never retry a publication error']) assert.ok(inject.includes(step),step);
+  assert.doesNotMatch(inject,/--digest/);
   const skill=prose(read('skills/okf-propose/SKILL.md'));
   for(const step of ['oats okf propose --plan --slug <slug>','oats okf propose --check --slug <slug>','oats okf propose --apply --slug <slug> --digest <digest>']) assert.ok(skill.includes(step),step);
   for(const required of [/You hand over a PR for review/,/You finish a task/,/a feature is ready/,/you ship a release or a deploy/,/a direction decision is taken with your human/,

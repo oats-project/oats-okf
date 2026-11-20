@@ -559,25 +559,30 @@ does more on a base whose **accepted** `okf-base.json` has the layout:
 
 - a version-1 soul's new claims in its owned nodes get `about:` from the
   subject whose `legacy-nodes` names the node, added first to any `about:`
-  the proposer wrote (`E_SUBJECT` when none does, or when `about` is not a
-  list);
+  the proposer wrote (6.3: when none does, or when `about` is not a list, the
+  claim is left as written with `W_SUBJECT [was E_SUBJECT]`);
 - every generated index is regenerated in the clone (the diff shows it);
 - the **write surface**: a version-1 soul writes its owned nodes and the root
-  `index.md`, as before (`E_OWNER`, `E_SCOPE`); a version-2 soul may add or
+  `index.md`, as before; a version-2 soul may add or
   change files under `claims/**`, add Markdown subject files under
   `subjects/system/**` and `subjects/project/**` (never a reserved
   `index.md` or `log.md`), and set `status: superseded` on a concept one of
   its claims supersedes (`supersedes: [/<path>]` or the concept's id); never `verdicts/**`, `subjects/workstream/**`,
   `okf-base.json`, the root `index.md` beyond its generated section, a
-  deletion, or another old-node file. For both, a generated index must be
-  exactly the regenerator's output. Outside it: `E_SCOPE`, naming every path
-  and its rule. The check is advisory (it runs with the proposer's push
-  rights); the knowledge maintainer's review is the gate;
+  deletion, or another old-node file. Since 6.3 only `okf-base.json`, a
+  non-Markdown file under `claims/` or `subjects/`, and a generated index
+  that is not exactly the regenerator's output refuse (`E_SCOPE`, naming
+  every path and its rule); every other path outside the surface is a
+  `W_SCOPE` row (see [Check warnings](#check-warnings)). The check is
+  advisory (it runs with the proposer's push rights); the knowledge
+  maintainer's review is the gate;
 - a claim the proposal adds or changes may lack `id` (the maintainer stamps
-  it); every other validator finding still refuses (`E_VALIDATION`);
+  it), and its `about:` errors are `W_SUBJECT [was E_VALIDATION]`; every
+  other validator error still refuses (`E_VALIDATION`);
 - verdict lanes 1 and 2 over the proposal's claims, from the clone's
-  `verdicts/`: `E_VERDICT`, or title-hash candidates in a `## Verdict
-  candidates` section of the PR body.
+  `verdicts/`: a rejected id without `reconsiders:` is
+  `W_VERDICT [was E_VERDICT]` (6.3), and both it and the title-hash
+  candidates are listed in a `## Verdict candidates` section of the PR body.
 
 A version-2 soul's plan clones only the bound Git bases with the layout
 (`E_CONFIG: base <alias> has no subject layout; ...` when none has it), and
@@ -684,22 +689,33 @@ instance of the soul decides or acts, and it is not already in the code, the
 tracker, the docs or the accepted knowledge); nothing promotable means no
 proposal.
 
-Then, from its instance home, in five steps:
+Then, from its instance home, in two commands (oats.okf 6.3, #164):
+`oats okf propose --plan`, write the knowledge in the clone, then
+`oats okf propose --apply` twice. The first `--apply` prints the check and
+stops; the second publishes exactly what the first printed. One command
+cannot both put the diff in front of the author and push, so there are two.
+In detail:
 
-1. **Plan:** `oats okf propose --plan --slug <slug>`. It clones every Git
-   base the soul owns, at its accepted branch, into
+1. **Plan:** `oats okf propose --plan [--slug <slug>]`. Without `--slug` it
+   makes one, `p-<HHMMSS UTC>-<4 hex>`, and answers it as `slug`. It clones
+   every Git base the soul proposes to, at its accepted branch, into
    `proposals/<date>-<slug>/work/<alias>`, writes the skeleton
    `proposals/<date>-<slug>/proposal.md` (a `# OKF proposal: <claim>` title,
    `## What`, `## Why`, `## Evidence`, `## Backing notes`) and prints the
    **write surface** (the owned nodes' directories and the base root
    `index.md`) and the open `okf-proposal`/`okf-harvest` PRs on each base:
    duplicate candidates, informative only (unavailable when `gh` is absent).
-2. **Write:** one concept per Markdown file in an owned node, its `index.md`
-   entry and a node `log.md` line, supersessions explicit, each concept
-   citing its evidence; then fill `proposal.md`, with one
+2. **Write:** one concept per Markdown file, with frontmatter. Its
+   `index.md` entry, a node `log.md` line, its links and its title and
+   description are good practice the maintainer completes when missing.
+   `proposal.md` is optional: left as the skeleton (or deleted), the PR text
+   is built from the changed concepts (below); filled, it carries one
    `- notes/<file>.md` line per backing note. Files only: no commit or push
    in the clone.
-3. **Check:** `oats okf propose --check --slug <slug>`. It validates the
+3. **Check:** `oats okf propose --check [--slug <slug>]`, or the first bare
+   `--apply`. Without `--slug`, both use the one proposal directory under
+   `proposals/` that has no `publish/` directory (`E_USAGE` when there is
+   none, or more than one, naming their slugs). It validates the
    proposed tree (`okf-validate --strict`, on the tree's stored bytes, so no
    clean/smudge filter shows it something else), checks every changed path
    against the write surface, hashes the named notes, runs the content screen
@@ -708,13 +724,28 @@ Then, from its instance home, in five steps:
    the commit text, the PR body with its provenance block and a **digest**
    of the clone's proposed tree, `proposal.md`, the note hashes and the
    generated commit text and PR body themselves (payload version 2), so
-   `--apply` publishes exactly the bytes `--check` printed. The
-   `okf-propose` skill requires the agent to read that diff once as a
-   reviewer would, against `knowledge-theory`'s reject list and the
-   personal-data sentence, before the next step. Nothing remote changes.
-4. **Apply:** `oats okf propose --apply --slug <slug> --digest <digest>`. It
-   refuses `E_DIGEST` if anything changed since the check, then commits (the
-   package's fixed author text; the commit text `--check` printed, which
+   `--apply` publishes exactly the bytes the check printed. It records that
+   digest in `checked.json` in the proposal directory (written atomically,
+   mode 0600, never read through a symlink:
+   `{"version": 1, "digest": "<64 hex>", "checkedAt": "<ISO>"}`). What it
+   finds that only the maintainer can judge is a warning, not a refusal: see
+   [Check warnings](#check-warnings). The `okf-propose` skill requires the
+   agent to read that diff once as a reviewer would, against
+   `knowledge-theory`'s reject list and the personal-data sentence, before
+   the next step. Nothing remote changes.
+4. **Apply:** `oats okf propose --apply [--slug <slug>] [--digest <digest>]`.
+   Without `--digest`: with no `checked.json` (or one that cannot be read),
+   it runs the check of step 3, prints it, records it and stops, answering
+   `"published": false`; with a `checked.json` whose digest equals the
+   freshly computed one, it publishes; with one that differs, it refuses
+   `E_DIGEST` and leaves `checked.json` as it is (a refused apply never
+   records a check, so the way on is `--check`, its diff read, then
+   `--apply`). A `checked.json` is read only in the exact form `--check`
+   writes; any other is no record. With `--digest` it compares that digest, as in 6.2.
+   **The limit:** `checked.json` records that a check printed this digest.
+   It is not authentication against other processes of the same user, any
+   more than the digest is. To publish, it commits (the
+   package's fixed author text; the commit text the check printed, which
    names the proposer in its trailers: see
    [Who proposed a change](#who-proposed-a-change)), pushes create-only to a fresh
    `okf-proposal/<UTC date>-<uuid>` branch through the publication helper's
@@ -724,8 +755,9 @@ Then, from its instance home, in five steps:
    one refuses `E_BASE_MOVED`, reason `guarded-file-changed`, before any
    push), labels it `okf-proposal`, opens the
    PR with a version 3 provenance block, and prints each PR's URL, head,
-   branch, the accepted commit it is parented on (`base`) and `recovered`.
-   One PR per changed owned base; **one attempt per proposal**: the
+   branch, the accepted commit it is parented on (`base`) and `recovered`,
+   answering `"published": true`.
+   One PR per changed base; **one attempt per proposal**: the
    `publish/` directory marks it, and a second `--apply` refuses
    `E_PROPOSAL_EXISTS` (plan a new proposal instead). `tasks.refs` in the
    provenance is always `[]`: the proposal's own `## Evidence` carries any
@@ -735,6 +767,60 @@ Then, from its instance home, in five steps:
    maintainer; where no trigger is installed the agent may spawn one
    (`oats spawn oats.okf/knowledge-maintainer --task "<PR url at head>"
    --relation unrelated`), a call, not a station.
+
+**Every 6.2 invocation still works, with the same result:**
+`oats okf propose --plan --slug <slug>`, a filled `proposal.md`,
+`oats okf propose --check --slug <slug>`, then
+`oats okf propose --apply --slug <slug> --digest <digest>`. With `--slug`
+given, the `next` lines are those of 6.2.
+
+### Check warnings
+
+Since oats.okf 6.3 (#164) only what protects against real harm refuses: a
+secret or personal data leaving the host (the content screen), a base that
+would be invalid, forged provenance, file safety, the soul's consent,
+credentials, and one-attempt publication. What the knowledge maintainer
+judges at review anyway is a **warning**: one string in `warnings[]` of the
+`--check` and `--apply` answers, and one row of a section the PR body gains
+after the proposer's text and before the verdict candidates:
+
+```md
+## Check warnings
+
+The proposer's `oats okf propose --check` reported these. The knowledge maintainer resolves each before merging (fixed, moved, or accepted with a reason).
+
+- W_SCOPE [was E_OWNER]: peer/claim.md is in node kb/peer, which this soul does not own; the maintainer chooses its home
+```
+
+Each row starts with its code, names the rule it replaces in brackets, then
+the path and what the maintainer does. The rows are deduplicated and
+ordered by code, then by path; a control, line-separator or bidirectional
+character in them (a file name's, say) is shown as a `\uXXXX` escape. The
+section is left out when there are none; `E_NOTE`, `W_ID_MISSING` and
+`W_ATTRIBUTION` are never in it. The content screen reads the rows like the
+rest of the body, so a path carrying a host term still refuses. A warning is
+exit 0.
+
+| Code | Replaces | When |
+|---|---|---|
+| `W_SCOPE` | `E_OWNER`, `E_SCOPE` | a version-1 path in a node the soul does not own, or outside its nodes (the base root `log.md` included); a version-2 change to `verdicts/`, `subjects/workstream/`, an existing system or project subject, a reserved name under `subjects/`, a delete, a supersession no claim of the proposal makes, the root `index.md` by hand, or an old-node file |
+| `W_SUBJECT` | `E_SUBJECT`, `E_VALIDATION` | a version-1 claim no subject's `legacy-nodes` absorbs, or a non-list `about:` (left as written); the validator's "'about' must list one or more subjects" and "about names …, which has no subject file" on the proposal's own added or changed files |
+| `W_LINT` | `E_VALIDATION` | each `--strict` warning of the validator: a broken link, a link missing `.md`, an unreachable concept, a missing title or description, a title or description given as a list |
+| `W_VERDICT` | `E_VERDICT` | a claim carrying a rejected id without `reconsiders:`; it is listed in the verdict candidates too |
+| `W_PROPOSAL` | `E_PROPOSAL_FORMAT` | `proposal.md` missing or the skeleton (the PR text is built from the claims), without a title (the title is built), with a missing, empty or repeated `## What`, `## Why` or `## Evidence` (published as written; a missing What gets the built list), a title over 200 characters (cut), an unrecognized or unsafe backing-note reference (dropped from the evidence and never in the provenance block), or more than 100 notes (the first 100 kept) |
+
+**The PR text built from the claims.** The title is the frontmatter `title`
+of the first added or changed concept that has one, by path (generated
+indexes and `index.md`/`log.md` left out), with ` (and N more)` when there
+are several, cut to 200 characters; `knowledge proposal` when none has one.
+`## What` has one line per such concept:
+`- <path>: <title> — <description>`. The commit subject and the digest use
+the resulting claim line, and the digest binds the generated body.
+
+The knowledge-review skill resolves every row before merging (fixed, moved,
+or accepted with a reason, recorded in the verdict), never merges a
+proposal's file under `verdicts/` or an uncited `subjects/workstream/`
+change, and needs a stated reason to merge a delete or a supersession.
 
 **The operator form.** For a source that retired without proposing, from the
 deployment: `oats okf propose --home <retirement recovery directory> --soul
@@ -763,17 +849,17 @@ the spawn or the workspace set is ignored and named in `--plan`'s
 
 | Code | When |
 |---|---|
-| `E_USAGE` | not exactly one of `--plan`, `--check`, `--apply`; a bad `--slug`; `--apply` without `--digest`; nothing changed in any clone ("nothing to propose") |
+| `E_USAGE` | not exactly one of `--plan`, `--check`, `--apply`; a bad `--slug` or `--digest`; without `--slug`, no open proposal or more than one (named); nothing changed in any clone ("nothing to propose") |
 | `E_CONFIG` | an owned base not bound, an unreadable or mismatched accepted `okf-base.json`, `screen-terms-file` not a normalized absolute path; at spawn, `publish` set by the host or a spawn flag, a soul `publish` value other than `off`, or a soul `knowledge.propose` key |
 | `E_SOURCE` | no usable record: not an instance home or recovery, a record naming another home, a service home, an incomplete recovery, a soul that is not the record's, or a live home without a spawn-recorded duty (a 5.0/5.1 home: respawn it; `oats instance upgrade` keeps the duty unknown); in the recovery form, a retired seat without one whose soul or record cannot be decided (below) |
 | `E_OPTED_OUT` | the spawn-recorded policy is `off`, or the soul's own text says `harvest: off` or `publish: off` |
 | `E_PROPOSAL_EXISTS` | `--plan`: a proposal directory of that slug exists; `--apply`: the proposal was already applied or attempted (never retried) |
-| `E_SCOPE` | a changed path outside the write surface (named): `okf-base.json`, the root `log.md`, a hidden, non-Markdown or executable file, anything outside the base root |
-| `E_OWNER` | `okf.json` and the accepted `okf-base.json` disagree on an owned node (as `resolveNodes`), or a changed path inside a node the soul does not own |
-| `E_VALIDATION` | the proposed tree is not a valid OKF base (`okf-validate --strict`) |
-| `E_DIGEST` | the clone, `proposal.md`, a named note or the generated commit text or PR body changed since `--check` (a changed record changes the PR body) |
+| `E_SCOPE` | a changed path that would harm the base (named): `okf-base.json`; a non-Markdown file (version 1 anywhere, version 2 under `claims/` or `subjects/`); a hidden, executable or symlinked file; anything outside the base root; a generated index that is not the regenerator's output. Since 6.3 any other path outside the write surface is `W_SCOPE` |
+| `E_OWNER` | at `--plan`: `okf.json` and the accepted `okf-base.json` disagree on an owned node (as `resolveNodes`). Since 6.3 a changed path in a node the soul does not own is `W_SCOPE [was E_OWNER]` |
+| `E_VALIDATION` | the proposed tree is not a valid OKF base: a validator error (unparseable or missing frontmatter, a missing `type`, a malformed flow list, a duplicate id, a file outside every node). Since 6.3 the `--strict` warnings are `W_LINT`, and the `about:` errors on the proposal's own files `W_SUBJECT` |
+| `E_DIGEST` | the clone, `proposal.md`, a named note or the generated commit text or PR body changed since `--check` (a changed record changes the PR body): against `--digest`, or, for a bare `--apply`, against `checked.json` |
 | `E_CONTENT_REFUSED` / `E_CONTENT_INPUT` | the content screen's codes (findings name locations and rules only; `host-term` is the host's own list) |
-| `E_PROPOSAL_FORMAT` | `proposal.md` malformed (title, a missing or empty section, a provenance block of its own) or a backing-note line unreadable under the 5.8 note-locator rules; or the clone is not the one plan made (a symlink in its path or anywhere under its `.git`, a `.git` that is a file, or a shared or alternate object store) |
+| `E_PROPOSAL_FORMAT` | `proposal.md` carries a provenance block of its own, is unreadable, a symlink or not UTF-8, or names notes over 16 MiB in all (since 6.3 every other format problem is `W_PROPOSAL`); `plan.json` is not the plan's; or the clone is not the one plan made (a symlink in its path or anywhere under its `.git`, a `.git` that is a file, or a shared or alternate object store) |
 | `E_CREDENTIAL` | with `github-token-file` set: the file is missing, unreadable, empty or not one token, or a Git base is not bound by an `https://github.com/` URL; the message names the path or the base and the whole fix, never the file's content |
 | `E_HOST_CREDENTIAL` | with `github-token-file` set, `--apply` before anything is pushed and before the proposal is marked as attempted (the same `--apply` works once the host is fixed), and `migrate --deliver` to a Git base before its delivery starts: something on this host answers GitHub before the token does, so Git would push with another credential or elsewhere. A netrc entry for github.com, an authorization header (`http.extraHeader`) or a rewrite of `https://github.com/` URLs in the system or user Git configuration, or a configuration that cannot be read. The message names each kind found, never a value, and the whole fix |
 | `E_GIT` | a Git command on a proposal clone failed (a required filter, a corrupt clone): the message names the subcommand and exit status only; Git's own output is withheld, as it may carry private content |
@@ -1351,7 +1437,9 @@ The hand steps, from the deployment directory:
 1. **What replaces the harvest:** at a checkpoint the instance runs, from its
    home, `oats okf propose --plan --slug <slug>`, writes the knowledge in the
    clone and fills `proposal.md`, then `oats okf propose --check --slug <slug>`
-   and `oats okf propose --apply --slug <slug> --digest <digest>`. For a
+   and `oats okf propose --apply --slug <slug> --digest <digest>` (since 6.3
+   also `oats okf propose --plan`, then `oats okf propose --apply` twice:
+   [How knowledge is proposed](#how-knowledge-is-proposed)). For a
    retired source, the operator runs
    `oats okf propose --home <retirement recovery directory> --soul <soul> --plan --slug <slug>`
    (then `--check` and `--apply` with the same `--home` and `--soul`).
@@ -1622,18 +1710,26 @@ package's CLI:
   helper and a fake `gh`: `--plan` (the clone, the skeleton, the write
   surface, open proposals; `E_SOURCE`, `E_OPTED_OUT`, `E_PROPOSAL_EXISTS`,
   `E_OWNER`, a 5.0/5.1 home without a policy), `--check` (`E_SCOPE`,
-  `E_OWNER`, `E_VALIDATION`, `E_CONTENT_REFUSED`, `host-term`,
-  `E_PROPOSAL_FORMAT`, a missing note dropped with `E_NOTE`, the digest),
+  `E_VALIDATION`, `E_CONTENT_REFUSED`, `host-term`, a provenance fence
+  refused `E_PROPOSAL_FORMAT`, the 6.3 warnings `W_SCOPE`, `W_LINT` and
+  `W_PROPOSAL`, a missing note dropped with `E_NOTE`, the digest),
   `--apply` (`E_DIGEST`, the pushed `okf-proposal/` branch and labelled PR
   with a v3 block the maintenance parser accepts, a pre-push base move
   recovered, a publication failure retained and never retried) and the
   operator form on a retirement recovery copy.
 - `okf6-subjects-propose`: `propose` on a bridged base: a version-1 soul's
   claim gets `about:` from `legacy-nodes` and the indexes are regenerated
-  and published, `E_SUBJECT` and `E_OWNER`; a version-2 soul's claim under
-  `claims/` with provenance v3 `subjects`; `E_SCOPE` for `verdicts/`, a
-  workstream subject and an old-node file; `E_VERDICT` and the PR body's
-  verdict candidates; a version-2 plan on a plain base refused;
+  and published, `W_SUBJECT` and `W_SCOPE` (6.3; were `E_SUBJECT` and
+  `E_OWNER`); a version-2 soul's claim under `claims/` with provenance v3
+  `subjects`; `W_SCOPE` for `verdicts/`, a workstream subject and an
+  old-node file; `W_VERDICT` and the PR body's verdict candidates; a
+  version-2 plan on a plain base refused;
+- `okf63-lighter-propose`: the 6.3 acceptance (#164): a version-2 proposer's
+  `--plan` and two bare `--apply`s with no slug, digest or `proposal.md`;
+  a stale `checked.json` refused `E_DIGEST`; the 6.2 invocations unchanged;
+  each `W_*` warning and its `## Check warnings` row; what still refuses;
+  slug resolution; the PR text built from the claims; `checked.json`
+  through a symlink refused;
 - `okf6-subjects`: the subject layout on a bridged fixture base (a small
   version-1 base plus the reserved nodes, two subjects, three claims with
   `about` and one verdict, its indexes written by the regenerator): validator

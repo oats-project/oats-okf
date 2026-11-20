@@ -152,7 +152,8 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     const srcAgents = fs.readFileSync(join(src, 'AGENTS.md'), 'utf8');
     assert.ok(srcAgents.includes('## Knowledge: OKF'), 'the okf inject is composed');
     assert.match(srcAgents, /\*\*okf-propose\*\* skill is \*\*compulsory\*\*/);
-    assert.match(srcAgents, /oats okf propose --plan --slug <slug>/);
+    // oats.okf 6.3 (#164): the inject's flow has no --slug.
+    assert.match(srcAgents, /`oats okf propose --plan`/);
     assert.doesNotMatch(srcAgents, /harvester/i, 'no harvester in the composed instructions');
     const as = { instance: 'src', home: src };
     assert.deepEqual(ok(['okf', 'status'], { cwd: src, as }).result, { harvest: 'on', reason: 'default', publish: 'on' });
@@ -187,10 +188,15 @@ test(`${json(join(root, 'package.json')).version} real OATS ${KERNEL}: legacy-ke
     assert.deepEqual(parsed.value.proposer, { form: 'live', instance: 'src', alias: null }, 'messaging: none, so no alias');
     assert.deepEqual(parsed.value.evidence, [{ note: 'notes/decision.md', sha256: createHash('sha256').update(fs.readFileSync(join(src, 'notes/decision.md'))).digest('hex') }]);
     assert.ok(!check.prBody.includes(src) && !check.prBody.includes(kbRemote), 'no home or clone path in the PR body');
-    // An out-of-surface edit is refused by the same dispatch.
+    // An out-of-surface edit is named by the same dispatch: oats.okf 6.3 (#164,
+    // cut-list item 1) warns W_SCOPE for another node (it was E_OWNER), and a
+    // non-Markdown file still refuses E_SCOPE.
     write(join(b.clone, 'knowledge/peer/claim.md'), '---\ntype: Note\n---\nx\n');
-    refused(['okf', 'propose', '--check', '--slug', 'retry-budget'], 'E_OWNER', { cwd: src, as });
+    assert.ok(ok(['okf', 'propose', '--check', '--slug', 'retry-budget'], { cwd: src, as }).result.warnings.some(w => w.startsWith('W_SCOPE [was E_OWNER]: knowledge/peer/claim.md is in node project/peer')));
     fs.rmSync(join(b.clone, 'knowledge/peer/claim.md'));
+    write(join(b.clone, 'knowledge/expert/data.json'), '{}\n');
+    refused(['okf', 'propose', '--check', '--slug', 'retry-budget'], 'E_SCOPE', { cwd: src, as });
+    fs.rmSync(join(b.clone, 'knowledge/expert/data.json'));
     assert.equal(git(kbRemote, ['for-each-ref', '--format=%(refname)']), 'refs/heads/main', 'nothing was pushed');
     assert.equal(fs.existsSync(join(dep, 'agents', HARVESTER_DIR)), false, 'no harvester was spawned');
     Object.assign(state, { src, slug: 'retry-budget' });

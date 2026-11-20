@@ -28,6 +28,8 @@ export function writePlainBase(dir, { id = 'base-1', owners = { expert: 'owner-1
 }
 
 export const REJECTED = { id: 'dec-0000000000aa', type: 'Decision', title: 'Keep a harvester per proposal', description: 'A harvester judges every proposal.', reason: 'No harvester runs on any base; the proposer publishes and the maintainer gates.' };
+/** A valid verdict file verdicts/<id>.md (rejected), for a proposal that writes one. */
+export const VERDICT = (id, title = 'A rejected claim') => fm({ type: 'Verdict', title: `Verdict: ${title}`, description: 'Rejected.', 'claim-type': 'Decision', verdict: 'rejected', 'claim-title': title, 'claim-description': 'x', 'title-hash': titleHash('Decision', title), reason: 'No evidence.', pr: 'https://github.com/fixture/knowledge/pull/8', 'decided-by': 'maintainer', 'decided-on': '2026-11-20' }, `# Verdict ${id}\n\nRejected.`);
 export const SUBJECT_COUNTS = { 'system/okf': { Decision: 1, Insight: 1 }, 'workstream/knowledge': { Decision: 1, Insight: 1 } };
 
 /** The bridged layout added to a plain base at dir, then regenerated. */

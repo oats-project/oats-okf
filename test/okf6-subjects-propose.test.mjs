@@ -1,104 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { spawnSync, execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { isolatedGit } from './fixtures/isolated-git.mjs';
-import { writePlainBase, bridge, reindex, REJECTED, VALIDATE } from './fixtures/bridged-base.mjs';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { REJECTED, VALIDATE, VERDICT } from './fixtures/bridged-base.mjs';
+import { OLD_UNSTAMPED, V2, fixture, ok, refused, CLAIM, edit, write } from './fixtures/subjects-propose.mjs';
 // oats.okf 6.0, the subject layout in `oats okf propose` (spec
 // docs/design/2026-11-10-subject-layer-in-oats-okf.md §3): on a bridged base a
 // version-1 soul's claim gets about: from legacy-nodes, the generated indexes
 // are regenerated, the write surface and the verdict lanes are checked, and a
 // version-2 soul proposes under claims/ with provenance v3 subjects. Real Git,
 // a local bare remote and the shipped helper; gh is a local adapter (no GitHub).
-const ROOT = fileURLToPath(new URL('../', import.meta.url));
-const CLI = join(ROOT, 'oats-package/capabilities/oats-okf/bin/oats-okf.mjs');
 const { parseProvenance } = await import(new URL('../oats-package/capabilities/oats-okf-maintenance/lib/provenance.mjs', import.meta.url));
-const write = (file, text) => { fs.mkdirSync(dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
-const json = (file, value) => write(file, JSON.stringify(value, null, 2) + '\n');
-const CREATED = '2026-11-10T08:00:00.000Z';
-const FAKE_GH = String.raw`const fs = require('node:fs');
-const { execFileSync } = require('node:child_process');
-const a = process.argv.slice(2), state = process.env.FIXTURE_GH_STATE;
-const s = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { prs: [] };
-const input = a.includes('--body-file') && a[a.indexOf('--body-file') + 1] === '-' ? fs.readFileSync(0, 'utf8') : null;
-const save = () => fs.writeFileSync(state, JSON.stringify(s));
-if (a[0] === 'pr' && a[1] === 'list') { console.log('[]'); process.exit(0); }
-if (a[0] === 'api') { console.log(process.env.FIXTURE_GH_PUSH ?? 'true'); process.exit(0); }
-if (a[0] === 'label' && a[1] === 'create') process.exit(0);
-if (a[0] === 'pr' && a[1] === 'create') {
-  s.prs.push({ head: a[a.indexOf('--head') + 1], label: a[a.indexOf('--label') + 1], title: a[a.indexOf('--title') + 1], body: input }); save();
-  console.log('https://github.com/acme/kb/pull/' + s.prs.length); process.exit(0);
-}
-if (a[0] === 'pr' && a[1] === 'view') {
-  const pr = s.prs[Number(a[2]) - 1];
-  const oid = execFileSync('git', ['--git-dir', process.env.FIXTURE_REMOTE, 'rev-parse', 'refs/heads/' + pr.head], { encoding: 'utf8' }).trim();
-  console.log(JSON.stringify({ state: 'OPEN', headRefOid: oid, headRefName: pr.head, baseRefName: 'main', isCrossRepository: false, title: pr.title, body: pr.body }));
-  process.exit(0);
-}
-console.error('unsupported fixture gh call'); process.exit(97);
-`;
-const UNSTAMPED = 'claims/insights/merged-unstamped.md';
-const OLD_UNSTAMPED = 'peer/merged-unstamped.md';
-const V1 = { version: 1, owner: 'source', owns: ['kb/expert'], reads: ['kb/peer'] };
-const V2 = { version: 2, subjects: ['system/okf', 'workstream/knowledge'] };
-
-/** One Git base `kb` (the bridged fixture, or the plain one), the soul `source`
- *  with the given okf.json, and its live home `src`. */
-function fixture(t, { decl = V1, plain = false, ident = false, identTitle = false, large = false, unstamped = false, oldNodeUnstamped = false } = {}) {
-  const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'okf6-subjects-propose-')));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const d = join(dir, 'deployment'), home = join(d, 'agents', 'source', 'instances', 'src'), soul = join(d, 'agents', 'source', 'souls', 'abc');
-  const origin = join(dir, 'origin.git'), user = join(dir, 'user'), bin = isolatedGit(dir, '/dev/null'), seed = join(dir, 'seed');
-  fs.mkdirSync(user, { recursive: true });
-  writePlainBase(seed, { id: 'kb-1', owners: { expert: 'source', peer: 'other' } }); if (!plain) bridge(seed);
-  if (ident) fs.appendFileSync(join(seed, 'peer/lesson.md'), '\n$Id$\n');
-  if (large) fs.appendFileSync(join(seed, 'peer/lesson.md'), `\n${'Long accepted body. '.repeat(900000)}\n`);
-  // okf 6.0.2 (#138): an accepted claim merged without the maintainer's id stamp.
-  if (unstamped) { write(join(seed, UNSTAMPED), '---\ntype: Insight\ntitle: Merged without its id\ndescription: x\nabout: [system/okf]\n---\n\n# Merged without its id\n'); reindex(seed); }
-  // #140: an accepted old-node concept merged without the maintainer's id stamp
-  // (a version-1 proposal merged without the amend-and-merge).
-  if (oldNodeUnstamped) {
-    write(join(seed, OLD_UNSTAMPED), '---\ntype: Lesson\ntitle: Merged into an old node without its id\ndescription: x\nabout: [workstream/knowledge]\n---\n\n# Merged into an old node without its id\n');
-    fs.appendFileSync(join(seed, 'peer/index.md'), '* [Merged into an old node without its id](merged-unstamped.md) - x\n');
-    reindex(seed);
-  }
-  if (identTitle) {
-    const f = join(seed, 'claims/insights/consult-reads-one-blob.md');
-    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('title: Consult reads one committed index', 'title: Consult reads one committed index $Id$'));
-    reindex(seed);
-  }
-  const env = { HOME: user, PATH: `${bin}:${join(dir, 'ghbin')}:${dirname(process.execPath)}:/usr/bin:/bin`, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LANG: 'C' };
-  const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, env, encoding: 'utf8' }).trim();
-  git(seed, 'init', '-q', '-b', 'main'); git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'accepted');
-  git(dir, 'clone', '-q', '--bare', seed, origin);
-  const bindingsFile = join(d, 'okf-bindings.json');
-  json(bindingsFile, { version: 1, stateDir: join(dir, 'state'), bases: { kb: { id: 'kb-1', kind: 'git', repository: origin, root: '.', acceptedBranch: 'main', pr: { repository: 'acme/kb' } } } });
-  write(join(soul, 'soul.yaml'), 'schemaVersion: 2\nname: source\nknowledge: oats.okf\n');
-  json(join(soul, 'okf.json'), decl);
-  json(join(home, 'instance.json'), { agent: 'source', kind: 'persistent', instance: 'src', home, soulDir: soul, createdAt: CREATED, capabilities: [{ id: 'oats.okf', layer: 'knowledge' }] });
-  json(join(home, 'okf-harvest-policy.json'), { version: 1, harvest: 'on', reason: 'default' });
-  write(join(home, 'notes', 'n.md'), '---\ntype: Decision\n---\nA note.\n');
-  fs.mkdirSync(join(dir, 'ghbin'));
-  fs.writeFileSync(join(dir, 'ghbin', 'gh'), `#!${process.execPath}\n${FAKE_GH}`, { mode: 0o755 });
-  const ghState = join(dir, 'gh-state.json');
-  const run = args => {
-    const e = { ...env, OATS_SOUL: soul, OATS_SETTINGS: JSON.stringify({ 'bindings-file': bindingsFile }), OATS_TEAM_SCOPE: d, OATS_INSTANCE_HOME: home, OATS_INSTANCE: 'src',
-      FIXTURE_GH_STATE: ghState, FIXTURE_REMOTE: origin };
-    const r = spawnSync(process.execPath, [CLI, 'propose', ...args, '--json'], { cwd: home, env: e, encoding: 'utf8', timeout: 120000 });
-    let out = null; try { out = JSON.parse(r.stdout); } catch { /* asserted */ }
-    assert.ok(out, `propose answered JSON: ${r.stdout}${r.stderr}`);
-    return { status: r.status, out };
-  };
-  return { dir, home, origin, git, run, prs: () => fs.existsSync(ghState) ? JSON.parse(fs.readFileSync(ghState, 'utf8')).prs : [] };
-}
-const ok = r => { assert.equal(r.status, 0, JSON.stringify(r.out)); return r.out.result; };
-const refused = (r, code, pattern) => { assert.equal(r.status, 1, JSON.stringify(r.out)); assert.equal(r.out.error.code, code, JSON.stringify(r.out.error)); if (pattern) assert.match(r.out.error.message, pattern); return r.out.error; };
-const PROPOSAL = '# OKF proposal: owners are pinned before the first read\n\n## What\nA decision about the knowledge package.\n\n## Why\nA future instance would otherwise pin late.\n\n## Evidence\nObserved while building the subject layer.\n\n## Backing notes\n- notes/n.md\n';
-const CLAIM = (extra = '') => `---\ntype: Decision\ntitle: Pin owners before the first read\ndescription: The owner is pinned before any consult read.${extra}\n---\n\n# Pin owners before the first read\n\nPinned early.\n`;
-const edit = (plan, path, text) => { write(join(plan.bases[0].clone, path), text); fs.writeFileSync(join(plan.proposal, 'proposal.md'), PROPOSAL); return plan.bases[0].clone; };
 
 test('version 1 on a bridged base: the plan shows the generated indexes; check adds about: from legacy-nodes and regenerates; apply opens the PR', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'pin']));
@@ -119,15 +32,19 @@ test('version 1 on a bridged base: the plan shows the generated indexes; check a
   assert.match(f.git(f.dir, '--git-dir', f.origin, 'show', `${pr.head}:subjects/system/okf/index.md`), /\(\/expert\/pin\.md\)/);
 });
 
-test('version 1 on a bridged base: E_SUBJECT when no subject absorbs the owned node; E_OWNER for another node, as before', t => {
+// oats.okf 6.3 (#164, cut-list items 1 and 6): both were refusals (E_OWNER,
+// E_SUBJECT); now a W_SCOPE and a W_SUBJECT row, and the claim is left as written.
+test('version 1 on a bridged base: W_SUBJECT when no subject absorbs the owned node; W_SCOPE for another node', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'pin']));
   const clone = edit(plan, 'peer/pin.md', CLAIM('\nabout: [workstream/knowledge]'));
-  refused(f.run(['--check', '--slug', 'pin']), 'E_OWNER', /peer\/pin\.md.*node kb\/peer, which this soul does not own/);
+  assert.ok(ok(f.run(['--check', '--slug', 'pin'])).warnings.some(w => /^W_SCOPE \[was E_OWNER\]: peer\/pin\.md is in node kb\/peer, which this soul does not own/.test(w)));
   fs.rmSync(join(clone, 'peer/pin.md'));
   write(join(clone, 'expert/pin.md'), CLAIM());
   const subject = join(clone, 'subjects/system/okf.md');
   fs.writeFileSync(subject, fs.readFileSync(subject, 'utf8').replace('legacy-nodes: [expert]', 'legacy-nodes: []'));
-  refused(f.run(['--check', '--slug', 'pin']), 'E_SUBJECT', /no subject on this base names node expert in its legacy-nodes/);
+  const checked = ok(f.run(['--check', '--slug', 'pin']));
+  assert.ok(checked.warnings.some(w => /^W_SUBJECT \[was E_SUBJECT\]: expert\/pin\.md: no subject on this base names node expert in its legacy-nodes/.test(w)), JSON.stringify(checked.warnings));
+  assert.doesNotMatch(checked.bases[0].diff, /\+about:/, 'about: is left as written');
 });
 
 test('version 2: plan shows the subject write surface; a claim under claims/ (no id) checks and applies with provenance v3 subjects', t => {
@@ -187,9 +104,11 @@ test('an old-node concept merged without id (#140): check warns W_ID_MISSING for
   assert.doesNotMatch(error.message, /missing 'id'/);
 });
 
-test('version 2: E_SCOPE for verdicts/, a workstream subject, an old-node file and a supersession no claim makes', t => {
+// oats.okf 6.3 (#164, cut-list item 2): each was E_SCOPE; now a W_SCOPE row naming the path and the rule.
+test('version 2: W_SCOPE for verdicts/, a workstream subject, an old-node file and a supersession no claim makes', t => {
   for (const [path, text, rule] of [
-    ['verdicts/dec-000000000099.md', '---\ntype: Verdict\n---\n', /verdicts\/dec-000000000099\.md: only the knowledge maintainer writes verdicts\//],
+    // 6.3: a valid verdict file, as the check now goes on to validate the base (it refused before validating).
+    ['verdicts/dec-000000000099.md', VERDICT('dec-000000000099'), /verdicts\/dec-000000000099\.md: only the knowledge maintainer writes verdicts\//],
     ['subjects/workstream/new.md', '---\ntype: Workstream\ntitle: New\ndescription: x\n---\n', /subjects\/workstream\/new\.md: workstreams change only on a person's cited acceptance/],
     ['peer/lesson.md', null, /peer\/lesson\.md: outside the write surface/],
     ['peer/lesson.md', 'status', /peer\/lesson\.md: status: superseded only on a concept a claim of this proposal supersedes/],
@@ -198,14 +117,16 @@ test('version 2: E_SCOPE for verdicts/, a workstream subject, an old-node file a
     const clone = edit(plan, 'claims/decisions/pin.md', CLAIM('\nabout: [system/okf]'));
     if (text === 'status') fs.writeFileSync(join(clone, path), fs.readFileSync(join(clone, path), 'utf8').replace('id: ins-000000000002', 'id: ins-000000000002\nstatus: superseded'));
     else if (text) write(join(clone, path), text); else fs.appendFileSync(join(clone, path), 'An edit.\n');
-    refused(f.run(['--check', '--slug', 'pin']), 'E_SCOPE', rule);
+    const warnings = ok(f.run(['--check', '--slug', 'pin'])).warnings;
+    assert.ok(warnings.some(w => w.startsWith('W_SCOPE [was E_SCOPE]: ') && rule.test(w)), JSON.stringify(warnings));
   }
 });
 
-test('version 2: a rejected id without reconsiders refuses E_VERDICT; a title-hash hit goes into the PR body as a candidate', t => {
+// oats.okf 6.3 (#164, cut-list item 8): the rejected id was E_VERDICT; now a W_VERDICT row.
+test('version 2: a rejected id without reconsiders is a W_VERDICT row; a title-hash hit goes into the PR body as a candidate', t => {
   const f = fixture(t, { decl: V2 }), plan = ok(f.run(['--plan', '--slug', 'pin']));
   const clone = edit(plan, 'claims/decisions/again.md', `---\ntype: Decision\ntitle: Something\ndescription: x\nabout: [system/okf]\nid: ${REJECTED.id}\n---\n\n# x\n`);
-  refused(f.run(['--check', '--slug', 'pin']), 'E_VERDICT', new RegExp(`claims/decisions/again\\.md: claim id ${REJECTED.id} was rejected`));
+  assert.ok(ok(f.run(['--check', '--slug', 'pin'])).warnings.some(w => new RegExp(`^W_VERDICT \\[was E_VERDICT\\]: claims/decisions/again\\.md: claim id ${REJECTED.id} was rejected`).test(w)));
   write(join(clone, 'claims/decisions/again.md'), `---\ntype: Decision\ntitle: ${REJECTED.title}\ndescription: x\nabout: [system/okf]\n---\n\n# x\n`);
   const checked = ok(f.run(['--check', '--slug', 'pin']));
   assert.match(checked.prBody, /## Verdict candidates\n\n- `claims\/decisions\/again\.md`: title-hash candidate `dec-0000000000aa` \(rejected, Decision\) "Keep a harvester per proposal"/);
