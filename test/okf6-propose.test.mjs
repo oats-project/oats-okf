@@ -283,6 +283,10 @@ test('a failure after the push on a moved base reports the canonical repository 
   assert.ok(e.message.includes(`gh pr create --repo 'acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal`), 'how to finish, under the canonical name');
   assert.ok(e.message.includes('its label starts the one review'), 'one review');
   assert.ok(!e.message.includes("--repo 'old-org/kb'"), 'no command names the old path');
+  // The clone's origin is the bindings' URL, the old path on a real moved base:
+  // removal addresses the repository the branch is on, never origin.
+  assert.ok(e.message.includes(`to remove it, \`gh api -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove, under the canonical name');
+  assert.ok(!e.message.includes('push origin --delete'), 'not through the clone\'s origin');
   assert.match(e.message, /W_REPOSITORY_MOVED: base kb: the bindings name old-org\/kb/);
 });
 
