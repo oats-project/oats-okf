@@ -74,7 +74,8 @@ works, with the same result:** `--plan --slug`, a filled `proposal.md`,
   (atomic, mode 0600, never read through a symlink). A bare `--apply` with no
   record runs the check, prints it, records it and stops; with a record
   matching the freshly computed digest it publishes; with a stale one it
-  refuses `E_DIGEST` and leaves the record as it is. `checked.json` records
+  refuses `E_DIGEST` ("run --check again and read its diff, then --apply")
+  and leaves the record as it is. `checked.json` records
   that a check printed this digest; it is not authentication against other
   processes of the same user, any more than the digest is. `--apply
   --digest` behaves exactly as before; a malformed `--digest` is `E_USAGE`.

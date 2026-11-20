@@ -60,13 +60,38 @@ test('acceptance 2: a bare --apply after the claim changed refuses E_DIGEST and 
   assert.deepEqual(Object.keys(record), ['version', 'digest', 'checkedAt']); assert.deepEqual([record.version, record.digest], [1, checked.digest]);
   assert.equal(fs.statSync(join(plan.proposal, 'checked.json')).mode & 0o777, 0o600);
   fs.appendFileSync(file, 'An unread line.\n');
-  refused(f.run(['--apply']), 'E_DIGEST', /changed since the last --check: run --check \(or --apply\) again and read its diff/);
+  refused(f.run(['--apply']), 'E_DIGEST', /changed since the last --check: run --check again and read its diff, then --apply/);
   assert.deepEqual(subjectRefs(f), ['refs/heads/main']); assert.equal(fs.existsSync(join(plan.proposal, 'publish')), false);
   assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'checked.json'), 'utf8')), record, 'a refused apply never records a check');
   const again = ok(f.run(['--check']));
   assert.notEqual(again.digest, checked.digest);
   const applied = ok(f.run(['--apply']));
   assert.equal(applied.published, true); assert.equal(f.prs()[0].body, again.prBody);
+});
+
+test('a malformed checked.json is no record: a bare --apply checks again, records the check and stops, then publishes', t => {
+  const f = subjectFixture(t, { decl: V2 }), plan = ok(f.run(['--plan'])), file = join(plan.bases[0].clone, 'claims/insights/two-commands.md');
+  write(file, INSIGHT('Proposals publish in two commands', '\nabout: [system/okf]'));
+  const { digest } = ok(f.run(['--check'])), record = join(plan.proposal, 'checked.json');
+  for (const bad of [
+    '{"version": 1, "digest": "' + digest + '", "checkedAt": "not-an-ISO-date"}',
+    '{"version": 1, "digest": "' + digest + '", "checkedAt": "2026-02-30T00:00:00.000Z"}',
+    '{"version": 1, "digest": "' + digest + '", "checkedAt": 1}',
+    '{"version": 1, "digest": "' + digest + '"}',
+    '{"version": 1, "checkedAt": "2026-11-20T00:00:00.000Z"}',
+    '{"version": 2, "digest": "' + digest + '", "checkedAt": "2026-11-20T00:00:00.000Z"}',
+    '{"version": 1, "digest": "' + digest.toUpperCase() + '", "checkedAt": "2026-11-20T00:00:00.000Z"}',
+    '[]', '{"version": 1, "digest": "' + digest, '',
+  ]) {
+    fs.writeFileSync(record, bad, { mode: 0o600 });
+    const checked = ok(f.run(['--apply']));
+    assert.equal(checked.published, false, bad); assert.equal(checked.digest, digest, bad);
+    assert.deepEqual(subjectRefs(f), ['refs/heads/main'], bad);
+    const written = JSON.parse(fs.readFileSync(record, 'utf8'));
+    assert.deepEqual([written.version, written.digest], [1, digest], bad); assert.equal(new Date(written.checkedAt).toISOString(), written.checkedAt, bad);
+  }
+  const applied = ok(f.run(['--apply']));
+  assert.equal(applied.published, true); assert.equal(f.prs().length, 1);
 });
 
 test('acceptance 3: the 6.2 invocations work as before: --plan --slug, a filled proposal.md, --check, --apply --slug --digest', t => {

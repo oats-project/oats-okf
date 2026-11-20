@@ -124,8 +124,12 @@ Run each from your instance home.
 5. **`oats okf propose --apply` again** publishes exactly what the last
    check printed: one `okf-proposal` PR per changed base, on a new
    `okf-proposal/<date>-<uuid>` branch. If anything changed since, it
-   refuses `E_DIGEST`: run `--apply` (or `--check`) again and read the new
-   diff.
+   refuses `E_DIGEST` and pushes nothing.
+
+**After you fix something in step 4, or after `E_DIGEST`,** run
+`oats okf propose --check`: it prints the new diff and records it. Read it,
+then run `--apply`. A bare `--apply` only checks when no check was recorded
+yet.
 
 With more than one open proposal in your home, give `--slug <slug>` to each
 command. The 6.2 steps still work, with the same result:

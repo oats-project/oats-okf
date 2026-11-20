@@ -283,8 +283,10 @@ function readChecked(dir) {
   let value;
   try { value = JSON.parse(readWithin(dir, join(dir, CHECKED), 'E_PROPOSAL_FORMAT')); }
   catch { return null; }
-  return object(value) && value.version === 1 && typeof value.digest === 'string' && /^[0-9a-f]{64}$/.test(value.digest) && typeof value.checkedAt === 'string' ? value.digest : null;
+  return object(value) && value.version === 1 && typeof value.digest === 'string' && /^[0-9a-f]{64}$/.test(value.digest) && isoInstant(value.checkedAt) ? value.digest : null;
 }
+/** The instant recordCheck writes (Date#toISOString), and nothing else. */
+const isoInstant = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v) && new Date(v).toISOString() === v;
 const recordCheck = (dir, digest) => atomic(join(dir, CHECKED), JSON.stringify({ version: 1, digest, checkedAt: new Date().toISOString() }, null, 2) + '\n');
 function readPlan(dir) {
   const plan = parseJson(readWithin(dir, join(dir, 'plan.json'), 'E_PROPOSAL_FORMAT'), 'plan.json');
@@ -980,7 +982,7 @@ export function apply(source, slug, expected) {
       return { ...checkAnswer(dir, p, `nothing was pushed: ${READ}, then run oats okf propose --apply${slug !== undefined ? ` --slug ${slug}` : ''} again to publish exactly this`), published: false };
     }
     // A refused apply never records a check: checked.json stays as it is.
-    if (recorded !== p.digest) fail('E_DIGEST', 'the clone, proposal.md, a named note or the generated commit text or PR body changed since the last --check: run --check (or --apply) again and read its diff');
+    if (recorded !== p.digest) fail('E_DIGEST', 'the clone, proposal.md, a named note or the generated commit text or PR body changed since the last --check: run --check again and read its diff, then --apply');
     expected = recorded;
   }
   if (p.digest !== expected) fail('E_DIGEST', 'the clone, proposal.md, a named note or the generated commit text or PR body changed since --check (or the digest is not the one it printed): run --check again and read its diff before --apply');

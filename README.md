@@ -739,7 +739,9 @@ In detail:
    `"published": false`; with a `checked.json` whose digest equals the
    freshly computed one, it publishes; with one that differs, it refuses
    `E_DIGEST` and leaves `checked.json` as it is (a refused apply never
-   records a check). With `--digest` it compares that digest, as in 6.2.
+   records a check, so the way on is `--check`, its diff read, then
+   `--apply`). A `checked.json` is read only in the exact form `--check`
+   writes; any other is no record. With `--digest` it compares that digest, as in 6.2.
    **The limit:** `checked.json` records that a check printed this digest.
    It is not authentication against other processes of the same user, any
    more than the digest is. To publish, it commits (the
