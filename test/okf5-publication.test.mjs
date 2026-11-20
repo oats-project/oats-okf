@@ -1300,7 +1300,7 @@ for (const [what, patch] of [
   unchanged(f, before); assert.deepEqual(f.calls().filter(c => c.write), []);
   refusal(f.run('preflight', undefined, { github: MOVED_FROM }), 'E_GH');
 });
-for (const raw of ['true', 'true\n\nR_fixtureNode', `true\n${GITHUB}`, `true\n${GITHUB}\nnot a node id`, `true\n../x\nR_fixtureNode`, `true\nowner/..\nR_fixtureNode`]) {
+for (const raw of ['true', 'true\n\nR_fixtureNode', `true\n${GITHUB}`, `true\n${GITHUB}\nnot a node id`, `true\n../x\nR_fixtureNode`, `true\nowner/..\nR_fixtureNode`, `true\n${GITHUB}\nR_fixtureNode\nR_another`]) {
   test(`create refuses E_GH_UNAVAILABLE (gh-failed) before any push when the preflight names no repository (${JSON.stringify(raw)})`, t => {
     const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ preflightRaw: raw });
     const r = f.run('create', head); refusal(r, 'E_GH_UNAVAILABLE');
@@ -1313,6 +1313,16 @@ test('a `.` or `..` segment in --github is no repository: E_GITHUB before any gh
   for (const github of ['../fixture-knowledge', 'fixture-owner/..', './x']) refusal(f.run('create', head, { github }), 'E_GITHUB');
   unchanged(f, before); assert.deepEqual(f.calls(), []);
 });
+for (const nodeId of ['null', 'true', 'false', '0', '1370971871', '-1']) {
+  test(`a node id gh printed as a JSON scalar (${nodeId}) is no identity: E_GH_UNAVAILABLE (gh-failed) before any push, moved or not`, t => {
+    for (const alias of [MOVED_FROM, undefined]) {
+      const f = fixture(t), head = f.change(), before = f.snapshot(); f.patchGh({ alias, nodeId });
+      const r = f.run('create', head, alias ? { github: alias } : {}); refusal(r, 'E_GH_UNAVAILABLE');
+      assert.deepEqual(r.out, { ok: false, code: 'E_GH_UNAVAILABLE', diagnostic: { phase: 'preflight', reason: 'gh-failed' } });
+      unchanged(f, before); assert.deepEqual(f.calls().map(c => c.kind), ['preflight'], 'nothing read back, nothing written');
+    }
+  });
+}
 test('a failure after the push on a moved repository names the canonical repository it published to', t => {
   const f = fixture(t), head = f.change(); f.patchGh({ alias: MOVED_FROM, fail: 'create', failureText: DIAGNOSTIC_STDERR.join('\n') });
   const r = f.run('create', head, { github: MOVED_FROM }); refusal(r, 'E_GH');

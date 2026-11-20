@@ -317,7 +317,9 @@ export function screenedPush(o, head, expected, branch) {
 }
 // owner/repo as GitHub spells them; a `.` or `..` segment is no repository
 // and would make `repos/<name>` another API path.
-const NODE = /^[A-Za-z0-9_=-]{1,128}$/;
+// A node id as GitHub writes one. gh's --jq prints a missing or non-string
+// field as its JSON scalar (null, true, false, a number), never an id.
+const nodeId = id => typeof id === 'string' && /^[A-Za-z0-9_=-]{1,128}$/.test(id) && !/^(?:null|true|false|-?[0-9]+)$/.test(id);
 const repositoryName = name => typeof name === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(name) && !name.split('/').some(x => x === '.' || x === '..');
 function github(o) {
   if (!repositoryName(o.github)) fail('E_GITHUB');
@@ -355,12 +357,16 @@ export function publishPreflight(o) {
   const r = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${o.github}`, '--jq', '.permissions.push, .full_name, .node_id'], { env: ghEnv, timeout: 60000, maxBuffer: MAX });
   if (r.error?.code === 'ENOENT') unavailable('gh-absent');
   if (r.error || r.signal || r.status !== 0) unavailable('gh-failed');
-  let push, canonical, node;
-  try { [push, canonical, node] = text(r.stdout).replace(/\n$/, '').split('\n'); } catch { unavailable('gh-failed'); }
-  push = push?.trim();
+  let fields = [];
+  try { fields = text(r.stdout).replace(/\n$/, '').split('\n'); } catch { unavailable('gh-failed'); }
+  // Exactly the three fields asked for, one per line; anything else is not
+  // GitHub's answer to this question.
+  if (fields.length !== 3) unavailable('gh-failed');
+  let [push, canonical, node] = fields;
+  push = push.trim();
   // An answer that names no repository in GitHub's own grammar establishes
   // nothing: the publication would not know where its PR is.
-  if (!repositoryName(canonical) || !NODE.test(node ?? '')) unavailable('gh-failed');
+  if (!repositoryName(canonical) || !nodeId(node)) unavailable('gh-failed');
   if (canonical !== o.github) {
     const again = spawnSync('gh', ['api', '--hostname', 'github.com', `repos/${canonical}`, '--jq', '.full_name, .node_id'], { env: ghEnv, timeout: 60000, maxBuffer: MAX });
     let same = false;
