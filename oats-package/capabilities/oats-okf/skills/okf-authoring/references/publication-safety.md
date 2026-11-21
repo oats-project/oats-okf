@@ -213,8 +213,16 @@ version 2 block is still accepted through 6.x), empty expected-old lease and new
 confirmation. It never updates an existing ref, even an identical one. The
 helper verifies the recorded accepted branch tip before and after screening.
 Before its push, `create` makes read-only `gh` calls (first `gh api --hostname github.com
-repos/<repo> --jq .permissions.push`; the `preflight --github OWNER/REPO`
-command runs the check alone). An explicit `true` passes at once. A missing `gh`, a
+repos/<repo> --jq '.permissions.push, .full_name, .node_id'`; the `preflight --github OWNER/REPO`
+command runs the check alone and answers the canonical `repository`). The same read names the repository's
+canonical `owner/repo` and node id. GitHub answers a renamed or transferred
+repository's old name through a redirect, so the canonical name can differ
+from `--github`. It is a read, not a grant: a different name is read back by
+itself and must answer with the same node id, else `E_GH` before anything is
+written; an answer that names no repository is `gh-failed`. Every later `gh`
+call of `create` (the label, the PR, its read-back) names the canonical
+repository, so no write goes through a redirect, and the PR URL GitHub prints
+must be under it. An explicit `true` passes at once. A missing `gh`, a
 failed call or unstated permission, or a credential that may not push
 refuses `E_GH_UNAVAILABLE` with a fixed `preflight` diagnostic (`gh-absent`,
 `gh-failed`, `no-write-permission`): nothing was pushed. One other route
@@ -237,7 +245,8 @@ token file's, when one is named), not the one Git uses for the base's remote. Fo
 write only, not the pull-requests and issues write the PR and its label
 need. It cannot tell
 whether a narrowly scoped token may open a PR. A failure after the confirmed
-push carries `published: { branch, head }`.
+push carries `published: { branch, head, repository }`, and a created PR's
+result names `repository` too: the canonical name the PR is under.
 
 A base that moved before the push is recovered inside `create`, at most three
 times: it fetches the accepted branch (writing no local ref but the CAS

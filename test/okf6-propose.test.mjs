@@ -239,6 +239,98 @@ test('apply recovers an accepted branch that moved before the push (#130) and re
   assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `${pr.head}^`), moved, 'the PR is parented on the moved tip');
 });
 
+// #123: the bindings still name a repository GitHub renamed or transferred
+// (old-org/kb, now acme/kb). The fake gh refuses any write or read-back that
+// names the old path.
+const movedBase = f => { const doc = JSON.parse(fs.readFileSync(f.bindingsFile, 'utf8')); doc.bases.kb.pr.repository = 'old-org/kb'; fs.writeFileSync(f.bindingsFile, JSON.stringify(doc)); };
+const MOVED = { FIXTURE_GH_CANONICAL: 'acme/kb' };
+test('apply on a renamed or transferred base opens and confirms the PR under the canonical name, and warns W_REPOSITORY_MOVED', t => {
+  const f = fixture(t); movedBase(f); const plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const applied = ok(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: MOVED }));
+  assert.equal(applied.prs.length, 1); assert.equal(applied.prs[0].url, 'https://github.com/acme/kb/pull/1');
+  assert.deepEqual(Object.keys(applied.prs[0]).sort(), ['alias', 'base', 'branch', 'head', 'recovered', 'url'], 'the success row is unchanged');
+  const warning = applied.warnings.find(w => w.startsWith('W_REPOSITORY_MOVED'));
+  assert.ok(warning?.includes('the bindings name old-org/kb, which GitHub now answers as acme/kb'), String(warning));
+  assert.ok(warning.includes(`edit ${f.bindingsFile}: set pr.repository to acme/kb`));
+});
+test('with half-corrected bindings (pr.repository updated, repository still the old URL), removal still names the repository the branch is on', t => {
+  // pr.repository already acme/kb; the clone's origin is the bindings' URL,
+  // which on a real host would still name old-org/kb.
+  const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH');
+  const pushed = e.result.failed.published; assert.equal(pushed.repository, 'acme/kb');
+  assert.ok(e.message.includes(`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'`));
+  assert.ok(!e.message.includes('push origin --delete'), 'never through origin');
+  assert.ok(!e.message.includes('W_REPOSITORY_MOVED'), 'pr.repository already names it');
+});
+test('a push GitHub took but whose read-back failed (E_PUSH_UNCERTAIN) on a moved base: the recovery names the canonical repository and how to check, finish or remove', async t => {
+  const f = fixture(t); movedBase(f);
+  await inProcess(f, async () => {
+    Object.assign(process.env, MOVED);
+    const plan = propose(f.home, { plan: true, slug: 'u' }).result; edit(f, plan);
+    const { digest } = propose(f.home, { check: true, slug: 'u' }).result;
+    // The helper's own readback-failed outcome (okf5-publication tests it):
+    // the push reached the remote, the ref could not be read back after it.
+    const wrapped = publication.execute;
+    publication.execute = (command, o) => {
+      if (command !== 'create') return wrapped(command, o);
+      f.git(o.repo, 'push', '-q', 'origin', `${o.head}:refs/heads/${o.branch}`);
+      throw Object.assign(new Error('E_PUSH_UNCERTAIN'), { code: 'E_PUSH_UNCERTAIN', diagnostic: { phase: 'readback-failed', exitCode: 0, signal: null, timedOut: false, elapsedMs: 1 } });
+    };
+    let e; try { propose(f.home, { apply: true, slug: 'u', digest }); } catch (error) { e = error; } finally { publication.execute = wrapped; }
+    assert.equal(e?.code, 'E_PUSH_UNCERTAIN'); assert.equal(e.result.failed.published, undefined, 'an unconfirmed push is not reported as confirmed');
+    const [branch] = remoteRefs(f).filter(x => x.startsWith('refs/heads/okf-proposal/')).map(x => x.slice('refs/heads/'.length));
+    assert.ok(branch, 'the branch is on the remote: a stranded branch with no PR');
+    assert.equal(f.prs().length, 0);
+    assert.ok(e.message.includes(`branch ${branch} may exist on acme/kb, never assume it does not`), e.message);
+    assert.ok(e.message.includes(`gh api --hostname github.com 'repos/acme/kb/git/ref/heads/${branch}'`), 'how to check the branch, in the canonical repository');
+    assert.ok(e.message.includes(`gh pr list --repo 'github.com/acme/kb' --head '${branch}' --state all`), 'how to check for a PR');
+    assert.ok(e.message.includes(`only if the branch exists and no PR does, finish with \`gh pr create --repo 'github.com/acme/kb' --base 'main' --head '${branch}' --label okf-proposal`), 'how to finish, conditionally, with the label');
+    assert.ok(e.message.includes(`or remove it with \`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${branch}'\``), 'how to remove');
+    assert.ok(!e.message.includes('old-org/kb\''), 'no command names the old path');
+    assert.match(e.message, /W_REPOSITORY_MOVED: base kb: the bindings name old-org\/kb/);
+  });
+});
+test('apply on a base whose bindings differ from GitHub only in case does not warn', t => {
+  const f = fixture(t), doc = JSON.parse(fs.readFileSync(f.bindingsFile, 'utf8')); doc.bases.kb.pr.repository = 'ACME/kb'; fs.writeFileSync(f.bindingsFile, JSON.stringify(doc));
+  const plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const applied = ok(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: MOVED }));
+  assert.equal(applied.prs.length, 1); assert.ok(!applied.warnings.some(w => w.startsWith('W_REPOSITORY_MOVED')));
+});
+test('apply refuses E_GH before anything is pushed when the canonical name does not read back as the same repository, and stays re-appliable', t => {
+  const f = fixture(t); movedBase(f); const plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { ...MOVED, FIXTURE_GH_READBACK: 'acme/kb\nR_another' } }), 'E_GH', /did not read back as the same repository.*nothing was pushed/);
+  assert.equal(e.result?.published, undefined);
+  assert.ok(!fs.existsSync(join(plan.proposal, 'publish')), 'not marked as attempted');
+  assert.equal(f.git(f.dir, '--git-dir', f.origin, 'for-each-ref', 'refs/heads/okf-proposal'), '', 'nothing was pushed');
+  assert.equal(f.prs().length, 0);
+  // Once the bindings or GitHub agree, the same --apply publishes.
+  assert.equal(ok(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: MOVED })).prs.length, 1);
+});
+test('a failure after the push on a moved base reports the canonical repository and names it in the recovery commands', t => {
+  const f = fixture(t); movedBase(f); const plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
+  const { digest } = ok(f.run(['--check', '--slug', 'x']));
+  const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { ...MOVED, FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH', /was pushed to acme\/kb and no PR is confirmed/);
+  const pushed = e.result.failed.published;
+  assert.deepEqual(Object.keys(pushed).sort(), ['branch', 'head', 'repository']); assert.equal(pushed.repository, 'acme/kb');
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed, 'the retained result carries it too');
+  assert.ok(e.message.includes(`gh pr list --repo 'github.com/acme/kb' --head '${pushed.branch}' --state all`), 'how to check');
+  assert.ok(e.message.includes(`gh pr create --repo 'github.com/acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal`), 'how to finish, under the canonical name');
+  assert.ok(e.message.includes('its label starts the one review'), 'one review');
+  // A GH_HOST in the recipient's shell must not send any of them elsewhere.
+  for (const command of e.message.match(/`gh [^`]*`/g)) assert.match(command, /--hostname github\.com |--repo 'github\.com\//, command);
+  assert.ok(!e.message.includes("--repo 'old-org/kb'"), 'no command names the old path');
+  // The clone's origin is the bindings' URL, the old path on a real moved base:
+  // removal addresses the repository the branch is on, never origin.
+  assert.ok(e.message.includes(`to remove it, \`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove, under the canonical name');
+  assert.ok(!e.message.includes('push origin --delete'), 'not through the clone\'s origin');
+  assert.match(e.message, /W_REPOSITORY_MOVED: base kb: the bindings name old-org\/kb/);
+});
+
 test('a publication failure retains the clone and artefacts, reports safely and refuses a retry', t => {
   const f = fixture(t), plan = ok(f.run(['--plan', '--slug', 'x'])); edit(f, plan);
   const { digest } = ok(f.run(['--check', '--slug', 'x']));
@@ -249,8 +341,8 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   assert.match(pushed.branch, /^okf-proposal\/\d{8}-[0-9a-f-]{36}$/);
   assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pushed.branch}`), pushed.head, 'the named branch is the one on the remote');
   // Every argument is shell-quoted: a home path with a space stays one argument.
-  assert.ok(e.message.includes(`gh pr create --repo 'acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal --title 'OKF knowledge proposal' --body-file '${join(plan.proposal, 'publish', 'kb-pr.md')}'`), 'how to finish');
-  assert.ok(e.message.includes(`git -C '${join(plan.proposal, 'work', 'kb')}' push origin --delete '${pushed.branch}'`), 'how to remove');
+  assert.ok(e.message.includes(`gh pr create --repo 'github.com/acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal --title 'OKF knowledge proposal' --body-file '${join(plan.proposal, 'publish', 'kb-pr.md')}'`), 'how to finish');
+  assert.ok(e.message.includes(`to remove it, \`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove: in the repository the branch was published to, never through the clone\'s origin');
   assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed);
   for (const p of ['work/kb', 'outgoing/kb-commit.txt', 'outgoing/kb-pr.md', 'publish/kb-result.json']) assert.ok(fs.existsSync(join(plan.proposal, p)), p);
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');
@@ -464,7 +556,7 @@ test('with github-token-file the one publish predicate judges that file: it is p
 });
 
 test('a token file that turns unusable after the push keeps what was published: it is never reported as "nothing was sent"', () => {
-  const wrapped = publication.execute, published = { branch: 'okf-proposal/20261116-x', head: 'a'.repeat(40) }, options = { 'token-file': '/run/secrets/okf-token' };
+  const wrapped = publication.execute, published = { branch: 'okf-proposal/20261116-x', head: 'a'.repeat(40), repository: 'acme/kb' }, options = { 'token-file': '/run/secrets/okf-token' };
   const thrown = extra => { publication.execute = () => { throw Object.assign(new Error('E_CREDENTIAL'), { code: 'E_CREDENTIAL', diagnostic: { phase: 'credential', reason: 'empty' }, ...extra }); }; try { runHelper('create', options); } catch (e) { return e; } finally { publication.execute = wrapped; } assert.fail('expected a refusal'); };
   const before = thrown({});
   assert.equal(before.code, 'E_CREDENTIAL'); assert.match(before.message, /^github-token-file \/run\/secrets\/okf-token is empty: provision .* own git and gh login$/); assert.doesNotMatch(before.message, /nothing was sent/); assert.equal(before.result, undefined);
