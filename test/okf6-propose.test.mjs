@@ -261,7 +261,7 @@ test('with half-corrected bindings (pr.repository updated, repository still the 
   const { digest } = ok(f.run(['--check', '--slug', 'x']));
   const e = refused(f.run(['--apply', '--slug', 'x', '--digest', digest], { extra: { FIXTURE_GH_FAIL: 'pr create' } }), 'E_GH');
   const pushed = e.result.failed.published; assert.equal(pushed.repository, 'acme/kb');
-  assert.ok(e.message.includes(`gh api -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'`));
+  assert.ok(e.message.includes(`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'`));
   assert.ok(!e.message.includes('push origin --delete'), 'never through origin');
   assert.ok(!e.message.includes('W_REPOSITORY_MOVED'), 'pr.repository already names it');
 });
@@ -285,10 +285,10 @@ test('a push GitHub took but whose read-back failed (E_PUSH_UNCERTAIN) on a move
     assert.ok(branch, 'the branch is on the remote: a stranded branch with no PR');
     assert.equal(f.prs().length, 0);
     assert.ok(e.message.includes(`branch ${branch} may exist on acme/kb, never assume it does not`), e.message);
-    assert.ok(e.message.includes(`gh api 'repos/acme/kb/git/ref/heads/${branch}'`), 'how to check the branch, in the canonical repository');
-    assert.ok(e.message.includes(`gh pr list --repo 'acme/kb' --head '${branch}' --state all`), 'how to check for a PR');
-    assert.ok(e.message.includes(`only if the branch exists and no PR does, finish with \`gh pr create --repo 'acme/kb' --base 'main' --head '${branch}' --label okf-proposal`), 'how to finish, conditionally, with the label');
-    assert.ok(e.message.includes(`or remove it with \`gh api -X DELETE 'repos/acme/kb/git/refs/heads/${branch}'\``), 'how to remove');
+    assert.ok(e.message.includes(`gh api --hostname github.com 'repos/acme/kb/git/ref/heads/${branch}'`), 'how to check the branch, in the canonical repository');
+    assert.ok(e.message.includes(`gh pr list --repo 'github.com/acme/kb' --head '${branch}' --state all`), 'how to check for a PR');
+    assert.ok(e.message.includes(`only if the branch exists and no PR does, finish with \`gh pr create --repo 'github.com/acme/kb' --base 'main' --head '${branch}' --label okf-proposal`), 'how to finish, conditionally, with the label');
+    assert.ok(e.message.includes(`or remove it with \`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${branch}'\``), 'how to remove');
     assert.ok(!e.message.includes('old-org/kb\''), 'no command names the old path');
     assert.match(e.message, /W_REPOSITORY_MOVED: base kb: the bindings name old-org\/kb/);
   });
@@ -318,13 +318,15 @@ test('a failure after the push on a moved base reports the canonical repository 
   const pushed = e.result.failed.published;
   assert.deepEqual(Object.keys(pushed).sort(), ['branch', 'head', 'repository']); assert.equal(pushed.repository, 'acme/kb');
   assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed, 'the retained result carries it too');
-  assert.ok(e.message.includes(`gh pr list --repo 'acme/kb' --head '${pushed.branch}' --state all`), 'how to check');
-  assert.ok(e.message.includes(`gh pr create --repo 'acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal`), 'how to finish, under the canonical name');
+  assert.ok(e.message.includes(`gh pr list --repo 'github.com/acme/kb' --head '${pushed.branch}' --state all`), 'how to check');
+  assert.ok(e.message.includes(`gh pr create --repo 'github.com/acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal`), 'how to finish, under the canonical name');
   assert.ok(e.message.includes('its label starts the one review'), 'one review');
+  // A GH_HOST in the recipient's shell must not send any of them elsewhere.
+  for (const command of e.message.match(/`gh [^`]*`/g)) assert.match(command, /--hostname github\.com |--repo 'github\.com\//, command);
   assert.ok(!e.message.includes("--repo 'old-org/kb'"), 'no command names the old path');
   // The clone's origin is the bindings' URL, the old path on a real moved base:
   // removal addresses the repository the branch is on, never origin.
-  assert.ok(e.message.includes(`to remove it, \`gh api -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove, under the canonical name');
+  assert.ok(e.message.includes(`to remove it, \`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove, under the canonical name');
   assert.ok(!e.message.includes('push origin --delete'), 'not through the clone\'s origin');
   assert.match(e.message, /W_REPOSITORY_MOVED: base kb: the bindings name old-org\/kb/);
 });
@@ -339,8 +341,8 @@ test('a publication failure retains the clone and artefacts, reports safely and 
   assert.match(pushed.branch, /^okf-proposal\/\d{8}-[0-9a-f-]{36}$/);
   assert.equal(f.git(f.dir, '--git-dir', f.origin, 'rev-parse', `refs/heads/${pushed.branch}`), pushed.head, 'the named branch is the one on the remote');
   // Every argument is shell-quoted: a home path with a space stays one argument.
-  assert.ok(e.message.includes(`gh pr create --repo 'acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal --title 'OKF knowledge proposal' --body-file '${join(plan.proposal, 'publish', 'kb-pr.md')}'`), 'how to finish');
-  assert.ok(e.message.includes(`to remove it, \`gh api -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove: in the repository the branch was published to, never through the clone\'s origin');
+  assert.ok(e.message.includes(`gh pr create --repo 'github.com/acme/kb' --base 'main' --head '${pushed.branch}' --label okf-proposal --title 'OKF knowledge proposal' --body-file '${join(plan.proposal, 'publish', 'kb-pr.md')}'`), 'how to finish');
+  assert.ok(e.message.includes(`to remove it, \`gh api --hostname github.com -X DELETE 'repos/acme/kb/git/refs/heads/${pushed.branch}'\``), 'how to remove: in the repository the branch was published to, never through the clone\'s origin');
   assert.deepEqual(JSON.parse(fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8')).published, pushed);
   for (const p of ['work/kb', 'outgoing/kb-commit.txt', 'outgoing/kb-pr.md', 'publish/kb-result.json']) assert.ok(fs.existsSync(join(plan.proposal, p)), p);
   assert.ok(!fs.readFileSync(join(plan.proposal, 'publish/kb-result.json'), 'utf8').includes('fixture gh failure'), 'no raw tool stderr');

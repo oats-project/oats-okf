@@ -773,17 +773,20 @@ function aftermath(code, r, branch, bodyFile, pushed, late, known) {
   // with the bindings. Before a confirmed push, the gate's read names it.
   const repository = pushed?.repository ?? known ?? r.owned.base.pr.repository, q = quote;
   if (late) return `; gh stopped answering after the proposal was marked as attempted (${late}): nothing was pushed for base ${r.alias}`;
-  const list = name => `\`gh pr list --repo ${q(repository)} --head ${q(name)} --state all\``;
-  const finish = name => `\`gh pr create --repo ${q(repository)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(name)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\` (its label starts the one review, through the proposal-review trigger: start no other)`;
+  // Every command names github.com, where publication resolved the
+  // repository: a GH_HOST in the recipient's shell never redirects it.
+  const at = `github.com/${repository}`;
+  const list = name => `\`gh pr list --repo ${q(at)} --head ${q(name)} --state all\``;
+  const finish = name => `\`gh pr create --repo ${q(at)} --base ${q(r.owned.base.acceptedBranch)} --head ${q(name)} --label okf-proposal --title 'OKF knowledge proposal' --body-file ${q(bodyFile)}\` (its label starts the one review, through the proposal-review trigger: start no other)`;
   // Removal goes to the repository the branch was published to, through gh,
   // by name, never through the clone's origin: that is the bindings' URL as
   // written, which after a rename or transfer may still name the old path
   // (whatever pr.repository says), stop redirecting or be reused.
-  const removeIn = (name, where) => `\`gh api -X DELETE ${q(`repos/${where}/git/refs/heads/${name}`)}\``;
+  const removeIn = (name, where) => `\`gh api --hostname github.com -X DELETE ${q(`repos/${where}/git/refs/heads/${name}`)}\``;
   const remove = pushed?.repository ? removeIn(pushed.branch, pushed.repository) : pushed ? `\`git -C ${q(r.clone)} push origin --delete ${q(pushed.branch)}\`` : '';
   if (pushed) return `; branch ${pushed.branch} (${pushed.head.slice(0, 12)}) was pushed to ${repository} and no PR is confirmed, never assume there is none. For whoever you report to: ${list(pushed.branch)} shows whether a PR exists; to finish, ${finish(pushed.branch)}; to remove it, ${remove}`;
   // The push's outcome is unknown: nothing here says the branch is there.
-  if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not. For whoever you report to: \`gh api ${q(`repos/${repository}/git/ref/heads/${branch}`)}\` shows whether it does, and its head, and ${list(branch)} whether a PR exists; only if the branch exists and no PR does, finish with ${finish(branch)}, or remove it with ${removeIn(branch, repository)}`;
+  if (code === 'E_PUSH_UNCERTAIN') return `; branch ${branch} may exist on ${repository}, never assume it does not. For whoever you report to: \`gh api --hostname github.com ${q(`repos/${repository}/git/ref/heads/${branch}`)}\` shows whether it does, and its head, and ${list(branch)} whether a PR exists; only if the branch exists and no PR does, finish with ${finish(branch)}, or remove it with ${removeIn(branch, repository)}`;
   return ['E_PR_UNCERTAIN', 'E_GH'].includes(code) ? '; a remote branch or PR may exist, never assume it does not' : '';
 }
 /** W_REPOSITORY_MOVED: the bindings name a repository GitHub answers under
